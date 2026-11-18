@@ -194,9 +194,19 @@ function canTeam_(c, teamId, maxRank) {
   return teamRoles_(c, teamId, maxRank).length > 0 || upperRoles_(c).some(function (r) { return covers_(r, 'team', teamId); });
 }
 function isSugarOnly_(c) { return c.roles.length > 0 && c.roles.every(function (r) { return r.key === 'SUGAR'; }); }
+// Хто підтверджує ролі:
+//  • Раб Божий — будь-яку роль;
+//  • Еріа Директор і вище (Нац. Адмін, регіон, Еріа Директор) — лише Раб Божий;
+//  • Капітана — безпосередньо Еріа Директор або Еріа Адмін його ерії;
+//  • решту — хтось вищий за роль у своїх межах (Капітан і вище).
+const ONLY_SUPER_MAX_RANK = 4;
+const CAPTAIN_APPROVERS = ['AREA_DIRECTOR', 'AREA_ADMIN'];
 function canDecide_(c, target) {
   const def = roleDef_(target.key);
-  if (!def) return false;
+  if (!def || def.key === 'SUPER') return false;
+  if (c.roles.some(function (r) { return r.key === 'SUPER'; })) return true;
+  if (def.rank <= ONLY_SUPER_MAX_RANK) return false;
+  if (def.key === 'CAPTAIN') return c.roles.some(function (r) { return CAPTAIN_APPROVERS.indexOf(r.key) >= 0 && covers_(r, 'team', target.unitId); });
   return c.roles.some(function (r) { return r.rank <= RANK.APPROVE && r.rank < def.rank && covers_(r, target.level, target.unitId); });
 }
 function reportTeams_(c, maxRank) {
@@ -952,12 +962,14 @@ function pendingApproversText_(c) {
   if (!p.length) return '';
   const st = loadStruct_();
   const r = p[0];
+  if (p.some(function (x) { return roleDef_(x.key).rank <= ONLY_SUPER_MAX_RANK; })) return ROLES[0].label;
   if (r.level === 'team') {
     const t = st.team[r.unitId];
     const area = t ? (st.area[t.areaId] || {}).name : '';
     const needArea = p.some(function (x) { return roleDef_(x.key).rank <= RANK.APPROVE; }) || (t && !t.active);
-    return needArea ? 'керівництво ерії ' + area : 'капітан команди «' + (t ? t.name : '') + '» або керівництво ерії ' + area;
+    return needArea ? 'Еріа Директор або Еріа Адмін ерії ' + area : 'капітан команди «' + (t ? t.name : '') + '» або керівництво ерії ' + area;
   }
+  if (r.level === 'area') return 'Еріа Директор ерії ' + ((st.area[r.unitId] || {}).name || '') + ' або керівництво регіону';
   return 'керівництво вищого рівня';
 }
 
