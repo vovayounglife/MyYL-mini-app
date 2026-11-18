@@ -64,6 +64,16 @@
   };
   let toastTimer = null;
 
+  // ───────────── локальний кеш: показуємо останні дані миттєво, оновлюємо у фоні ─────────────
+  const UID = (() => { try { return String(tg.initDataUnsafe.user.id); } catch (e) { return 'x'; } })();
+  const LS = {
+    get(k) { try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
+  };
+  const statsKey = () => [S.stats.scope || '', S.stats.cat, S.stats.period].join('|');
+  // чи можна зараз перемалювати екран, не збивши людині введення
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
+
   function toast(msg, kind) {
     S.toast = msg;
     if (kind) haptic(kind);
@@ -152,6 +162,7 @@
 
   function enter(screen, o) {
     if (screen === 'home' && !S.events) loadEvents();
+    if (screen === 'calendar' && S.events) { /* показуємо, що є, і тихо оновлюємо */ }
     if (screen === 'calendar') { S.ev = o.ev || null; S.evForm = null; loadEvents(); }
     if (screen === 'add') initAdd(o.type, o.teamId);
     if (screen === 'stats') { if (o.scope) S.stats.scope = o.scope; if (o.cat) S.stats.cat = o.cat; loadStats(); }
@@ -165,10 +176,31 @@
   }
 
   // ───────────── завантаження ─────────────
+  function route() {
+    if (S.me.status === 'new') { S.reg.name = S.reg.name || S.me.user.name; S.screen = 'onboarding'; return true; }
+    if (S.me.status === 'pending') { S.screen = 'pending'; return true; }
+    return false;
+  }
   async function loadMe() {
+    const cached = LS.get('me');
+    if (cached && cached.status === 'active') {
+      // миттєвий старт з останніх даних
+      S.me = cached; S.events = cached.events || null;
+      const want = new URLSearchParams(location.search).get('screen');
+      S.screen = 'home';
+      if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') go(want); else render();
+      try {
+        const fresh = await api('me');
+        S.me = fresh; S.events = fresh.events || S.events; LS.set('me', fresh);
+        if (route()) return render();
+        if (safeToRender()) render();
+      } catch (e) { toast(e.message); }
+      return;
+    }
     try {
       S.me = await api('me');
     } catch (e) { S.fatal = e.message; return renderFatal(); }
+    if (S.me.status === 'active') { LS.set('me', S.me); S.events = S.me.events || null; }
     if (S.me.status === 'new') { S.reg.name = S.reg.name || S.me.user.name; S.screen = 'onboarding'; }
     else if (S.me.status === 'pending') S.screen = 'pending';
     else {
@@ -180,25 +212,33 @@
     render();
   }
   async function loadEvents() {
-    try { S.events = await api('events'); } catch (e) { S.events = S.events || []; toast(e.message); }
-    if (S.screen === 'calendar' || S.screen === 'home') render();
+    try { S.events = await api('events'); if (S.me) { S.me.events = S.events; LS.set('me', S.me); } } catch (e) { S.events = S.events || []; toast(e.message); }
+    if ((S.screen === 'calendar' || S.screen === 'home') && safeToRender()) render();
   }
   async function loadStats() {
+    const key = statsKey();
+    const hit = (S.statsMem || {})[key] || LS.get('st:' + key);
+    if (hit) S.stats.data = hit;
     S.stats.loading = true; render();
     try {
-      S.stats.data = await api('stats', { scope: S.stats.scope, cat: S.stats.cat, period: S.stats.period });
-      S.stats.scope = S.stats.data.scope.key; S.stats.cat = S.stats.data.cat;
+      const d = await api('stats', { scope: S.stats.scope, cat: S.stats.cat, period: S.stats.period });
+      if (statsKey() !== key) return; // людина вже перейшла далі
+      S.stats.data = d;
+      S.stats.scope = d.scope.key; S.stats.cat = d.cat;
+      S.statsMem = S.statsMem || {}; S.statsMem[key] = d; S.statsMem[statsKey()] = d;
+      LS.set('st:' + statsKey(), d);
     } catch (e) { toast(e.message); }
     S.stats.loading = false;
-    if (S.screen === 'stats') render();
+    if (S.screen === 'stats' && !S.stats.find) render();
   }
   async function loadKnown(force) {
     const id = S.known.teamId;
     if (!id) { S.known.list = []; return render(); }
     if (!force && S.knownCache[id]) { S.known.list = S.knownCache[id]; return render(); }
-    S.known.list = null; render();
-    try { S.knownCache[id] = S.known.list = await api('knownList', { teamId: id }); } catch (e) { S.known.list = []; toast(e.message); }
-    if (S.screen === 'known' || S.screen === 'add') render();
+    const hit = LS.get('kn:' + id);
+    S.known.list = hit || null; render();
+    try { S.knownCache[id] = S.known.list = await api('knownList', { teamId: id }); LS.set('kn:' + id, S.known.list); } catch (e) { S.known.list = S.known.list || []; toast(e.message); }
+    if ((S.screen === 'known' && !S.known.edit) || (S.screen === 'add' && S.add && S.add.mark)) render();
   }
   async function loadTeam() {
     if (!S.team.teamId) { S.team.list = []; return render(); }
@@ -771,16 +811,31 @@
     if (!a.teamId) return toast('Обери команду');
     if (a.type === 'kr' && !(Number(a.hours) > 0)) return toast('Вкажи кількість годин або натисни «не було»');
     if (a.type !== 'kr' && !(Number(a.teens) > 0)) return toast('Вкажи кількість учасників або натисни «не було»');
-    const res = await run(() => api('saveReport', {
+    const payload = {
       type: a.type, teamId: a.teamId, mode: a.mode, date: a.date, teens: a.teens, newT: a.newT, leaders: a.leaders, hours: a.hours,
       topic: a.topic, note: a.note, attendees: a.mark ? Object.keys(a.att).filter((k) => a.att[k]) : [],
-    }));
-    if (res) { S.me.week = res.week; go('home'); thank(); }
+    };
+    // одразу дякуємо й позначаємо як здане, а зберігаємо у фоні
+    const backup = { add: JSON.parse(JSON.stringify(a)), week: JSON.parse(JSON.stringify(S.me.week)) };
+    weekMark(a.type, a.teamId, 'ok', a.type === 'kr' ? Number(a.hours) || 0 : 0);
+    go('home'); thank();
+    try { const res = await api('saveReport', payload); S.me.week = res.week; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
+    catch (e) { S.me.week = backup.week; S.add = backup.add; S.thanks = false; S.screen = 'add'; render(); toast('Не вдалося зберегти: ' + e.message, 'error'); }
   };
   A.markNone = async (d) => {
-    const res = await run(() => api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }));
-    if (res) { S.me.week = res.week; if (S.screen === 'add') go('home'); thank(); }
+    const backup = JSON.parse(JSON.stringify(S.me.week));
+    weekMark(d.type, d.team, 'none', 0);
+    if (S.screen === 'add') go('home');
+    thank();
+    try { const res = await api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }); S.me.week = res.week; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
+    catch (e) { S.me.week = backup; S.thanks = false; render(); toast('Не вдалося зберегти: ' + e.message, 'error'); }
   };
+  function weekMark(type, teamId, status, hours) {
+    ((S.me.week && S.me.week.items) || []).forEach((it) => {
+      if (it.type !== type || it.teamId !== teamId) return;
+      if (status === 'ok') { it.status = 'ok'; it.hours = (Number(it.hours) || 0) + hours; } else if (it.status !== 'ok') it.status = 'none';
+    });
+  }
 
   // календар
   A.openEv = (d) => { if (S.screen !== 'calendar') go('calendar', { ev: d.id }); else { S.ev = d.id; render(); window.scrollTo(0, 0); } };

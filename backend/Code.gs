@@ -284,6 +284,7 @@ API.me = function (c) {
     return out;
   }
   out.status = 'active';
+  out.events = API.events(c);
   const myTeams = {};
   c.roles.forEach(function (r) { if (r.level === 'team' && st.team[r.unitId]) myTeams[r.unitId] = true; });
   out.caps = {
@@ -566,6 +567,7 @@ API.financeSave = function (c, d) {
     const logSh = sheet_(SH.LOG);
     readSheet_(logSh).filter(function (r) { return r['Тип'] === 'fin' && str_(r['Команда ID']) === teamId && monthKey_(r['Дата']) === month; })
       .map(function (r) { return r._row; }).sort(function (a, b) { return b - a; }).forEach(function (row) { logSh.deleteRow(row); });
+    dirty_(SH.LOG);
     append_(SH.LOG, { 'Записано': new Date(), 'Дата': parseDay_(month + '-01'), 'Тиждень': "'" + weekKey_(parseDay_(month + '-01')), 'Тип': 'fin', 'Режим': '', 'Команда ID': teamId, 'Ерія ID': st.team[teamId].areaId, 'Регіон ID': st.teamRegion(teamId), 'Надійшло': v.office + v.church + v.team, 'Витрачено': v.spent, 'Автор ID': c.id, 'Автор': c.name });
   });
   resetMemo_('log');
@@ -643,6 +645,7 @@ API.eventDelete = function (c, d) {
   if (!e) bad_('Подію не знайдено.');
   if (!canManageEvent_(c, e)) deny_();
   sheet_(SH.EVENTS).deleteRow(e.row);
+  dirty_(SH.EVENTS);
   resetMemo_('events');
   return { ok: true };
 };
@@ -662,7 +665,7 @@ function rsvpSet_(c, eventId, going) {
       const team = c.roles.filter(function (r) { return r.level === 'team'; })[0];
       append_(SH.RSVP, { 'Подія ID': eventId, 'Telegram ID': c.id, "Ім'я": c.name, 'Команда': team ? team.unitName : '', 'Дата': new Date() });
     }
-    if (!going) mine.map(function (r) { return r._row; }).sort(function (a, b) { return b - a; }).forEach(function (row) { sh.deleteRow(row); });
+    if (!going) { mine.map(function (r) { return r._row; }).sort(function (a, b) { return b - a; }).forEach(function (row) { sh.deleteRow(row); }); dirty_(SH.RSVP); }
   });
   resetMemo_('rsvp');
 }
@@ -1243,15 +1246,59 @@ function readSheet_(sh) {
   });
   return out;
 }
-function readAll_(name) { return memo_('rows_' + name, function () { return readSheet_(sheet_(name)); }); }
+function readAll_(name) {
+  return memo_('rows_' + name, function () {
+    const hit = cacheGetRows_(name);
+    if (hit) return hit;
+    const rows = readSheet_(sheet_(name));
+    cachePutRows_(name, rows);
+    return rows;
+  });
+}
+
+// ── кеш аркушів «Системи» (CacheService): читання таблиці — найповільніша частина запиту ──
+const CACHE_TTL = 600; // 10 хв; ручні зміни в таблиці скидають кеш через onEdit
+const CACHE_CHUNK = 40000;
+function cacheKey_(name) { return 'sh3:' + name; }
+function cacheGetRows_(name) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const n = Number(cache.get(cacheKey_(name)));
+    if (!n) return null;
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push(cacheKey_(name) + ':' + i);
+    const got = cache.getAll(keys);
+    let txt = '';
+    for (let i = 0; i < keys.length; i++) { if (got[keys[i]] == null) return null; txt += got[keys[i]]; }
+    return JSON.parse(txt, function (k, v) { return v && typeof v === 'object' && v.$d != null ? new Date(v.$d) : v; });
+  } catch (e) { return null; }
+}
+function cachePutRows_(name, rows) {
+  try {
+    const txt = JSON.stringify(rows, function (k, v) { const raw = this[k]; return raw instanceof Date ? { $d: raw.getTime() } : v; });
+    const n = Math.ceil(txt.length / CACHE_CHUNK) || 1;
+    if (n > 150) return;
+    const obj = {};
+    for (let i = 0; i < n; i++) obj[cacheKey_(name) + ':' + i] = txt.slice(i * CACHE_CHUNK, (i + 1) * CACHE_CHUNK);
+    CacheService.getScriptCache().putAll(obj, CACHE_TTL);
+    CacheService.getScriptCache().put(cacheKey_(name), String(n), CACHE_TTL);
+  } catch (e) { console.warn('cache: ' + e); }
+}
+function dirty_(name) {
+  resetMemo_('rows_' + name);
+  try { CacheService.getScriptCache().remove(cacheKey_(name)); } catch (e) { /* ок */ }
+}
+function clearSheetCache_() { Object.keys(SH).forEach(function (k) { dirty_(SH[k]); }); }
+// простий тригер: будь-яка ручна зміна в таблиці скидає кеш
+function onEdit() { clearSheetCache_(); }
 
 function headerOf_(sh) { return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(str_); }
-function append_(name, obj) { appendTo_(ss_(), name, obj); resetMemo_('rows_' + name); }
+function append_(name, obj) { appendTo_(ss_(), name, obj); dirty_(name); }
 function appendTo_(ss, name, obj) {
   const sh = ss.getSheetByName(name);
   sh.appendRow(headerOf_(sh).map(function (h) { return h in obj ? obj[h] : ''; }));
 }
-function update_(name, row, obj) { updateIn_(sheet_(name), row, obj); resetMemo_('rows_' + name); }
+function update_(name, row, obj) { updateIn_(sheet_(name), row, obj); dirty_(name); }
 function updateIn_(sh, row, obj) {
   headerOf_(sh).forEach(function (h, j) { if (h in obj) sh.getRange(row, j + 1).setValue(obj[h]); });
 }
@@ -1350,7 +1397,7 @@ function ensureColumn_(name, header) {
   const h = headerOf_(sh);
   if (h.indexOf(header) >= 0) return;
   sh.getRange(1, h.length + 1).setValue(header).setFontWeight('bold').setBackground('#fde8df');
-  resetMemo_('rows_' + name);
+  dirty_(name);
 }
 function roleOut_(r) { return { id: r.id, key: r.key, label: r.label, level: r.level, unitId: r.unitId, unitName: r.unitName, status: r.status }; }
 function teamOut_(id) { const st = loadStruct_(); const t = st.team[id]; return { id: id, name: t.name, areaId: t.areaId, areaName: (st.area[t.areaId] || {}).name || '', regionId: st.teamRegion(id) }; }
@@ -1433,6 +1480,7 @@ function menuSetup() {
   props.setProperty('SHEET_ID', ss.getId());
   if (!props.getProperty('WEBHOOK_KEY')) props.setProperty('WEBHOOK_KEY', Utilities.getUuid().replace(/-/g, ''));
   ss.setSpreadsheetTimeZone(TZ);
+  clearSheetCache_();
   resetMemo_();
   const created = [];
   const mk = function (name, head, seed) {
@@ -1485,6 +1533,7 @@ function menuSetup() {
       if (!st.areas.some(function (x) { return x.regionId === rid && x.name === a; })) append_(SH.AREAS, { 'ID': uid_(), 'Регіон ID': rid, 'Назва': a });
     });
   });
+  clearSheetCache_();
   resetMemo_();
   if (added.length) created.push('регіони: ' + added.join(', '));
   ss.getSheets().forEach(function (s) { if (/^(Аркуш|Sheet|Лист)\s?\d+$/.test(s.getName()) && s.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(s); });
