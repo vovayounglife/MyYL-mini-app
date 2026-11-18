@@ -58,7 +58,7 @@
     known: { teamId: null, list: null, mine: false, detail: null, edit: null },
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
-    reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
+    thanks: false, reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
     reg: { step: 1, name: '', phone: '', email: '', regionId: '', areaId: '', teamId: '', newTeam: '', roles: {}, upper: false },
     roleReq: null, profile: null,
   };
@@ -225,7 +225,9 @@
     if (!S.me) return;
     const view = VIEWS[S.screen] ? VIEWS[S.screen]() : '';
     const nav = S.me.status === 'active' ? navHtml() : '';
-    $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}">${view}</main>${nav}`;
+    $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
+      <div id="thxT" class="thx-text">Дякую тобі за вірність в малому</div>
+      <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
     syncBack();
   }
@@ -440,6 +442,11 @@
     if (st.loading) h += '<div class="small muted center">Оновлюю…</div>';
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
 
+    const bars = d.chart.bars, max = Math.max.apply(null, bars.map((x) => x.v).concat([1]));
+    const short = (v) => d.cat === 'kr' ? df(v) : v >= 10000 ? Math.round(v / 1000) + 'k' : v >= 1000 ? df(v / 1000) + 'k' : nf(v);
+    h += `<div class="card"><h2>${esc(d.chart.title)}</h2><div class="small muted" style="margin-bottom:12px">${esc(d.chart.sub)}</div>
+      <div class="chart">${bars.map((x, i) => `<div class="bar${i === bars.length - 1 ? ' last' : ''}"><span>${x.v ? short(x.v) : ''}</span><i style="height:${Math.max(2, Math.round(x.v / max * 118))}px"></i></div>`).join('')}</div>
+      <div class="chart-labels">${bars.map((x) => `<span>${esc(x.label)}</span>`).join('')}</div></div>`;
     // розбивка — головний спосіб навігації вниз
     const b = d.breakdown;
     if (b.rows.length) {
@@ -476,14 +483,11 @@
           <span class="xs muted">${r.none ? '«Не було»: ' + r.none + ' · ' : ''}ще не здали: ${r.missing.length}</span></button>`;
       }).join('')}</div>`;
     }
-    const bars = d.chart.bars, max = Math.max.apply(null, bars.map((x) => x.v).concat([1]));
-    const short = (v) => d.cat === 'kr' ? df(v) : v >= 10000 ? Math.round(v / 1000) + 'k' : v >= 1000 ? df(v / 1000) + 'k' : nf(v);
-    h += `<div class="card"><h2>${esc(d.chart.title)}</h2><div class="small muted" style="margin-bottom:12px">${esc(d.chart.sub)}</div>
-      <div class="chart">${bars.map((x, i) => `<div class="bar${i === bars.length - 1 ? ' last' : ''}"><span>${x.v ? short(x.v) : ''}</span><i style="height:${Math.max(2, Math.round(x.v / max * 118))}px"></i></div>`).join('')}</div>
-      <div class="chart-labels">${bars.map((x) => `<span>${esc(x.label)}</span>`).join('')}</div></div>`;
     const rep = d.report.filter((r) => r.type === d.cat)[0];
     if (rep) {
-      h += `<div class="card col"><h2>Цього тижня ще не здали${rep.missing.length ? ' · ' + rep.missing.length : ''}</h2>${rep.missing.length ? `<div class="row wrap" style="gap:8px">${rep.missing.slice(0, st.showMiss ? 999 : 20).map((m) => `<span class="tag warn">${esc(m)}</span>`).join('')}${rep.missing.length > 20 && !st.showMiss ? `<button type="button" class="tag" style="border:0" data-a="statsShowMiss">…ще ${rep.missing.length - 20}</button>` : ''}</div>` : '<div class="b" style="color:var(--teal)">Усі здали</div>'}
+      const open = st.showMiss;
+      h += `<div class="card col"><div class="row between"><h2>Цього тижня ще не здали · ${rep.missing.length}</h2>${rep.missing.length ? `<button type="button" class="link-btn" data-a="statsShowMiss">${open ? 'Сховати' : 'Показати'}</button>` : ''}</div>
+        ${!rep.missing.length ? '<div class="b" style="color:var(--teal)">Усі здали</div>' : open ? `<div class="row wrap" style="gap:8px;max-height:280px;overflow:auto">${rep.missing.map((m) => `<span class="tag warn">${esc(m)}</span>`).join('')}</div>` : ''}
         <div class="small muted">Відмітили «не було»: ${rep.none}</div>
         ${d.canNudge && rep.missing.length ? `<button type="button" class="btn sec2 sm" data-a="nudge" data-type="${rep.type}">Нагадати їм у Telegram</button>` : ''}</div>`;
     }
@@ -727,6 +731,8 @@
 
   // ───────────── ДІЇ ─────────────
   const A = {};
+  function thank() { S.thanks = true; haptic('success'); render(); }
+  A.thanksClose = () => { try { tg.HapticFeedback.impactOccurred('medium'); } catch (e) { /* ок */ } S.thanks = false; render(); };
   A.reload = () => { $app.innerHTML = loading(); S.me = null; loadMe(); };
   A.back = back;
   A.tab = (d) => go(d.s);
@@ -756,12 +762,12 @@
     const res = await run(() => api('saveReport', {
       type: a.type, teamId: a.teamId, mode: a.mode, date: a.date, teens: a.teens, newT: a.newT, leaders: a.leaders, hours: a.hours,
       topic: a.topic, note: a.note, attendees: a.mark ? Object.keys(a.att).filter((k) => a.att[k]) : [],
-    }), 'Збережено. Дякую!');
-    if (res) { S.me.week = res.week; go('home'); }
+    }));
+    if (res) { S.me.week = res.week; go('home'); thank(); }
   };
   A.markNone = async (d) => {
-    const res = await run(() => api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }), 'Відмічено: ' + typeOf(d.type).none.toLowerCase());
-    if (res) { S.me.week = res.week; if (S.screen === 'add') go('home'); else render(); }
+    const res = await run(() => api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }));
+    if (res) { S.me.week = res.week; if (S.screen === 'add') go('home'); thank(); }
   };
 
   // календар
@@ -810,7 +816,7 @@
   };
   A.statsSort = (d) => { S.stats.sort = d.s; render(); };
   A.statsShowAll = () => { S.stats.showAll = !S.stats.showAll; render(); };
-  A.statsShowMiss = () => { S.stats.showMiss = true; render(); };
+  A.statsShowMiss = () => { S.stats.showMiss = !S.stats.showMiss; render(); };
 
   // структура
   A.structToggle = (d) => { S.structOpen[d.id] = !S.structOpen[d.id]; render(); };
