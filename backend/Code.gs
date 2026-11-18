@@ -59,7 +59,7 @@ const HEAD = {
   REGIONS: ['ID', 'Назва', 'Папка'],
   AREAS: ['ID', 'Регіон ID', 'Назва', 'Папка'],
   TEAMS: ['ID', 'Ерія ID', 'Назва', 'Таблиця', 'Активна', 'Знаних'],
-  PEOPLE: ['Telegram ID', 'Username', "Ім'я", 'Телефон', 'Gmail', 'Дата народження', 'Рік покаяння', 'Рік хрещення', 'Рік ЛПYL', 'Відповідальності', 'Зареєстровано'],
+  PEOPLE: ['Telegram ID', 'Username', "Ім'я", 'Телефон', 'Gmail', 'Дата народження', 'Рік покаяння', 'Рік хрещення', 'Рік ЛПYL', 'Відповідальності', 'Зареєстровано', 'Статус'],
   ROLES: ['ID', 'Telegram ID', "Ім'я", 'Роль', 'Рівень', 'Обʼєкт ID', 'Обʼєкт', 'Статус', 'Хто вирішив', 'Дата заявки', 'Дата рішення'],
   EVENTS: ['ID', 'Рівень', 'Обʼєкт ID', 'Назва', 'Дата', 'Час', 'Місце', 'Опис', 'Автор ID', 'Автор', 'Створено'],
   RSVP: ['Подія ID', 'Telegram ID', "Ім'я", 'Команда', 'Дата'],
@@ -211,7 +211,7 @@ const API = {};
 API.me = function (c) {
   const st = loadStruct_();
   const out = {
-    user: { id: c.id, name: c.name, username: c.tg.username || '', phone: c.person ? c.person.phone : '', email: c.person ? c.person.email : '' },
+    user: { id: c.id, name: c.name, username: c.tg.username || '', phone: c.person ? c.person.phone : '', email: c.person ? c.person.email : '', title: c.person ? c.person.title : '' },
     profile: c.person ? profileOf_(c.person) : null,
     structure: {
       regions: st.regions.map(function (r) { return { id: r.id, name: r.name }; }),
@@ -1129,6 +1129,7 @@ function getPerson_(id) {
   return {
     row: r._row, tgId: str_(r['Telegram ID']), username: str_(r['Username']), name: str_(r["Ім'я"]), phone: str_(r['Телефон']), email: str_(r['Gmail']),
     bday: dayStr_(r['Дата народження']), repent: str_(r['Рік покаяння']), baptism: str_(r['Рік хрещення']), lpyl: str_(r['Рік ЛПYL']), resp: str_(r['Відповідальності']),
+    title: str_(r['Статус']),
   };
 }
 
@@ -1145,6 +1146,7 @@ function savePerson_(c, d) {
     if (d.baptism != null) v['Рік хрещення'] = cell_(d.baptism);
     if (d.lpyl != null) v['Рік ЛПYL'] = cell_(d.lpyl);
     if (d.resp != null) v['Відповідальності'] = cell_(d.resp);
+    if (d.title != null) { ensureColumn_(SH.PEOPLE, 'Статус'); v['Статус'] = cell_(String(d.title).slice(0, 60)); }
     v['Username'] = (c.tg && c.tg.username) || (p && p.username) || '';
     if (p) update_(SH.PEOPLE, p.row, v);
     else append_(SH.PEOPLE, Object.assign({ 'Telegram ID': c.id, 'Зареєстровано': new Date() }, v));
@@ -1152,7 +1154,16 @@ function savePerson_(c, d) {
   resetMemo_('rows_' + SH.PEOPLE);
 }
 
-function profileOf_(p) { return { name: p.name, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp }; }
+function profileOf_(p) { return { name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp }; }
+
+// додає колонку в кінець аркуша, якщо її ще немає (для таблиць, створених старішою версією)
+function ensureColumn_(name, header) {
+  const sh = sheet_(name);
+  const h = headerOf_(sh);
+  if (h.indexOf(header) >= 0) return;
+  sh.getRange(1, h.length + 1).setValue(header).setFontWeight('bold').setBackground('#fde8df');
+  resetMemo_('rows_' + name);
+}
 function roleOut_(r) { return { id: r.id, key: r.key, label: r.label, level: r.level, unitId: r.unitId, unitName: r.unitName, status: r.status }; }
 function teamOut_(id) { const st = loadStruct_(); const t = st.team[id]; return { id: id, name: t.name, areaId: t.areaId, areaName: (st.area[t.areaId] || {}).name || '', regionId: st.teamRegion(id) }; }
 function finOut_(r) {

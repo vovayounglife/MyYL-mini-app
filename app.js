@@ -112,6 +112,9 @@
   const teamName = (id) => (teamById(id) || {}).name || '—';
   const activeRoles = () => (S.me.roles || []).filter((r) => r.status === 'активна');
   const roleLine = () => activeRoles().map((r) => r.label + ' · ' + r.unitName).join(', ');
+  const myLine = () => (S.me.user.title || roleLine());
+  const myPhoto = () => { try { return (tg.initDataUnsafe.user || {}).photo_url || ''; } catch (e) { return ''; } };
+  const myAvatar = () => myPhoto() ? `<img class="avatar lg" src="${esc(myPhoto())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
   const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0];
   const myTeamFirst = (ids) => { const mine = (S.me.myTeams || []).map((t) => t.id).filter((id) => ids.indexOf(id) >= 0); return mine[0] || ids[0] || null; };
 
@@ -243,7 +246,7 @@
   // ───────────── ГОЛОВНА ─────────────
   VIEWS.home = function () {
     const m = me(), c = caps();
-    let h = `<div class="row"><div class="avatar lg">${esc(initials(m.user.name))}</div><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(roleLine())}</div></div></div>`;
+    let h = `<div class="row">${myAvatar()}<div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
     if (items.length) {
       const done = items.filter((x) => x.status !== 'missing').length;
@@ -454,7 +457,7 @@
     const c = caps();
     const items = sectionTiles().map((t) => ({ k: t.k, label: t.label, sub: t.sub, icon: t.icon, ic: t.ic }));
     if (c.approve) items.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
-    items.push({ k: 'profile', label: 'Мій профіль', sub: roleLine(), icon: 'profile', ic: 'ic-soft' });
+    items.push({ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' });
     return header('Ще') + `<div class="card list">${items.map((m) => `<button type="button" class="li" data-a="tabGo" data-s="${m.k}"><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
   };
@@ -564,10 +567,10 @@
     if (S.roleReq) return roleReqView();
     const m = me(), p = S.profile || {};
     let h = header('Мій профіль');
-    h += `<div class="row"><span class="avatar lg">${esc(initials(m.user.name))}</span><div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${m.user.username ? '@' + esc(m.user.username) : ''}</div></div></div>`;
+    h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
       <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">+ Попросити ще роль</button></div>`;
-    const F = [['name', 'Імʼя та прізвище', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
+    const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
     return h;
@@ -768,7 +771,7 @@
   };
 
   // профіль
-  A.profileSave = async () => { const res = await run(() => api('saveProfile', S.profile), 'Анкету збережено'); if (res) { S.me.profile = res; S.me.user.name = res.name || S.me.user.name; render(); } };
+  A.profileSave = async () => { const res = await run(() => api('saveProfile', S.profile), 'Анкету збережено'); if (res) { S.me.profile = res; S.me.user.name = res.name || S.me.user.name; S.me.user.title = res.title || ''; render(); } };
   A.roleReqOpen = () => {
     const t = (S.me.myTeams || [])[0];
     S.roleReq = { regionId: t ? t.regionId : '', areaId: t ? t.areaId : '', teamId: t ? t.id : '', newTeam: '', roles: {}, upper: false, email: (S.me.profile || {}).email || '' };
