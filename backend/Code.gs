@@ -36,6 +36,8 @@ const ROLES = [
   { key: 'HELPER', label: 'Помічник', rank: 10, level: 'team' },
   { key: 'SUGAR', label: 'Сахарок', rank: 11, level: 'team' },
   { key: 'VOLUNTEER', label: 'Волонтер', rank: 12, level: 'team' },
+  // Працівник офісу: привʼязаний до регіону (зазвичай «Office»), поки що бачить лише календар у межах офісу
+  { key: 'OFFICE', label: 'Працівник офісу', rank: 13, level: 'region', viewOnly: true },
 ];
 // Права ролей команди (найнижча роль, якій ще можна):
 const RANK = {
@@ -159,7 +161,9 @@ function ctx_(tg) {
   const person = getPerson_(id);
   const all = loadRoles_().filter(function (r) { return r.tgId === id; });
   const active = all.filter(function (r) { return r.status === ST.ACTIVE; });
-  return { id: id, tg: tg, person: person, roles: active, allRoles: all, name: (person && person.name) || fullName_(tg) };
+  // roles — ролі з можливостями; active — усі активні (для календаря й статусу)
+  const roles = active.filter(function (r) { return !(roleDef_(r.key) || {}).viewOnly; });
+  return { id: id, tg: tg, person: person, roles: roles, active: active, allRoles: all, name: (person && person.name) || fullName_(tg) };
 }
 
 function roleDef_(key) { return ROLES.filter(function (r) { return r.key === key; })[0] || null; }
@@ -194,21 +198,59 @@ function canTeam_(c, teamId, maxRank) {
   return teamRoles_(c, teamId, maxRank).length > 0 || upperRoles_(c).some(function (r) { return covers_(r, 'team', teamId); });
 }
 function isSugarOnly_(c) { return c.roles.length > 0 && c.roles.every(function (r) { return r.key === 'SUGAR'; }); }
-// Хто підтверджує ролі:
-//  • Раб Божий — будь-яку роль;
-//  • Еріа Директор і вище (Нац. Адмін, регіон, Еріа Директор) — лише Раб Божий;
-//  • Капітана — безпосередньо Еріа Директор або Еріа Адмін його ерії;
-//  • решту — хтось вищий за роль у своїх межах (Капітан і вище).
-const ONLY_SUPER_MAX_RANK = 4;
-const CAPTAIN_APPROVERS = ['AREA_DIRECTOR', 'AREA_ADMIN'];
+// ───── Хто підтверджує ролі ─────
+// Раб Божий може підтвердити будь-яку роль. Для решти — таблиця нижче:
+//   'same'  — така сама одиниця (той самий регіон / ерія);
+//   'cover' — роль накриває одиницю заявки (регіон → його ерії й команди, ерія → її команди).
+// Ролі команди, яких тут немає (Адмін команди … Волонтер), підтверджує Капітан і будь-хто вищий у своїх межах.
+const APPROVAL = {
+  NATIONAL_ADMIN: [],
+  REGIONAL_DIRECTOR: [],
+  REGIONAL_ADMIN: [['REGIONAL_DIRECTOR', 'same']],
+  AREA_DIRECTOR: [['REGIONAL_DIRECTOR', 'cover']],
+  AREA_ADMIN: [['AREA_DIRECTOR', 'same'], ['REGIONAL_DIRECTOR', 'cover'], ['REGIONAL_ADMIN', 'cover']],
+  CAPTAIN: [['AREA_DIRECTOR', 'cover'], ['AREA_ADMIN', 'cover'], ['REGIONAL_ADMIN', 'cover']],
+  OFFICE: [['REGIONAL_DIRECTOR', 'same'], ['REGIONAL_ADMIN', 'same']],
+};
+// Для яких ролей Раб Божий завжди отримує сповіщення (для інших — лише якщо більше нікому підтвердити)
+const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
+
+function ruleMatch_(r, rule, target) {
+  if (r.key !== rule[0]) return false;
+  if (rule[1] === 'same') return r.level === target.level && r.unitId === target.unitId;
+  return covers_(r, target.level, target.unitId);
+}
 function canDecide_(c, target) {
   const def = roleDef_(target.key);
   if (!def || def.key === 'SUPER') return false;
   if (c.roles.some(function (r) { return r.key === 'SUPER'; })) return true;
-  if (def.rank <= ONLY_SUPER_MAX_RANK) return false;
-  if (def.key === 'CAPTAIN') return c.roles.some(function (r) { return CAPTAIN_APPROVERS.indexOf(r.key) >= 0 && covers_(r, 'team', target.unitId); });
+  const rules = APPROVAL[def.key];
+  if (rules) return c.roles.some(function (r) { return rules.some(function (rule) { return ruleMatch_(r, rule, target); }); });
   return c.roles.some(function (r) { return r.rank <= RANK.APPROVE && r.rank < def.rank && covers_(r, target.level, target.unitId); });
 }
+// Кому з людей надсилати сповіщення про заявку — найближчі відповідальні
+function primaryApprovers_(target) {
+  const def = roleDef_(target.key);
+  const act = loadRoles_().filter(function (r) { return r.status === ST.ACTIVE && r.tgId !== target.tgId; });
+  const ids = function (pred) { return uniq_(act.filter(pred).map(function (r) { return r.tgId; })); };
+  const supers = ids(function (r) { return r.key === 'SUPER'; });
+  let out = [];
+  const rules = APPROVAL[def.key];
+  if (rules) {
+    out = ids(function (r) { return rules.some(function (rule) { return ruleMatch_(r, rule, target); }); });
+    if (SUPER_NOTIFY.indexOf(def.key) >= 0) out = uniq_(out.concat(supers));
+  } else {
+    // ролі команди нижче Капітана: Капітан → ерія → регіон
+    const tiers = [
+      function (r) { return r.key === 'CAPTAIN' && r.unitId === target.unitId; },
+      function (r) { return (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && covers_(r, 'team', target.unitId); },
+      function (r) { return (r.key === 'REGIONAL_DIRECTOR' || r.key === 'REGIONAL_ADMIN') && covers_(r, 'team', target.unitId); },
+    ];
+    for (let i = 0; i < tiers.length && !out.length; i++) out = ids(tiers[i]);
+  }
+  return out.length ? out : supers;
+}
+
 function reportTeams_(c, maxRank) {
   const st = loadStruct_();
   const ids = {};
@@ -236,7 +278,7 @@ API.me = function (c) {
     roleDefs: ROLES.map(function (r) { return { key: r.key, label: r.label, level: r.level, rank: r.rank }; }),
     roles: c.allRoles.filter(function (r) { return r.status === ST.ACTIVE || r.status === ST.PENDING; }).map(roleOut_),
   };
-  if (!c.roles.length) {
+  if (!c.active.length) {
     out.status = c.allRoles.some(function (r) { return r.status === ST.PENDING; }) ? 'pending' : 'new';
     if (out.status === 'pending') out.approvers = pendingApproversText_(c);
     return out;
@@ -249,7 +291,7 @@ API.me = function (c) {
     knownTeams: reportTeams_(c, RANK.KNOWN),
     financeTeams: reportTeams_(c, RANK.FINANCE),
     viewTeams: st.teams.filter(function (t) { return t.active && canViewTeam_(c, t.id); }).map(function (t) { return t.id; }),
-    approve: c.roles.some(function (r) { return r.rank <= RANK.APPROVE; }),
+    approve: canApproveAny_(c),
     eventUnits: eventUnits_(c),
     upper: upperRoles_(c).length > 0,
     sugarOnly: isSugarOnly_(c),
@@ -259,7 +301,7 @@ API.me = function (c) {
   out.myTeams = Object.keys(myTeams).map(function (id) { return teamOut_(id); });
   out.scopes = allowedScopes_(c);
   out.week = weekStatus_(c);
-  out.pendingCount = out.caps.approve ? pendingFor_(c).length : 0;
+  out.pendingCount = out.caps.approve ? pendingFor_(c).filter(function (r) { return primaryApprovers_(r).indexOf(c.id) >= 0; }).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
 };
@@ -292,7 +334,8 @@ function requestRoles_(c, d) {
     teamId = createTeam_(areaId, newName, false);
   }
   if (needTeam && !st.team[teamId] && !loadStruct_(true).team[teamId]) bad_('Команду не знайдено.');
-  if (keys.some(function (k) { return roleDef_(k).rank <= RANK.GMAIL; }) && !/@/.test(str_(d.email) || (getPerson_(c.id) || {}).email || '')) {
+  const isSuper = (c.roles || []).some(function (r) { return r.key === 'SUPER'; });
+  if (!isSuper && keys.some(function (k) { return roleDef_(k).rank <= RANK.GMAIL; }) && !/@/.test(str_(d.email) || (getPerson_(c.id) || {}).email || '')) {
     bad_('Для ролі Капітан і вище вкажи Gmail — на нього відкриється доступ до таблиць.');
   }
   if (d.email) savePerson_(c, { email: d.email });
@@ -314,21 +357,38 @@ function requestRoles_(c, d) {
     });
   });
   resetMemo_('roles');
+  // Раб Божий не чекає на підтвердження власних ролей
+  if (created.length && c.roles.some(function (r) { return r.key === 'SUPER'; })) {
+    const mine = loadRoles_().filter(function (r) { return created.indexOf(r.id) >= 0; });
+    mine.forEach(function (r) {
+      if (r.level === 'team') activateTeam_(r.unitId);
+      update_(SH.ROLES, r.row, { 'Статус': ST.ACTIVE, 'Хто вирішив': c.name, 'Дата рішення': new Date() });
+    });
+    resetMemo_();
+    mine.forEach(function (r) { try { grantDrive_(r); } catch (e) { console.warn('Drive: ' + e); } });
+    return { status: 'active', approvers: '' };
+  }
   if (created.length) notifyApprovers_(c, created);
   return { status: 'pending', approvers: pendingApproversText_(ctx_(c.tg)) };
 }
 
 API.requests = function (c) {
-  if (!c.roles.some(function (r) { return r.rank <= RANK.APPROVE; })) deny_();
+  if (!canApproveAny_(c)) deny_();
   const byPerson = {};
   pendingFor_(c).forEach(function (r) {
-    const p = byPerson[r.tgId] = byPerson[r.tgId] || { tgId: r.tgId, name: r.name, username: '', when: r.requested, roles: [] };
+    const p = byPerson[r.tgId] = byPerson[r.tgId] || { tgId: r.tgId, name: r.name, username: '', when: r.requested, roles: [], primary: false };
     const person = getPerson_(r.tgId);
     if (person) { p.username = person.username; p.phone = person.phone; }
-    p.roles.push(roleOut_(r));
+    const o = roleOut_(r);
+    o.primary = primaryApprovers_(r).indexOf(c.id) >= 0;
+    if (o.primary) p.primary = true;
+    p.roles.push(o);
   });
-  return Object.keys(byPerson).map(function (k) { return byPerson[k]; });
+  return Object.keys(byPerson).map(function (k) { return byPerson[k]; }).sort(function (a, b) { return (b.primary - a.primary); });
 };
+function canApproveAny_(c) {
+  return c.roles.some(function (r) { return r.rank <= RANK.APPROVE || r.key === 'REGIONAL_ADMIN' || r.key === 'AREA_ADMIN'; });
+}
 
 API.decide = function (c, d) {
   const ids = (d.roleIds || []).map(String);
@@ -522,6 +582,12 @@ function eventUnits_(c) {
     if (seen[k]) return;
     seen[k] = true;
     out.push({ level: r.level, unitId: r.unitId, label: levelLabel_(r.level, r.unitId) });
+    // Раб Божий може додавати події й у календар будь-якого регіону
+    if (r.key === 'SUPER') loadStruct_().regions.forEach(function (x) {
+      if (seen['region:' + x.id]) return;
+      seen['region:' + x.id] = true;
+      out.push({ level: 'region', unitId: x.id, label: levelLabel_('region', x.id) });
+    });
   });
   return out;
 }
@@ -534,7 +600,7 @@ function ancestors_(level, unitId) {
   return out;
 }
 function canSeeEvent_(c, ev) {
-  return c.roles.some(function (r) {
+  return (c.active || c.roles).some(function (r) {
     if (covers_(r, ev.level, ev.unitId)) return true;
     return ancestors_(r.level, r.unitId).some(function (a) { return a.level === ev.level && a.unitId === ev.unitId; });
   });
@@ -942,16 +1008,10 @@ function pendingFor_(c) {
   return loadRoles_().filter(function (r) { return r.status === ST.PENDING && r.tgId !== c.id && canDecide_(c, r); });
 }
 
-function approversFor_(target) {
-  const byPerson = {};
-  loadRoles_().filter(function (r) { return r.status === ST.ACTIVE; }).forEach(function (r) { (byPerson[r.tgId] = byPerson[r.tgId] || []).push(r); });
-  return Object.keys(byPerson).filter(function (id) { return id !== target.tgId && canDecide_({ id: id, roles: byPerson[id] }, target); });
-}
-
 function notifyApprovers_(c, roleIds) {
   const rows = loadRoles_().filter(function (r) { return roleIds.indexOf(r.id) >= 0; });
   const who = {};
-  rows.forEach(function (r) { approversFor_(r).forEach(function (id) { who[id] = true; }); });
+  rows.forEach(function (r) { primaryApprovers_(r).forEach(function (id) { who[id] = true; }); });
   const text = '🆕 <b>Нова заявка</b>\n' + esc_(c.name) + (c.tg.username ? ' (@' + esc_(c.tg.username) + ')' : '') + '\n' +
     rows.map(function (r) { return '• ' + esc_(r.label) + ' · ' + esc_(r.unitName); }).join('\n');
   Object.keys(who).forEach(function (id) { sendApp_(id, text, 'Розглянути', 'requests'); Utilities.sleep(40); });
@@ -960,17 +1020,14 @@ function notifyApprovers_(c, roleIds) {
 function pendingApproversText_(c) {
   const p = c.allRoles.filter(function (r) { return r.status === ST.PENDING; });
   if (!p.length) return '';
-  const st = loadStruct_();
-  const r = p[0];
-  if (p.some(function (x) { return roleDef_(x.key).rank <= ONLY_SUPER_MAX_RANK; })) return ROLES[0].label;
-  if (r.level === 'team') {
-    const t = st.team[r.unitId];
-    const area = t ? (st.area[t.areaId] || {}).name : '';
-    const needArea = p.some(function (x) { return roleDef_(x.key).rank <= RANK.APPROVE; }) || (t && !t.active);
-    return needArea ? 'Еріа Директор або Еріа Адмін ерії ' + area : 'капітан команди «' + (t ? t.name : '') + '» або керівництво ерії ' + area;
-  }
-  if (r.level === 'area') return 'Еріа Директор ерії ' + ((st.area[r.unitId] || {}).name || '') + ' або керівництво регіону';
-  return 'керівництво вищого рівня';
+  const all = loadRoles_().filter(function (r) { return r.status === ST.ACTIVE; });
+  const ids = uniq_([].concat.apply([], p.map(primaryApprovers_)));
+  const names = ids.slice(0, 4).map(function (id) {
+    const person = getPerson_(id);
+    const top = all.filter(function (r) { return r.tgId === id; }).sort(function (a, b) { return a.rank - b.rank; })[0];
+    return ((person && person.name) || (top && top.name) || '') + (top ? ' (' + top.label + ')' : '');
+  });
+  return names.length ? names.join(', ') + (ids.length > 4 ? ' та інші' : '') : 'керівництво';
 }
 
 // ───────────────────────────── ДИСК: ПАПКИ, ТАБЛИЦІ, ДОСТУПИ ─────────────────────────────

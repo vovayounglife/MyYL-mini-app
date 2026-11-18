@@ -112,7 +112,11 @@
   const teamName = (id) => (teamById(id) || {}).name || '—';
   const activeRoles = () => (S.me.roles || []).filter((r) => r.status === 'активна');
   const roleLine = () => activeRoles().map((r) => r.label + ' · ' + r.unitName).join(', ');
-  const myLine = () => (S.me.user.title || roleLine());
+  const myLine = () => {
+    if (S.me.user.title) return S.me.user.title;
+    const r = activeRoles();
+    return r.slice(0, 2).map((x) => x.label + ' · ' + x.unitName).join(', ') + (r.length > 2 ? ' +' + (r.length - 2) : '');
+  };
   const myPhoto = () => { try { return (tg.initDataUnsafe.user || {}).photo_url || ''; } catch (e) { return ''; } };
   const myAvatar = () => myPhoto() ? `<img class="avatar lg" src="${esc(myPhoto())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
   const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0];
@@ -240,7 +244,8 @@
   function navHtml() {
     const c = caps();
     const canReport = ['club', 'mg', 'kr'].some((t) => (c.report[t] || []).length);
-    const tabs = [['home', 'Головна'], ['add', 'Внести'], ['calendar', 'Календар'], ['stats', 'Статистика'], ['more', 'Ще']].filter((t) => t[0] !== 'add' || canReport);
+    const tabs = [['home', 'Головна'], ['add', 'Внести'], ['calendar', 'Календар'], ['stats', 'Статистика'], ['more', 'Ще']]
+      .filter((t) => (t[0] !== 'add' || canReport) && (t[0] !== 'stats' || (S.me.scopes || []).length));
     const active = TOP.indexOf(S.screen) >= 0 ? S.screen : 'more';
     return `<nav class="tabs" aria-label="Розділи"><div class="in-nav">${tabs.map((t) =>
       `<button type="button" class="${t[0] === active ? 'on' : ''}" data-a="tab" data-s="${t[0]}">${icon(t[0], 24)}${t[1]}${t[0] === 'more' && S.me.pendingCount ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></nav>`;
@@ -637,15 +642,21 @@
 
   // ───────────── ЗАЯВКИ ─────────────
   VIEWS.requests = function () {
-    let h = header('Заявки', 'Ти підтверджуєш лише ролі, нижчі за свою, у своїх межах');
+    let h = header('Заявки', 'Тут — заявки, які чекають саме на тебе');
     if (!S.reqs) return h + loading();
-    if (!S.reqs.length) return h + '<div class="empty">Нових заявок немає</div>';
-    h += S.reqs.map((p) => `<div class="card col"><div class="row"><span class="avatar" style="background:rgba(76,110,245,.18)">${esc(initials(p.name))}</span>
+    const main = S.reqs.filter((p) => p.primary), other = S.reqs.filter((p) => !p.primary);
+    if (!main.length) h += '<div class="empty">Нових заявок немає</div>';
+    const card = (p) => `<div class="card col"><div class="row"><span class="avatar" style="background:rgba(76,110,245,.18)">${esc(initials(p.name))}</span>
       <div class="grow"><div class="b">${esc(p.name)}</div><div class="small muted">${p.username ? '@' + esc(p.username) : ''}${p.phone ? ' · ' + esc(p.phone) : ''}</div></div></div>
       <div class="col" style="gap:4px">${p.roles.map((r) => `<label class="check" style="border:0;border-radius:12px;background:var(--soft);min-height:46px;padding:0 12px"><input type="checkbox" data-ch="reqToggle" data-id="${esc(r.id)}"${S.reqSel[r.id] ? ' checked' : ''}>
         <span class="grow"><span class="b">${esc(r.label)}</span> <span class="small muted">· ${esc(r.unitName)}</span></span></label>`).join('')}</div>
       <div class="row"><button type="button" class="btn sec2 sm" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="0">Відхилити</button>
-      <button type="button" class="btn teal sm grow" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="1">Підтвердити вибрані</button></div></div>`).join('');
+      <button type="button" class="btn teal sm grow" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="1">Підтвердити вибрані</button></div></div>`;
+    h += main.map(card).join('');
+    if (other.length) {
+      h += `<button type="button" class="btn ghost" data-a="reqOthers">${S.reqOthers ? 'Сховати' : 'Показати'} інші заявки, які ти теж можеш підтвердити (${other.length})</button>`;
+      if (S.reqOthers) h += '<div class="xs muted">Їх уже отримали відповідальні на своєму рівні. Втручайся, лише якщо потрібно.</div>' + other.map(card).join('');
+    }
     return h;
   };
 
@@ -656,7 +667,7 @@
     let h = header('Мій профіль');
     h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
-      <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">+ Попросити ще роль</button></div>`;
+      <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${activeRoles().some((r) => r.key === 'SUPER') ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
     const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
@@ -682,7 +693,8 @@
     const defs = me().roleDefs.filter((r) => r.key !== 'SUPER');
     const team = defs.filter((r) => r.level === 'team');
     const upper = defs.filter((r) => r.level !== 'team');
-    const box = (r) => `<label class="check"><input type="checkbox" data-ch="${prefix}Role" data-k="${r.key}"${o.roles[r.key] ? ' checked' : ''}><span class="grow b" style="font-weight:500">${esc(r.label)}</span></label>`;
+    const HINT = { OFFICE: 'поки що лише календар офісу' };
+    const box = (r) => `<label class="check"><input type="checkbox" data-ch="${prefix}Role" data-k="${r.key}"${o.roles[r.key] ? ' checked' : ''}><span class="grow b" style="font-weight:500">${esc(r.label)}</span>${HINT[r.key] ? `<span class="xs muted">${HINT[r.key]}</span>` : ''}</label>`;
     let h = `<div class="card list">${team.map(box).join('')}</div>`;
     h += `<label class="toggle-row"><span class="b" style="font-weight:500">Я служу на рівні ерії, регіону чи країни</span><input type="checkbox" data-ch="${prefix}Upper"${o.upper ? ' checked' : ''}></label>`;
     if (o.upper) h += `<div class="card list">${upper.map(box).join('')}</div>`;
@@ -879,6 +891,7 @@
   A.finSave = async () => { const c = S.fin.cur; const res = await run(() => api('financeSave', Object.assign({ teamId: S.fin.teamId, month: S.fin.month }, c)), 'Фінансовий звіт збережено'); if (res) loadFin(); };
 
   // заявки
+  A.reqOthers = () => { S.reqOthers = !S.reqOthers; render(); };
   A.reqToggle = (d, el) => { S.reqSel[d.id] = el.checked; };
   A.reqDecide = async (d) => {
     const p = S.reqs.filter((x) => x.tgId === d.tg)[0];
@@ -903,8 +916,8 @@
   A.roleReqSend = async () => {
     const p = rolePayload(S.roleReq);
     if (!p.roles.length) return toast('Обери роль');
-    const res = await run(() => api('requestRoles', p), 'Заявку надіслано');
-    if (res) { S.roleReq = null; S.me = await api('me'); render(); }
+    const res = await run(() => api('requestRoles', p));
+    if (res) { toast(res.status === 'active' ? 'Роль додано' : 'Заявку надіслано', 'success'); S.roleReq = null; S.me = await api('me'); S.profile = Object.assign({}, S.me.profile || {}); render(); }
   };
   ['reg', 'rr'].forEach((pre) => {
     const obj = () => (pre === 'reg' ? S.reg : S.roleReq);
