@@ -972,9 +972,9 @@ function claimAdmin_(m, code) {
   if (mine.some(function (r) { return r.key === top.key; })) return sendApp_(m.chat.id, 'Ти вже маєш роль <b>' + top.label + '</b> 🙂', 'Відкрити Young Life');
   const nats = mine.filter(function (r) { return r.key === 'NATIONAL_ADMIN'; });
   const nat = nats[0];
-  if (nat) update_(SH.ROLES, nat.row, { 'Роль': top.label, 'Хто вирішив': 'посилання власника', 'Дата рішення': new Date() });
   // зайві дублікати «Національний Адмін» у цієї ж людини — знімаємо
   nats.slice(1).forEach(function (r) { update_(SH.ROLES, r.row, { 'Статус': ST.REMOVED, 'Хто вирішив': 'посилання власника', 'Дата рішення': new Date() }); });
+  if (nat) update_(SH.ROLES, nat.row, { 'Роль': top.label, 'Хто вирішив': 'посилання власника', 'Дата рішення': new Date() });
   else append_(SH.ROLES, { 'ID': uid_(), 'Telegram ID': c.id, "Ім'я": c.name, 'Роль': top.label, 'Рівень': 'nat', 'Обʼєкт ID': '', 'Обʼєкт': 'Україна', 'Статус': ST.ACTIVE, 'Хто вирішив': 'посилання власника', 'Дата заявки': new Date(), 'Дата рішення': new Date() });
   resetMemo_();
   return sendApp_(m.chat.id, '✅ Готово! Твоя роль — <b>' + top.label + '</b>: найвищий рівень доступу.\nВідкрий застосунок, допиши профіль і поділись ботом з командами.', 'Відкрити Young Life');
