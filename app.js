@@ -58,7 +58,7 @@
     known: { teamId: null, list: null, mine: false, detail: null, edit: null },
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
-    reqs: null, reqSel: {},
+    reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
     reg: { step: 1, name: '', phone: '', email: '', regionId: '', areaId: '', teamId: '', newTeam: '', roles: {}, upper: false },
     roleReq: null, profile: null,
   };
@@ -131,13 +131,15 @@
     if (S.screen === 'calendar' && (S.ev || S.evForm)) { S.ev = null; S.evForm = null; return render(); }
     if (S.screen === 'known' && (S.known.detail || S.known.edit)) { if (S.known.edit && S.known.detail) S.known.edit = null; else { S.known.detail = null; S.known.edit = null; } return render(); }
     if (S.screen === 'profile' && S.roleReq) { S.roleReq = null; return render(); }
+    if (S.screen === 'structure' && S.structEdit) { S.structEdit = null; return render(); }
+    if (S.screen === 'stats' && S.stats.find) { S.stats.find = false; return render(); }
     if (S.screen === 'onboarding' && S.reg.step > 1) { S.reg.step--; return render(); }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1);
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find);
   }
   function syncBack() {
     if (!tg || !tg.BackButton) return;
@@ -153,6 +155,8 @@
     if (screen === 'team') { S.team.open = null; S.team.teamId = S.team.teamId && caps().viewTeams.indexOf(S.team.teamId) >= 0 ? S.team.teamId : myTeamFirst(caps().viewTeams); loadTeam(); }
     if (screen === 'finance') { S.fin.teamId = S.fin.teamId && caps().financeTeams.indexOf(S.fin.teamId) >= 0 ? S.fin.teamId : myTeamFirst(caps().financeTeams); loadFin(); }
     if (screen === 'requests') loadReqs();
+    if (screen === 'structure') { S.structEdit = null; loadTree(); }
+    if (screen === 'stats') { S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; }
     if (screen === 'profile') { S.roleReq = null; S.profile = Object.assign({}, S.me.profile || {}); }
   }
 
@@ -203,6 +207,11 @@
     S.fin.data = null; render();
     try { S.fin.data = await api('financeGet', { teamId: S.fin.teamId, month: S.fin.month }); S.fin.cur = Object.assign({}, S.fin.data.current); } catch (e) { toast(e.message); }
     if (S.screen === 'finance') render();
+  }
+  async function loadTree() {
+    S.tree = null; render();
+    try { S.tree = await api('structureTree'); } catch (e) { S.tree = []; toast(e.message); }
+    if (S.screen === 'structure') render();
   }
   async function loadReqs() {
     S.reqs = null; render();
@@ -292,6 +301,7 @@
     if ((c.knownTeams || []).length) out.push({ k: 'known', label: 'Знані по імені', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
     if ((c.viewTeams || []).length) out.push({ k: 'team', label: 'Склад команди', sub: 'ролі й анкети', icon: 'club', ic: 'ic-teal' });
     if ((c.financeTeams || []).length) out.push({ k: 'finance', label: 'Фінансовий звіт', sub: 'щомісяця', icon: 'finance', ic: 'ic-yellow' });
+    if (c.manage) out.push({ k: 'structure', label: 'Ерії та команди', sub: 'додати, перейменувати', icon: 'more', ic: 'ic-purple' });
     return out;
   }
 
@@ -410,16 +420,53 @@
   // ───────────── СТАТИСТИКА ─────────────
   VIEWS.stats = function () {
     const st = S.stats, d = st.data;
-    let h = header('Статистика', d ? d.scope.label : '');
-    const scopes = (d && d.scopes) || me().scopes || [];
-    if (scopes.length > 1) {
-      h += `<label class="f"><span>Рівень</span><select class="in" data-ch="statsScope">${scopes.map((s) => `<option value="${esc(s.key)}"${d && s.key === d.scope.key ? ' selected' : ''}>${'— '.repeat(s.depth)}${esc(s.label)}</option>`).join('')}</select></label>`;
-    }
+    let h = header('Статистика', '', d && (d.scopes || []).length > 1 ? `<button type="button" class="icon-btn" data-a="statsFindToggle" aria-label="Знайти регіон, ерію чи команду"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg></button>` : '');
     if (!d) return h + loading();
+    // хлібні крихти
+    if (d.path && d.path.length) {
+      h += `<nav aria-label="Рівень" class="row wrap" style="gap:4px">${d.path.map((p, i) => i === d.path.length - 1
+        ? `<span class="pill on" style="display:inline-flex;align-items:center">${esc(p.label)}</span>`
+        : `<button type="button" class="pill" data-a="statsDrill" data-k="${esc(p.key)}">${esc(p.label)}</button><span class="muted" aria-hidden="true">›</span>`).join('')}</nav>`;
+    }
+    // пошук рівня
+    if (st.find) {
+      const LV = { nat: 'Україна', region: 'Регіон', area: 'Ерія', team: 'Команда' };
+      h += `<div class="card col" style="gap:8px"><input class="in" type="search" placeholder="Регіон, ерія або команда…" data-live="statsFind" id="statsFindIn">
+        <div id="statsFindList" style="max-height:320px;overflow:auto">${d.scopes.map((s) => `<button type="button" class="li" style="min-height:48px;padding:8px 4px" data-a="statsDrill" data-k="${esc(s.key)}" data-q="${esc((s.name + ' ' + s.sub).toLowerCase())}">
+          <span class="grow"><span class="b" style="display:block">${esc(s.name)}</span>${s.sub ? `<span class="xs muted">${esc(s.sub)}</span>` : ''}</span><span class="tag">${LV[s.level]}</span></button>`).join('')}</div></div>`;
+    }
     if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === d.cat ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
     h += `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік']].map((p) => `<button type="button" class="${p[0] === st.period ? 'on' : ''}" data-a="statsPeriod" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
     if (st.loading) h += '<div class="small muted center">Оновлюю…</div>';
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
+
+    // розбивка — головний спосіб навігації вниз
+    const b = d.breakdown;
+    if (b.rows.length) {
+      let rows = b.rows.slice();
+      const sort = st.sort || 'value';
+      if (sort === 'name') rows.sort((x, y) => x.name.localeCompare(y.name));
+      if (sort === 'behind') rows.sort((x, y) => ((x.done || 0) / (x.total || 1)) - ((y.done || 0) / (y.total || 1)) || x.value - y.value);
+      const many = rows.length > 8;
+      const shown = many && !st.showAll ? rows.slice(0, 8) : rows;
+      const rmax = Math.max.apply(null, b.rows.map((r) => r.value).concat([1]));
+      const COL = ['var(--coral)', 'var(--yellow)', 'var(--turq)', 'var(--blue)', 'var(--purple)', 'var(--pink)'];
+      const hasRep = rows.some((r) => r.total != null);
+      h += `<div class="card col" style="gap:4px"><div class="row between"><h2>${esc(b.title)} · ${b.rows.length}</h2></div>
+        <div class="xs muted">Показник: ${esc(b.metric)}${hasRep ? ' · «здали» — ' + esc(b.repLabel) + ' цього тижня' : ''}</div>
+        <div class="pills" style="margin:6px 0 4px">${[['value', 'Більше'], ['name', 'А–Я']].concat(hasRep ? [['behind', 'Хто відстає']] : []).map((s) => `<button type="button" class="pill${sort === s[0] ? ' on' : ''}" style="min-height:34px" data-a="statsSort" data-s="${s[0]}">${s[1]}</button>`).join('')}</div>
+        ${many ? '<input class="in" type="search" placeholder="Пошук у списку" data-live="statsRowFind" style="min-height:42px;margin-bottom:4px">' : ''}
+        <div id="brkList">${shown.map((r, i) => {
+          const lag = r.total != null && r.done < r.total;
+          return `<button type="button" class="brk" data-q="${esc(r.name.toLowerCase())}" ${r.drill ? `data-a="statsDrill" data-k="${esc(r.drill)}"` : 'disabled style="cursor:default;opacity:1"'}>
+            <span class="row between" style="width:100%;gap:8px"><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}${r.drill ? ' <span class="muted">›</span>' : ''}</span>
+            ${r.total != null ? `<span class="tag ${lag ? 'warn' : 'ok'}" style="flex:0 0 auto">здали ${r.done}/${r.total}</span>` : ''}<span class="b" style="flex:0 0 auto;min-width:44px;text-align:right">${esc(r.text)}</span></span>
+            <span class="track" style="width:100%"><i style="width:${Math.round(r.value / rmax * 100)}%;background:${COL[i % 6]};border-radius:4px"></i></span></button>`;
+        }).join('')}</div>
+        ${many ? `<button type="button" class="link-btn" data-a="statsShowAll">${st.showAll ? 'Згорнути' : 'Показати всі (' + rows.length + ')'}</button>` : ''}
+        ${b.rows.some((r) => r.drill) ? '<div class="xs muted">Натисни на рядок, щоб перейти на рівень нижче</div>' : ''}</div>`;
+    }
+
     if (d.cat === 'overview') {
       h += `<div class="card col" style="gap:6px"><h2>Звітність цього тижня</h2><div class="small muted">${esc(d.weekLabel)}</div>${d.report.map((r) => {
         const tot = r.total || 1;
@@ -429,26 +476,62 @@
           <span class="xs muted">${r.none ? '«Не було»: ' + r.none + ' · ' : ''}ще не здали: ${r.missing.length}</span></button>`;
       }).join('')}</div>`;
     }
-    const bars = d.chart.bars, max = Math.max.apply(null, bars.map((b) => b.v).concat([1]));
+    const bars = d.chart.bars, max = Math.max.apply(null, bars.map((x) => x.v).concat([1]));
     const short = (v) => d.cat === 'kr' ? df(v) : v >= 10000 ? Math.round(v / 1000) + 'k' : v >= 1000 ? df(v / 1000) + 'k' : nf(v);
     h += `<div class="card"><h2>${esc(d.chart.title)}</h2><div class="small muted" style="margin-bottom:12px">${esc(d.chart.sub)}</div>
-      <div class="chart">${bars.map((b, i) => `<div class="bar${i === bars.length - 1 ? ' last' : ''}"><span>${b.v ? short(b.v) : ''}</span><i style="height:${Math.max(2, Math.round(b.v / max * 118))}px"></i></div>`).join('')}</div>
-      <div class="chart-labels">${bars.map((b) => `<span>${esc(b.label)}</span>`).join('')}</div></div>`;
-    if (d.breakdown.rows.length) {
-      const rmax = Math.max.apply(null, d.breakdown.rows.map((r) => r.value).concat([1]));
-      const COL = ['var(--coral)', 'var(--yellow)', 'var(--turq)', 'var(--blue)', 'var(--purple)', 'var(--pink)'];
-      h += `<div class="card col" style="gap:2px"><h2 style="margin-bottom:6px">${esc(d.breakdown.title)}</h2>${d.breakdown.rows.map((r, i) =>
-        `<button type="button" class="brk" ${r.drill ? `data-a="statsDrill" data-k="${esc(r.drill)}"` : 'disabled style="cursor:default;opacity:1"'}>
-          <span class="row between" style="width:100%"><span>${esc(r.name)}${r.drill ? ' <span class="muted">›</span>' : ''}</span><span class="b">${esc(r.text)}</span></span>
-          <span class="track" style="width:100%"><i style="width:${Math.round(r.value / rmax * 100)}%;background:${COL[i % 6]};border-radius:4px"></i></span></button>`).join('')}
-        ${d.breakdown.rows.some((r) => r.drill) ? '<div class="xs muted" style="margin-top:4px">Натисни на рядок, щоб перейти глибше</div>' : ''}</div>`;
-    }
+      <div class="chart">${bars.map((x, i) => `<div class="bar${i === bars.length - 1 ? ' last' : ''}"><span>${x.v ? short(x.v) : ''}</span><i style="height:${Math.max(2, Math.round(x.v / max * 118))}px"></i></div>`).join('')}</div>
+      <div class="chart-labels">${bars.map((x) => `<span>${esc(x.label)}</span>`).join('')}</div></div>`;
     const rep = d.report.filter((r) => r.type === d.cat)[0];
     if (rep) {
-      h += `<div class="card col"><h2>Цього тижня ще не здали</h2>${rep.missing.length ? `<div class="row wrap" style="gap:8px">${rep.missing.slice(0, 30).map((m) => `<span class="tag warn">${esc(m)}</span>`).join('')}${rep.missing.length > 30 ? `<span class="tag">…і ще ${rep.missing.length - 30}</span>` : ''}</div>` : '<div class="b" style="color:var(--teal)">Усі здали</div>'}
+      h += `<div class="card col"><h2>Цього тижня ще не здали${rep.missing.length ? ' · ' + rep.missing.length : ''}</h2>${rep.missing.length ? `<div class="row wrap" style="gap:8px">${rep.missing.slice(0, st.showMiss ? 999 : 20).map((m) => `<span class="tag warn">${esc(m)}</span>`).join('')}${rep.missing.length > 20 && !st.showMiss ? `<button type="button" class="tag" style="border:0" data-a="statsShowMiss">…ще ${rep.missing.length - 20}</button>` : ''}</div>` : '<div class="b" style="color:var(--teal)">Усі здали</div>'}
         <div class="small muted">Відмітили «не було»: ${rep.none}</div>
         ${d.canNudge && rep.missing.length ? `<button type="button" class="btn sec2 sm" data-a="nudge" data-type="${rep.type}">Нагадати їм у Telegram</button>` : ''}</div>`;
     }
+    return h;
+  };
+
+  // ───────────── СТРУКТУРА (ерії й команди) ─────────────
+  VIEWS.structure = function () {
+    const t = S.tree;
+    let h = header('Ерії та команди', 'Додавай, перейменовуй, закривай');
+    if (S.structEdit) {
+      const e = S.structEdit;
+      const title = e.kind === 'area' ? (e.id ? 'Перейменувати ерію' : 'Нова ерія · ' + e.parentName) : (e.id ? 'Перейменувати команду' : 'Нова команда · ' + e.parentName);
+      h += `<div class="card col"><h2>${esc(title)}</h2><label class="f"><span>Назва</span><input class="in" type="text" data-bind="structEdit.name" value="${esc(e.name)}" maxlength="60"></label>
+        <div class="row"><button type="button" class="btn sec2 sm" data-a="structCancel">Скасувати</button><button type="button" class="btn sm grow" data-a="structSave">Зберегти</button></div></div>`;
+    }
+    if (!t) return h + loading();
+    if (!t.length) return h + '<div class="empty">Немає ерій чи команд, якими ти керуєш</div>';
+    const total = t.reduce((a, r) => a + r.areas.reduce((x, ar) => x + ar.teams.length, 0), 0);
+    if (total > 10) h += '<input class="in" type="search" placeholder="Знайти ерію чи команду" data-live="structFind">';
+    const ST_TAG = { pending: '<span class="tag warn">очікує</span>', closed: '<span class="tag">закрита</span>', active: '' };
+    t.forEach((rg) => {
+      h += `<div class="sec" data-region>${esc(rg.name)}</div><div class="card list" data-region-card>`;
+      rg.areas.forEach((a) => {
+        const open = S.structOpen[a.id];
+        const q = (a.name + ' ' + a.teams.map((x) => x.name).join(' ')).toLowerCase();
+        h += `<div data-q="${esc(q)}"><button type="button" class="li" data-a="structToggle" data-id="${esc(a.id)}"><span class="ic ic-teal">${icon('club', 18)}</span>
+          <span class="grow"><span class="b" style="display:block">Ерія ${esc(a.name)}</span><span class="small muted">${a.teams.filter((x) => x.state === 'active').length} команд${a.teams.some((x) => x.state === 'pending') ? ' · є нові заявки' : ''}</span></span>
+          <span class="muted" style="transform:rotate(${open ? 90 : 0}deg)">${icon('chev', 18)}</span></button>`;
+        if (open) {
+          h += '<div style="padding:4px 16px 12px;border-bottom:1px solid var(--line)">';
+          if (rg.canEditAreas) h += `<button type="button" class="link-btn" data-a="structEditArea" data-id="${esc(a.id)}" data-name="${esc(a.name)}">Перейменувати ерію</button>`;
+          h += a.teams.length ? a.teams.map((tm) => `<div class="row" style="padding:8px 0;border-top:1px solid var(--line);gap:8px">
+              <span class="grow"><span class="b" style="display:block${tm.state === 'closed' ? ';opacity:.55' : ''}">${esc(tm.name)}</span><span class="xs muted">${tm.people} ${tm.people % 10 === 1 && tm.people % 100 !== 11 ? 'людина' : 'людей'}</span></span>${ST_TAG[tm.state]}
+              ${a.canEditTeams ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structEditTeam" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}">Назва</button>
+              ${tm.state === 'active' ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="closed" data-name="${esc(tm.name)}">Закрити</button>`
+                : `<button type="button" class="btn teal sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="active" data-name="${esc(tm.name)}">${tm.state === 'pending' ? 'Активувати' : 'Відкрити'}</button>`}` : ''}</div>`).join('')
+            : '<div class="small muted" style="padding:8px 0">Команд ще немає</div>';
+          if (a.canEditTeams) h += `<button type="button" class="btn sec2 sm" style="width:100%;margin-top:8px" data-a="structNewTeam" data-id="${esc(a.id)}" data-name="${esc(a.name)}">+ Нова команда</button>`;
+          h += '</div>';
+        }
+        h += '</div>';
+      });
+      if (!rg.areas.length) h += '<div class="li small muted">Ерій ще немає</div>';
+      if (rg.canEditAreas) h += `<button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="structNewArea" data-id="${esc(rg.id)}" data-name="${esc(rg.name)}">+ Нова ерія</button>`;
+      h += '</div>';
+    });
+    h += '<div class="xs muted">Закрита команда зникає зі списків і статистики, але її дані зберігаються. Відкрити можна будь-коли.</div>';
     return h;
   };
 
@@ -717,7 +800,40 @@
   A.statsScope = (d, el) => { S.stats.scope = el.value; loadStats(); };
   A.statsCat = (d) => { S.stats.cat = d.c; loadStats(); };
   A.statsPeriod = (d) => { S.stats.period = d.p; loadStats(); };
-  A.statsDrill = (d) => { S.stats.scope = d.k; loadStats(); window.scrollTo(0, 0); };
+  A.statsDrill = (d) => { S.stats.scope = d.k; S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
+  A.statsFindToggle = () => { S.stats.find = !S.stats.find; render(); const i = document.getElementById('statsFindIn'); if (i) i.focus(); };
+  A.statsFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('#statsFindList [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0)); };
+  A.statsRowFind = (d, el) => {
+    const q = el.value.trim().toLowerCase();
+    if (q && !S.stats.showAll) { S.stats.showAll = true; render(); const i = document.querySelector('[data-live="statsRowFind"]'); if (i) { i.value = el.value; i.focus(); } }
+    document.querySelectorAll('#brkList [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0));
+  };
+  A.statsSort = (d) => { S.stats.sort = d.s; render(); };
+  A.statsShowAll = () => { S.stats.showAll = !S.stats.showAll; render(); };
+  A.statsShowMiss = () => { S.stats.showMiss = true; render(); };
+
+  // структура
+  A.structToggle = (d) => { S.structOpen[d.id] = !S.structOpen[d.id]; render(); };
+  A.structFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('[data-q]').forEach((x) => { if (x.closest('#app')) x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0); }); };
+  A.structNewArea = (d) => { S.structEdit = { kind: 'area', parentId: d.id, parentName: d.name, name: '' }; render(); window.scrollTo(0, 0); };
+  A.structEditArea = (d) => { S.structEdit = { kind: 'area', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
+  A.structNewTeam = (d) => { S.structEdit = { kind: 'team', parentId: d.id, parentName: d.name, name: '' }; S.structOpen[d.id] = true; render(); window.scrollTo(0, 0); };
+  A.structEditTeam = (d) => { S.structEdit = { kind: 'team', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
+  A.structCancel = () => { S.structEdit = null; render(); };
+  A.structSave = async () => {
+    const e = S.structEdit;
+    if (String(e.name || '').trim().length < 2) return toast('Вкажи назву');
+    const res = await run(() => e.kind === 'area'
+      ? api('areaSave', { id: e.id || '', regionId: e.parentId, name: e.name })
+      : api('teamSave', e.id ? { id: e.id, name: e.name } : { areaId: e.parentId, name: e.name }), 'Збережено');
+    if (res) { S.structEdit = null; await refreshMe(); loadTree(); }
+  };
+  A.structTeamState = (d) => {
+    const doIt = async () => { const res = await run(() => api('teamSave', { id: d.id, state: d.s }), d.s === 'closed' ? 'Команду закрито' : 'Команда активна'); if (res) { await refreshMe(); loadTree(); } };
+    if (d.s === 'closed') { const m = 'Закрити команду «' + d.name + '»? Дані збережуться, її можна буде відкрити знову.'; if (tg && tg.showConfirm) tg.showConfirm(m, (ok) => { if (ok) doIt(); }); else if (confirm(m)) doIt(); }
+    else doIt();
+  };
+  async function refreshMe() { try { const m = await api('me'); S.me = m; } catch (e) { /* лишаємо старе */ } }
   A.nudge = async (d) => { const r = await run(() => api('nudge', { scope: S.stats.scope, type: d.type })); if (r) toast('Нагадування надіслано: ' + r.sent, 'success'); };
 
   // знані

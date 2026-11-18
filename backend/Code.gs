@@ -244,6 +244,7 @@ API.me = function (c) {
     upper: upperRoles_(c).length > 0,
     sugarOnly: isSugarOnly_(c),
     surveys: false,
+    manage: c.roles.some(function (r) { return MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0; }),
   };
   out.myTeams = Object.keys(myTeams).map(function (id) { return teamOut_(id); });
   out.scopes = allowedScopes_(c);
@@ -590,6 +591,93 @@ function rsvpSet_(c, eventId, going) {
   resetMemo_('rsvp');
 }
 
+// ── структура: ерії й команди ──
+// Хто редагує ерії свого регіону (Раб Божий — усі регіони):
+const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
+// Хто створює й редагує команди (Еріа Директор — у своїй ерії; регіон — у своєму регіоні; Раб Божий — усюди):
+const MANAGE_TEAMS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
+
+function canEditAreas_(c, regionId) {
+  return c.roles.some(function (r) { return r.key === 'SUPER' || (MANAGE_AREAS.indexOf(r.key) >= 0 && r.level === 'region' && r.unitId === regionId); });
+}
+function canEditTeams_(c, areaId) {
+  return c.roles.some(function (r) { return MANAGE_TEAMS.indexOf(r.key) >= 0 && covers_(r, 'area', areaId); });
+}
+function cleanName_(v) {
+  const n = str_(v).replace(/\s+/g, ' ');
+  if (n.length < 2 || n.length > 60) bad_('Назва має бути від 2 до 60 символів.');
+  return n;
+}
+
+API.structureTree = function (c) {
+  const st = loadStruct_();
+  const people = {};
+  loadRoles_().filter(function (r) { return r.status === ST.ACTIVE && r.level === 'team'; }).forEach(function (r) { (people[r.unitId] = people[r.unitId] || {})[r.tgId] = true; });
+  return st.regions.map(function (rg) {
+    const editAreas = canEditAreas_(c, rg.id);
+    const areas = st.areas.filter(function (a) { return a.regionId === rg.id && (editAreas || canEditTeams_(c, a.id)); }).map(function (a) {
+      return {
+        id: a.id, name: a.name, canEditTeams: canEditTeams_(c, a.id),
+        teams: st.teams.filter(function (t) { return t.areaId === a.id; }).map(function (t) { return { id: t.id, name: t.name, state: t.state, people: Object.keys(people[t.id] || {}).length }; })
+          .sort(function (x, y) { return (x.state === 'closed') - (y.state === 'closed') || x.name.localeCompare(y.name); }),
+      };
+    }).sort(function (x, y) { return x.name.localeCompare(y.name); });
+    return { id: rg.id, name: rg.name, canEditAreas: editAreas, areas: areas };
+  }).filter(function (rg) { return rg.canEditAreas || rg.areas.length; });
+};
+
+API.areaSave = function (c, d) {
+  const st = loadStruct_(true);
+  if (!d.id && !canEditAreas_(c, str_(d.regionId))) deny_('Ти не можеш додавати ерії в цей регіон.');
+  const name = cleanName_(d.name);
+  if (d.id) {
+    const a = st.area[str_(d.id)];
+    if (!a) bad_('Ерію не знайдено.');
+    if (!canEditAreas_(c, a.regionId)) deny_('Ти не можеш редагувати цю ерію.');
+    if (st.areas.some(function (x) { return x.id !== a.id && x.regionId === a.regionId && x.name.toLowerCase() === name.toLowerCase(); })) bad_('Така ерія в регіоні вже є.');
+    update_(SH.AREAS, a.row, { 'Назва': name });
+    if (a.folder) { try { DriveApp.getFolderById(a.folder).setName(name); } catch (e) { console.warn(e); } }
+    resetMemo_();
+    return { id: a.id };
+  }
+  const regionId = str_(d.regionId);
+  if (!st.region[regionId]) bad_('Регіон не знайдено.');
+  if (!canEditAreas_(c, regionId)) deny_('Ти не можеш додавати ерії в цей регіон.');
+  if (st.areas.some(function (x) { return x.regionId === regionId && x.name.toLowerCase() === name.toLowerCase(); })) bad_('Така ерія в регіоні вже є.');
+  const id = uid_();
+  append_(SH.AREAS, { 'ID': id, 'Регіон ID': regionId, 'Назва': name });
+  resetMemo_();
+  return { id: id };
+};
+
+API.teamSave = function (c, d) {
+  const st = loadStruct_(true);
+  if (d.id) {
+    const t = st.team[str_(d.id)];
+    if (!t) bad_('Команду не знайдено.');
+    if (!canEditTeams_(c, t.areaId)) deny_('Ти не можеш редагувати цю команду.');
+    const v = {};
+    if (d.name != null) {
+      const name = cleanName_(d.name);
+      if (st.teams.some(function (x) { return x.id !== t.id && x.areaId === t.areaId && x.name.toLowerCase() === name.toLowerCase(); })) bad_('Така команда в ерії вже є.');
+      v['Назва'] = name;
+      if (t.file) { try { DriveApp.getFileById(t.file).setName('Команда «' + name + '»'); } catch (e) { console.warn(e); } }
+    }
+    if (d.state === 'active') v['Активна'] = 'так';
+    if (d.state === 'closed') v['Активна'] = 'ні';
+    update_(SH.TEAMS, t.row, v);
+    resetMemo_();
+    return { id: t.id };
+  }
+  const areaId = str_(d.areaId);
+  if (!st.area[areaId]) bad_('Ерію не знайдено.');
+  if (!canEditTeams_(c, areaId)) deny_('Ти не можеш створювати команди в цій ерії.');
+  const name = cleanName_(d.name);
+  if (st.teams.some(function (x) { return x.areaId === areaId && x.name.toLowerCase() === name.toLowerCase(); })) bad_('Така команда в ерії вже є.');
+  const id = createTeam_(areaId, name, true);
+  return { id: id };
+};
+
 // ── статистика ──
 API.stats = function (c, d) {
   const scopes = allowedScopes_(c);
@@ -622,13 +710,13 @@ function allowedScopes_(c) {
   const st = loadStruct_();
   const seen = {};
   const out = [];
-  const add = function (key, label, depth, level, unitId) { if (seen[key]) return; seen[key] = true; out.push({ key: key, label: label, depth: depth, level: level, unitId: unitId }); };
-  const addTeam = function (t, depth) { if (t.active) add('t:' + t.id, t.name, depth, 'team', t.id); };
-  const addArea = function (a, depth) { add('a:' + a.id, 'Ерія ' + a.name, depth, 'area', a.id); st.teams.filter(function (t) { return t.areaId === a.id; }).forEach(function (t) { addTeam(t, depth + 1); }); };
-  const addRegion = function (r, depth) { add('r:' + r.id, 'Регіон ' + r.name, depth, 'region', r.id); st.areas.filter(function (a) { return a.regionId === r.id; }).forEach(function (a) { addArea(a, depth + 1); }); };
+  const add = function (key, label, depth, level, unitId, sub, name) { if (seen[key]) return; seen[key] = true; out.push({ key: key, label: label, depth: depth, level: level, unitId: unitId, sub: sub || '', name: name || label }); };
+  const addTeam = function (t, depth) { if (t.active) { const a = st.area[t.areaId] || {}; add('t:' + t.id, t.name, depth, 'team', t.id, (a.name || '') + ' · ' + ((st.region[a.regionId] || {}).name || ''), t.name); } };
+  const addArea = function (a, depth) { add('a:' + a.id, 'Ерія ' + a.name, depth, 'area', a.id, 'регіон ' + ((st.region[a.regionId] || {}).name || ''), a.name); st.teams.filter(function (t) { return t.areaId === a.id; }).forEach(function (t) { addTeam(t, depth + 1); }); };
+  const addRegion = function (r, depth) { add('r:' + r.id, 'Регіон ' + r.name, depth, 'region', r.id, '', r.name); st.areas.filter(function (a) { return a.regionId === r.id; }).forEach(function (a) { addArea(a, depth + 1); }); };
   const sorted = c.roles.slice().sort(function (a, b) { return a.rank - b.rank; });
   sorted.forEach(function (r) {
-    if (r.level === 'nat') { add('nat', 'Уся Україна', 0, 'nat', ''); st.regions.forEach(function (x) { addRegion(x, 1); }); }
+    if (r.level === 'nat') { add('nat', 'Уся Україна', 0, 'nat', '', '', 'Україна'); st.regions.forEach(function (x) { addRegion(x, 1); }); }
     if (r.level === 'region' && st.region[r.unitId]) addRegion(st.region[r.unitId], 0);
     if (r.level === 'area' && st.area[r.unitId]) addArea(st.area[r.unitId], 0);
     if (r.level === 'team' && st.team[r.unitId]) addTeam(st.team[r.unitId], 0);
@@ -722,10 +810,26 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   }
   const scopeKeys = {};
   scopes.forEach(function (s) { scopeKeys[s.key] = true; });
+  // хто з дочірніх уже звітував цього тижня (клуби — для огляду/клубів, інакше — свій тип)
+  const repType = cat === 'mg' || cat === 'kr' ? cat : 'club';
+  const reported = {};
+  loadLog_().forEach(function (r) { if (r.week === nowWk && r.type === repType && inScope[r.teamId]) reported[r.teamId] = true; });
   const breakdown = groups.map(function (g) {
     const v = cat === 'known' ? g.teams.reduce(function (a, id) { return a + (Number(st.team[id].known) || 0); }, 0) : sum(inP.filter(g.test), metric);
-    return { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
+    const row = { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
+    if (g.teams) { row.total = g.teams.length; row.done = g.teams.filter(function (id) { return reported[id]; }).length; row.teams = g.teams.length; }
+    return row;
   }).sort(function (a, b) { return b.value - a.value; });
+
+  // хлібні крихти: від найвищого доступного рівня до поточного
+  const chain = [];
+  if (scope.level === 'team') { const t = st.team[scope.unitId]; chain.push('nat', 'r:' + st.teamRegion(scope.unitId), 'a:' + t.areaId, scope.key); }
+  if (scope.level === 'area') chain.push('nat', 'r:' + st.area[scope.unitId].regionId, scope.key);
+  if (scope.level === 'region') chain.push('nat', scope.key);
+  if (scope.level === 'nat') chain.push('nat');
+  const byKey = {};
+  scopes.forEach(function (s) { byKey[s.key] = s; });
+  const path = chain.filter(function (k) { return byKey[k]; }).map(function (k) { return { key: k, label: byKey[k].name }; });
 
   // звітність цього тижня
   const report = ['club', 'mg', 'kr'].map(function (type) {
@@ -737,7 +841,8 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
     scope: scope, scopes: scopes, cats: cats, cat: cat, period: period,
     kpis: K[cat].map(function (k) { return { v: k[0], l: k[1] }; }),
     chart: { title: titles[cat], sub: period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map(function (b) { return { label: b.label, v: b.v }; }) },
-    breakdown: { title: ({ nat: 'По регіонах', region: 'По еріях', area: 'По командах', team: 'По людях' }[scope.level]) + ' · ' + ML2[cat], rows: breakdown },
+    breakdown: { title: ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
+    path: path,
     report: report,
     weekLabel: weekLabel_(nowWk),
     canNudge: c.roles.some(function (r) { return r.rank <= RANK.APPROVE; }),
@@ -1089,7 +1194,8 @@ function loadStruct_(fresh) {
     readAll_(SH.REGIONS).forEach(function (r) { const x = { id: str_(r['ID']), name: str_(r['Назва']), folder: str_(r['Папка']), row: r._row }; if (x.id) { s.regions.push(x); s.region[x.id] = x; } });
     readAll_(SH.AREAS).forEach(function (r) { const x = { id: str_(r['ID']), regionId: str_(r['Регіон ID']), name: str_(r['Назва']), folder: str_(r['Папка']), row: r._row }; if (x.id) { s.areas.push(x); s.area[x.id] = x; } });
     readAll_(SH.TEAMS).forEach(function (r) {
-      const x = { id: str_(r['ID']), areaId: str_(r['Ерія ID']), name: str_(r['Назва']), file: str_(r['Таблиця']), active: yes_(r['Активна']), known: Number(r['Знаних']) || 0, row: r._row };
+      const raw = str_(r['Активна']).toLowerCase();
+      const x = { id: str_(r['ID']), areaId: str_(r['Ерія ID']), name: str_(r['Назва']), file: str_(r['Таблиця']), active: yes_(r['Активна']), state: yes_(r['Активна']) ? 'active' : raw === 'очікує' ? 'pending' : 'closed', known: Number(r['Знаних']) || 0, row: r._row };
       if (x.id) { s.teams.push(x); s.team[x.id] = x; }
     });
     s.teamRegion = function (teamId) { const t = s.team[teamId]; return t && s.area[t.areaId] ? s.area[t.areaId].regionId : ''; };
@@ -1104,7 +1210,7 @@ function loadRoles_() {
       if (!def) return null;
       return {
         id: str_(r['ID']), tgId: str_(r['Telegram ID']), name: str_(r["Ім'я"]), key: def.key, label: def.label, rank: def.rank,
-        level: def.level, unitId: str_(r['Обʼєкт ID']), unitName: str_(r['Обʼєкт']) || unitName_(def.level, str_(r['Обʼєкт ID'])),
+        level: def.level, unitId: str_(r['Обʼєкт ID']), unitName: unitName_(def.level, str_(r['Обʼєкт ID'])) || str_(r['Обʼєкт']),
         status: str_(r['Статус']).toLowerCase(), requested: r['Дата заявки'], row: r._row,
       };
     }).filter(Boolean);
