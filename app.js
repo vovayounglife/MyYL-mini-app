@@ -583,6 +583,7 @@
     const teams = st.teams.filter((t) => t.areaId === o.areaId);
     let h = `<div class="grid2"><label class="f"><span>Регіон</span><select class="in" data-ch="${prefix}Region"><option value="">Обери…</option>${st.regions.map((r) => `<option value="${esc(r.id)}"${r.id === o.regionId ? ' selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
       <label class="f"><span>Ерія</span><select class="in" data-ch="${prefix}Area"${o.regionId ? '' : ' disabled'}><option value="">Обери…</option>${areas.map((a) => `<option value="${esc(a.id)}"${a.id === o.areaId ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label></div>`;
+    if (o.regionId && !areas.length) h += '<div class="note small">У цьому регіоні ще не додано ерій. Якщо ти служиш на рівні регіону — переходь далі й обери роль регіону. Якщо в команді — напиши адміну, щоб додав твою ерію.</div>';
     if (o.areaId) {
       h += `<div class="f"><span>Команда</span></div><div class="card list">${teams.map((t) => `<label class="check"><input type="radio" name="${prefix}Team" data-ch="${prefix}Team" value="${esc(t.id)}"${t.id === o.teamId ? ' checked' : ''}><span class="grow">${esc(t.name)}</span></label>`).join('')}
         <label class="check"><input type="radio" name="${prefix}Team" data-ch="${prefix}Team" value="__new"${o.teamId === '__new' ? ' checked' : ''}><span class="grow">Моєї команди немає</span><span class="xs muted">створимо нову</span></label></div>`;
@@ -805,7 +806,8 @@
     const r = S.reg;
     if (r.step === 1 && String(r.name).trim().length < 2) return toast('Вкажи імʼя та прізвище');
     if (r.step === 2) {
-      if (!r.areaId) return toast('Обери регіон та ерію');
+      if (!r.regionId) return toast('Обери регіон');
+      if (!r.areaId && struct().areas.some((a) => a.regionId === r.regionId)) return toast('Обери ерію');
       if (r.teamId === '__new' && String(r.newTeam).trim().length < 2) return toast('Впиши назву нової команди');
     }
     r.step++; render(); window.scrollTo(0, 0);

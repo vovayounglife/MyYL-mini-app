@@ -76,7 +76,11 @@ const TEAM_HEAD = {
 };
 const MODE = { event: 'подія', week: 'тиждень', none: 'не було' };
 const TYPE_LABEL = { club: 'Клуб', mg: 'Мала група', kr: 'Контактна робота' };
-const SEED_REGIONS = [['West Side', ['Чернівці У', 'Чернівці Б', 'Тернопіль', 'Львів', 'Закарпаття', 'Івано-Франківськ']]];
+const SEED_REGIONS = [
+  ['West', ['Чернівці У', 'Чернівці Б', 'Тернопіль', 'Львів', 'Закарпаття', 'Івано-Франківськ']],
+  ['Kyiv', []], ['Central', []], ['North', []], ['South', []], ['East', []], ['Office', []],
+];
+const REGION_ALIASES = { 'West': ['West Side'] }; // старі назви, які перейменовуються в нові
 const SEED_SETTINGS = [
   ['REMINDER_DAY', 'SUNDAY', 'День щотижневого нагадування про звіти (MONDAY…SUNDAY)'],
   ['REMINDER_HOUR', 18, 'Година нагадування'],
@@ -1290,13 +1294,24 @@ function menuSetup() {
   ss.getSheetByName(SH.ROLES).getRange('H2:H').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList([ST.PENDING, ST.ACTIVE, ST.REJECTED, ST.REMOVED], true).build());
   // стартова структура West Side
   resetMemo_();
-  if (!readAll_(SH.REGIONS).length) {
-    SEED_REGIONS.forEach(function (r) {
-      const rid = uid_();
-      append_(SH.REGIONS, { 'ID': rid, 'Назва': r[0] });
-      r[1].forEach(function (a) { append_(SH.AREAS, { 'ID': uid_(), 'Регіон ID': rid, 'Назва': a }); });
+  // регіони й ерії: додаємо відсутні (за назвою), нічого не видаляємо
+  const added = [];
+  SEED_REGIONS.forEach(function (r) {
+    let st = loadStruct_(true);
+    let reg = st.regions.filter(function (x) { return x.name === r[0]; })[0];
+    if (!reg) {
+      const old = st.regions.filter(function (x) { return (REGION_ALIASES[r[0]] || []).indexOf(x.name) >= 0; })[0];
+      if (old) { update_(SH.REGIONS, old.row, { 'Назва': r[0] }); reg = old; }
+    }
+    let rid = reg ? reg.id : '';
+    if (!reg) { rid = uid_(); append_(SH.REGIONS, { 'ID': rid, 'Назва': r[0] }); added.push(r[0]); }
+    st = loadStruct_(true);
+    r[1].forEach(function (a) {
+      if (!st.areas.some(function (x) { return x.regionId === rid && x.name === a; })) append_(SH.AREAS, { 'ID': uid_(), 'Регіон ID': rid, 'Назва': a });
     });
-  }
+  });
+  resetMemo_();
+  if (added.length) created.push('регіони: ' + added.join(', '));
   ss.getSheets().forEach(function (s) { if (/^(Аркуш|Sheet|Лист)\s?\d+$/.test(s.getName()) && s.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(s); });
   const root = rootFolder_();
   try { DriveApp.getFileById(ss.getId()).moveTo(root); } catch (e) { /* лишаємо як є */ }
