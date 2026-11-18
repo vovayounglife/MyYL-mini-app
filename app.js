@@ -591,12 +591,12 @@
     return h;
   }
   function roleFields(o, prefix) {
-    const defs = me().roleDefs.filter((r) => r.key !== 'NATIONAL_ADMIN');
+    const defs = me().roleDefs.filter((r) => r.key !== 'SUPER');
     const team = defs.filter((r) => r.level === 'team');
     const upper = defs.filter((r) => r.level !== 'team');
     const box = (r) => `<label class="check"><input type="checkbox" data-ch="${prefix}Role" data-k="${r.key}"${o.roles[r.key] ? ' checked' : ''}><span class="grow b" style="font-weight:500">${esc(r.label)}</span></label>`;
     let h = `<div class="card list">${team.map(box).join('')}</div>`;
-    h += `<label class="toggle-row"><span class="b" style="font-weight:500">Я служу на рівні ерії або регіону</span><input type="checkbox" data-ch="${prefix}Upper"${o.upper ? ' checked' : ''}></label>`;
+    h += `<label class="toggle-row"><span class="b" style="font-weight:500">Я служу на рівні ерії, регіону чи країни</span><input type="checkbox" data-ch="${prefix}Upper"${o.upper ? ' checked' : ''}></label>`;
     if (o.upper) h += `<div class="card list">${upper.map(box).join('')}</div>`;
     const needMail = Object.keys(o.roles).some((k) => o.roles[k] && roleDef(k) && roleDef(k).rank <= 6);
     if (needMail) h += `<label class="f"><span>Gmail — на нього відкриється доступ до таблиць на Диску</span><input class="in" type="email" data-bind="${prefix === 'reg' ? 'reg' : 'roleReq'}.email" value="${esc(o.email)}" placeholder="name@gmail.com"></label>`;

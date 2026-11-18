@@ -23,6 +23,7 @@ const INITDATA_MAX_AGE_SEC = 7 * 24 * 3600;
 
 // rank: менше число = вища роль. level: до чого привʼязана роль.
 const ROLES = [
+  { key: 'SUPER', label: 'Раб Божий', rank: 0, level: 'nat' },          // власник системи — найвища роль
   { key: 'NATIONAL_ADMIN', label: 'Національний Адмін', rank: 1, level: 'nat' },
   { key: 'REGIONAL_DIRECTOR', label: 'Регіональний Директор', rank: 2, level: 'region' },
   { key: 'REGIONAL_ADMIN', label: 'Регіональний Адмін', rank: 3, level: 'region' },
@@ -966,9 +967,14 @@ function claimAdmin_(m, code) {
   props.deleteProperty('ADMIN_CLAIM');
   const c = { id: String(m.from.id), tg: m.from, name: fullName_(m.from) };
   if (!getPerson_(c.id)) savePerson_(c, { name: c.name });
-  append_(SH.ROLES, { 'ID': uid_(), 'Telegram ID': c.id, "Ім'я": c.name, 'Роль': ROLES[0].label, 'Рівень': 'nat', 'Обʼєкт ID': '', 'Обʼєкт': 'Україна', 'Статус': ST.ACTIVE, 'Хто вирішив': 'перший запуск', 'Дата заявки': new Date(), 'Дата рішення': new Date() });
+  const top = ROLES[0];
+  const mine = loadRoles_().filter(function (r) { return r.tgId === c.id && r.status === ST.ACTIVE; });
+  if (mine.some(function (r) { return r.key === top.key; })) return sendApp_(m.chat.id, 'Ти вже маєш роль <b>' + top.label + '</b> 🙂', 'Відкрити Young Life');
+  const nat = mine.filter(function (r) { return r.key === 'NATIONAL_ADMIN'; })[0];
+  if (nat) update_(SH.ROLES, nat.row, { 'Роль': top.label, 'Хто вирішив': 'посилання власника', 'Дата рішення': new Date() });
+  else append_(SH.ROLES, { 'ID': uid_(), 'Telegram ID': c.id, "Ім'я": c.name, 'Роль': top.label, 'Рівень': 'nat', 'Обʼєкт ID': '', 'Обʼєкт': 'Україна', 'Статус': ST.ACTIVE, 'Хто вирішив': 'посилання власника', 'Дата заявки': new Date(), 'Дата рішення': new Date() });
   resetMemo_();
-  return sendApp_(m.chat.id, '✅ Готово! Ти — <b>Національний Адмін</b>.\nВідкрий застосунок, допиши свій профіль і поділись ботом з командами.', 'Відкрити Young Life');
+  return sendApp_(m.chat.id, '✅ Готово! Твоя роль — <b>' + top.label + '</b>: найвищий рівень доступу.\nВідкрий застосунок, допиши профіль і поділись ботом з командами.', 'Відкрити Young Life');
 }
 
 function tg_(method, params) {
@@ -1235,7 +1241,7 @@ function onOpen() {
     .addItem('🔔 Увімкнути нагадування', 'menuRemindersOn')
     .addItem('🔕 Вимкнути нагадування', 'menuRemindersOff')
     .addItem('🩺 Перевірити стан', 'menuStatus')
-    .addItem('🔑 Посилання для першого адміна', 'menuAdminLink')
+    .addItem('👑 Посилання для власника (Раб Божий)', 'menuAdminLink')
     .addToUi();
 }
 
@@ -1325,9 +1331,9 @@ function menuConnect() {
   if (!res.ok) return alert_('❌ Telegram відхилив вебхук', res.description || '');
   tg_('setChatMenuButton', { menu_button: { type: 'web_app', text: 'Відкрити', web_app: { url: APP_URL } } });
   tg_('setMyCommands', { commands: [{ command: 'start', description: 'Відкрити застосунок' }] });
-  const hasAdmin = loadRoles_().some(function (x) { return x.key === 'NATIONAL_ADMIN' && x.status === ST.ACTIVE; });
+  const hasAdmin = loadRoles_().some(function (x) { return x.rank <= 1 && x.status === ST.ACTIVE; });
   if (hasAdmin) return alert_('✅ Бот підключено', 'API для Mini App: ' + url + '\n(цю адресу треба вписати в config.js на GitHub)');
-  showLink_('✅ Бот підключено!', 'API для Mini App (впиши в config.js на GitHub): ' + url + '\n\nВідкрий це посилання у своєму Telegram, щоб стати Національним Адміном (одноразове):', adminLink_());
+  showLink_('✅ Бот підключено!', 'API для Mini App (впиши в config.js на GitHub): ' + url + '\n\nВідкрий це посилання у своєму Telegram, щоб отримати найвищу роль «' + ROLES[0].label + '» (одноразове):', adminLink_());
 }
 
 function menuRemindersOn() {
@@ -1359,7 +1365,7 @@ function menuStatus() {
   ].join('\n'));
 }
 
-function menuAdminLink() { showLink_('🔑 Посилання для першого адміна', 'Одноразове. Хто відкриє його в Telegram — стане Національним Адміном:', adminLink_()); }
+function menuAdminLink() { showLink_('👑 Посилання для власника', 'Одноразове. Хто відкриє його в Telegram — отримає найвищу роль «' + ROLES[0].label + '» (якщо вже був Національним Адміном — роль підвищиться):', adminLink_()); }
 function adminLink_() {
   const props = PropertiesService.getScriptProperties();
   const code = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
