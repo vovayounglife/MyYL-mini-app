@@ -1191,7 +1191,7 @@ function finApply_(c, teamId, month, delta) {
     row = { team_id: teamId, month: month, prev: before ? Number(before.balance) || 0 : 0, office: 0, church: 0, team: 0, spent: 0, balance: 0 };
     rows.push(row);
   }
-  ['office', 'church', 'team', 'spent'].forEach((k) => { row[k] = Math.round(((Number(row[k]) || 0) + (delta[k] || 0)) * 100) / 100; });
+  ['prev', 'office', 'church', 'team', 'spent'].forEach((k) => { row[k] = Math.round(((Number(row[k]) || 0) + (delta[k] || 0)) * 100) / 100; });
   // перерахунок цього й наступних місяців: залишок переноситься далі
   const asc = rows.slice().sort((a, b) => (a.month < b.month ? -1 : 1));
   let prevBal = null;
@@ -1205,7 +1205,7 @@ function finApply_(c, teamId, month, delta) {
     [teamId, r.month, r.prev || 0, r.office || 0, r.church || 0, r.team || 0, r.spent || 0, r.balance, c.name, nowIso()]);
   });
 }
-const finDelta_ = (t, sign) => (t.kind === 'out' ? { spent: sign * t.amount } : { [FIN_SRC[t.src] ? t.src : 'team']: sign * t.amount });
+const finDelta_ = (t, sign) => (t.kind === 'adj' ? { prev: sign * t.amount } : t.kind === 'out' ? { spent: sign * t.amount } : { [FIN_SRC[t.src] ? t.src : 'team']: sign * t.amount });
 API.finTx = function (c, d) {
   const teamId = str_(d.teamId);
   if (!canFinEdit_(c, teamId)) deny_('Касу команди ведуть Капітан і Адмін команди.');
@@ -1222,6 +1222,7 @@ API.finTx = function (c, d) {
 API.finTxAdd = function (c, d) {
   const teamId = str_(d.teamId);
   if (!canFinEdit_(c, teamId)) deny_('Касу команди ведуть Капітан і Адмін команди.');
+  if (d.kind === 'adj') return finAdjust_(c, teamId, d);
   const amount = Math.round(Number(d.amount) * 100) / 100;
   if (!isFinite(amount) || amount <= 0) bad_('Вкажи суму більше нуля.');
   if (amount > 10000000) bad_('Завелика сума.');
@@ -1236,6 +1237,23 @@ API.finTxAdd = function (c, d) {
   S.finTx = [t].concat(S.finTx || []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.created < b.created ? 1 : -1)).slice(0, 40);
   return API.finTx(c, d);
 };
+// «Редагувати баланс»: звести баланс у застосунку з реальною сумою в касі (різниця йде в «Попередній залишок» поточного місяця)
+function finAdjust_(c, teamId, d) {
+  const target = Math.round(Number(String(d.balance).replace(',', '.')) * 100) / 100;
+  if (!isFinite(target) || d.balance === '' || d.balance == null) bad_('Вкажи, скільки зараз реально в касі.');
+  if (Math.abs(target) > 10000000) bad_('Завелика сума.');
+  const rows = (S.finance[teamId] || []).slice().sort((a, b) => (a.month < b.month ? 1 : -1));
+  const cur = rows.length ? Number(rows[0].balance) || 0 : 0;
+  const delta = Math.round((target - cur) * 100) / 100;
+  if (!delta) bad_('Баланс уже такий.');
+  const today = kyivDay(new Date());
+  const t = { id: uid_(), teamId: teamId, date: today, kind: 'adj', src: '', amount: delta, note: ('Звірка: було ' + cur + ' ₴, стало ' + target + ' ₴' + (clip_(d.note) ? ' · ' + clip_(d.note) : '')).slice(0, 300), authorId: c.id, author: c.name, created: nowIso() };
+  S.run('INSERT INTO fin_tx (id, team_id, date, kind, src, amount, note, author_id, author, created) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [t.id, teamId, t.date, t.kind, t.src, t.amount, t.note, t.authorId, t.author, t.created]);
+  finApply_(c, teamId, (rows[0] && rows[0].month > today.slice(0, 7) ? rows[0].month : today.slice(0, 7)), finDelta_(t, 1));
+  S.finTx = [t].concat(S.finTx || []).slice(0, 40);
+  return API.finTx(c, d);
+}
 API.finTxDelete = function (c, d) {
   const teamId = str_(d.teamId);
   if (!canFinEdit_(c, teamId)) deny_();
@@ -2019,7 +2037,7 @@ API.nudge = function (c, d) {
   const scope = pickScope_(c, keysOf_(d)).scope;
   if (!scope) deny_();
   const type = d.type;
-  if (!TYPE_LABEL[type]) bad_('Невідомий тип.');
+  if (type !== 'club') bad_('Нагадувати можна лише про клуб.');
   const miss = missingFor_(scope, type);
   miss.people.filter((tgId) => wants_(tgId, 'remind')).forEach((tgId) => sendApp_(tgId, '🔔 Нагадування: заповни, будь ласка, «' + TYPE_LABEL[type] + '» за цей тиждень. Якщо не було — так і відміть.', 'Відкрити'));
   return { sent: miss.people.length };
@@ -2177,7 +2195,8 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   if (scope.level === 'nat') chain.push('nat');
   const path = chain.filter((k) => scopeKeys[k]).map((k) => ({ key: k, label: scopeKeys[k].name }));
 
-  const report = ['club', 'mg', 'kr'].map((type) => {
+  // «хто не здав» — лише клуби: МГ і КР — особиста лідерська робота
+  const report = ['club'].map((type) => {
     const m = weekReport_(scope, type, teamIds);
     return { type: type, label: { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота' }[type], ok: m.ok, none: m.none, total: m.total, unit: m.unit, missing: m.missingNames };
   });
@@ -2471,7 +2490,7 @@ function weeklyReminder() {
   loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team').forEach((r) => { (by[r.tgId] = by[r.tgId] || []).push(r); });
   Object.keys(by).forEach((id) => {
     if (!wants_(id, 'remind')) return;
-    const miss = weekStatus_({ id: id, roles: by[id] }).items.filter((x) => x.status === 'missing');
+    const miss = weekStatus_({ id: id, roles: by[id] }).items.filter((x) => x.status === 'missing' && x.type === 'club');
     if (!miss.length) return;
     sendApp_(id, '🔔 <b>Нагадування</b>\nЗа цей тиждень ще не заповнено:\n' + miss.map((x) => '• ' + esc_(x.label)).join('\n') +
       '\n\nЯкщо цього тижня не було — просто відміть «Не було».', 'Заповнити');
@@ -2504,9 +2523,91 @@ async function decryptSeed_(b64, secret) {
   return new TextDecoder().decode(plain);
 }
 // [{ area: ['Чернівці У', …], team: 'Volt', people: [['Імʼя Прізвище', 'LEADER'], …] }]
+const na_ = (x) => String(x || '').toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi, '');
+function findArea_(aliases) {
+  const al = [].concat(aliases || []).map(na_);
+  return loadStruct_().areas.filter((a) => al.indexOf(na_(a.name)) >= 0)[0] || null;
+}
+// назви команд у табличках і в MyYL можуть трохи відрізнятись («Young Life HLYNA» / «HLYNA»)
+function findTeamIn_(areaId, name) {
+  const core = (x) => na_(String(x).toLowerCase().replace(/\b(young|life|wyld|wild|yl|teens|new)\b/g, ' ')) || na_(x);
+  const inArea = loadStruct_().teams.filter((x) => x.areaId === areaId);
+  return inArea.filter((x) => na_(x.name) === na_(name))[0] || inArea.filter((x) => core(x.name) === core(name))[0] ||
+    inArea.filter((x) => core(x.name).length >= 4 && core(name).length >= 4 && (core(x.name).indexOf(core(name)) >= 0 || core(name).indexOf(core(x.name)) >= 0))[0] || null;
+}
+// хто з команди (за імʼям у табличці) — щоб особисті записи МГ/КР і знані привʼязались до людини
+function teamPerson_(teamId, name) {
+  if (!name) return null;
+  const cand = uniq_(loadRoles_().filter((r) => r.level === 'team' && r.unitId === teamId && r.status === ST.ACTIVE).map((r) => r.tgId))
+    .map((id) => ({ id: id, name: (getPerson_(id) || {}).name || '' })).filter((p) => p.name && nameScore_(name, p.name).s >= 1);
+  const best = cand.filter((p) => nameScore_(name, p.name).same);
+  return best.length === 1 ? best[0] : cand.length === 1 ? cand[0] : null;
+}
+// історія з командної таблички: клуби, МГ, КР, знані, фінанси (те, що вже є в MyYL, не дублюється)
+function importHistory_(team, t, ex) {
+  const st = loadStruct_();
+  const areaId = team.areaId, regionId = st.teamRegion(team.id);
+  const now = nowIso();
+  const has = {};
+  ex.reports.forEach((r) => { has[r.type + '|' + r.date + '|' + (r.type === 'club' ? '' : r.author_id || r.author || '')] = 1; });
+  const reps = [];
+  const add = (type, d, o) => {
+    const k = type + '|' + d + '|' + (type === 'club' ? '' : o.author_id || o.author || '');
+    if (has[k]) return false;
+    has[k] = 1;
+    reps.push(Object.assign({ id: uid_(), created: now, date: d, week: weekKey_(d), type: type, mode: 'event', team_id: team.id, area_id: areaId, region_id: regionId, count: 0, new_t: 0, leaders: 0, hours: 0, topic: '', note: '', author_id: '', author: 'Командна табличка', pid: type === 'club' ? null : uid_() }, o));
+    return true;
+  };
+  const res = { club: 0, mg: 0, kr: 0, known: 0, fin: 0, unknownAuthors: 0 };
+  (t.club || []).forEach((c) => { if (add('club', c[0], { mode: c[1] || c[2] ? 'event' : 'none', count: c[1] || 0, leaders: c[2] || 0, topic: clip_(c[3] || '').slice(0, 200), note: clip_(c[4] || '').slice(0, 300) })) res.club++; });
+  (t.mg || []).forEach((m) => {
+    const p = teamPerson_(team.id, m[2]);
+    if (!p) res.unknownAuthors++;
+    if (add('mg', m[0], { count: m[1] || 0, author_id: p ? p.id : '', author: p ? p.name : m[2] || m[3] || 'Командна табличка', note: clip_(m[3] || '').slice(0, 200) })) res.mg++;
+  });
+  (t.kr || []).forEach((k) => {
+    const p = teamPerson_(team.id, k[2]);
+    if (!p) res.unknownAuthors++;
+    if (add('kr', k[0], { hours: k[1] || 0, author_id: p ? p.id : '', author: p ? p.name : k[2] || 'Командна табличка' })) res.kr++;
+  });
+  if (reps.length) {
+    S.run("INSERT INTO reports (id, created, date, week, type, mode, team_id, area_id, region_id, count, new_t, leaders, hours, topic, note, author_id, author, pid) " +
+      "SELECT json_extract(value, '$.id'), json_extract(value, '$.created'), json_extract(value, '$.date'), json_extract(value, '$.week'), json_extract(value, '$.type'), json_extract(value, '$.mode'), " +
+      "json_extract(value, '$.team_id'), json_extract(value, '$.area_id'), json_extract(value, '$.region_id'), json_extract(value, '$.count'), json_extract(value, '$.new_t'), json_extract(value, '$.leaders'), " +
+      "json_extract(value, '$.hours'), json_extract(value, '$.topic'), json_extract(value, '$.note'), json_extract(value, '$.author_id'), json_extract(value, '$.author'), json_extract(value, '$.pid') FROM json_each(?)", [JSON.stringify(reps)]);
+  }
+  // знані: етап «Дружимо» — їх уже знають по імені
+  const seen = {};
+  ex.known.forEach((k) => { seen[na_(k.name)] = 1; });
+  const kn = [];
+  (t.known || []).forEach((k) => {
+    const n = clip_(k[0]).slice(0, 80);
+    if (!n || seen[na_(n)]) return;
+    seen[na_(n)] = 1;
+    const p = teamPerson_(team.id, k[1]);
+    kn.push({ id: uid_(), n: n, a: p ? p.id : '', l: p ? p.name : k[1] || '' });
+  });
+  if (kn.length) {
+    S.run("INSERT INTO known (id, team_id, name, added, active, updated, stage, author_id, phone, ig, bday, school, grade, leader, note) " +
+      "SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.n'), ?, 1, ?, 'friends', json_extract(value, '$.a'), '', '', '', '', '', json_extract(value, '$.l'), '' FROM json_each(?)",
+    [team.id, '2024-01-01', now, JSON.stringify(kn)]);
+    S.run('UPDATE teams SET known = (SELECT COUNT(*) FROM known WHERE team_id = ? AND active = 1) WHERE id = ?', [team.id, team.id], true);
+    res.known = kn.length;
+  }
+  // фінанси: лише місяці, яких ще немає в MyYL
+  const months = {};
+  ex.finance.forEach((f) => { months[f.month] = 1; });
+  const fin = (t.fin || []).filter((f) => !months[f[0]]).map((f) => ({ m: f[0], p: f[1], o: f[2], t: f[3], s: f[4], b: f[5] }));
+  if (fin.length) {
+    S.run("INSERT INTO finance (team_id, month, prev, office, church, team, spent, balance, author, updated) SELECT ?, json_extract(value, '$.m'), json_extract(value, '$.p'), json_extract(value, '$.o'), 0, " +
+      "json_extract(value, '$.t'), json_extract(value, '$.s'), json_extract(value, '$.b'), 'Командна табличка', ? FROM json_each(?)", [team.id, now, JSON.stringify(fin)]);
+    res.fin = fin.length;
+  }
+  return res;
+}
 function importMembers_(list) {
   const st = loadStruct_();
-  const na = (x) => String(x || '').toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi, '');
+  const na = na_;
   const totals = { added: 0, linked: 0, dup: 0, bad: 0, teamsCreated: 0 };
   const missingAreas = [];
   const teams = [];
@@ -2539,6 +2640,28 @@ async function handleAdmin(req, env, ctx, url) {
   const body = await req.json().catch(() => ({}));
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
+
+  if (action === 'history') {
+    // історія з командних табличок — по одній команді за запит (index)
+    const list = JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY));
+    const i = Number(body.index) || 0, t = list[i];
+    if (!t) return json({ ok: true, n: list.length, done: true });
+    const mk = 'hist:' + (await sha256hex_(JSON.stringify(t))).slice(0, 16);
+    if (!body.force && await db.prepare('SELECT 1 AS x FROM meta WHERE k = ?').bind(mk).first('x')) return json({ ok: true, n: list.length, team: t.team, skipped: true });
+    const S0 = new Store(env, ctx);
+    await S0.loadBase();
+    const team = use(S0, () => { const a = findArea_(t.area); return a ? findTeamIn_(a.id, t.team) : null; });
+    if (!team) return json({ ok: true, n: list.length, team: t.team, missing: true });
+    const ex = await db.batch([
+      db.prepare('SELECT type, date, author_id, author FROM reports WHERE team_id = ?').bind(team.id),
+      db.prepare('SELECT name FROM known WHERE team_id = ? AND active = 1').bind(team.id),
+      db.prepare('SELECT month FROM finance WHERE team_id = ?').bind(team.id),
+    ]);
+    const res = use(S0, () => importHistory_(team, t, { reports: ex[0].results || [], known: ex[1].results || [], finance: ex[2].results || [] }));
+    S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', [mk]);
+    await S0.flush();
+    return json(Object.assign({ ok: true, n: list.length, team: t.team, matched: team.name }, res));
+  }
 
   if (action === 'members') {
     // склад команд із командних табличок: дані зашифровані ключем SYNC_KEY (у публічному репозиторії лише шифр)

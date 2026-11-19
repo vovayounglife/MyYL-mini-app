@@ -92,3 +92,17 @@ jobs:
           RES=$(curl -s -X POST "$URL/admin/members" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @body.json)
           echo "$RES" | jq '{ok, skipped, totals, missingAreas, teams: [.teams[]? | {area, team, matched, created, added, linked, dup, bad}]}'
           echo "$RES" | jq -e .ok > /dev/null
+
+      - name: Перенести історію з командних табличок (один раз)
+        if: hashFiles('worker/seed/history.enc') != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          i=0; n=1
+          while [ "$i" -lt "$n" ]; do
+            jq -n --rawfile enc "$GITHUB_WORKSPACE/worker/seed/history.enc" --argjson i "$i" '{enc: ($enc | rtrimstr("\n")), index: $i}' > body.json
+            RES=$(curl -s -X POST "$URL/admin/history" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @body.json)
+            echo "$RES" | jq -c '{team, matched, skipped, missing, club, mg, kr, known, fin, unknownAuthors, error}'
+            echo "$RES" | jq -e .ok > /dev/null || exit 1
+            n=$(echo "$RES" | jq -r '.n // 0'); i=$((i+1))
+          done

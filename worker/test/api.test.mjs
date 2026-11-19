@@ -760,6 +760,40 @@ const encB = Buffer.concat([ivE, ciph.update(JSON.stringify([{ area: ['Неві�
 r = await admin('members', { enc: encB });
 ok(r.ok && r.missingAreas[0] === 'Невідома', 'імпорт: зашифровані дані розшифровано');
 
+
+// ── історія з табличок ──
+const encOf = (obj) => { const iv = crypto.randomBytes(12), c2 = crypto.createCipheriv('aes-256-gcm', keyE, iv); return Buffer.concat([iv, c2.update(JSON.stringify(obj), 'utf8'), c2.final(), c2.getAuthTag()]).toString('base64'); };
+const hist = [{ area: ['Тернопіль'], team: 'Імпорт Тест', club: [['2025-10-03', 12, 4, 'Тема', 'Проповідник: Оля'], ['2025-10-10', 0, 0, '', '']],
+  mg: [['2025-10-05', 5, 'Петро Новий', ''], ['2025-10-05', 5, 'Петро Новий', '']], kr: [['2025-10-06', 2, 'Лід Ер']], known: [['Аня', 'Петро Новий'], ['аня', 'Лід Ер'], ['Макс', '']],
+  fin: [['2025-09', 0, 500, 100, 200, 400], ['2025-10', 400, 0, 0, 100, 300]] }, { area: ['Тернопіль'], team: 'Немає такої', club: [] }];
+const encH = encOf(hist);
+r = await admin('history', { enc: encH, index: 0 });
+ok(r.ok && r.n === 2 && r.club === 2 && r.mg === 1 && r.kr === 1 && r.known === 2 && r.fin === 2 && r.unknownAuthors === 0, 'історія: імпорт команди ' + JSON.stringify(r));
+r = await admin('history', { enc: encH, index: 0 });
+ok(r.ok && r.skipped, 'історія: повторно не імпортується');
+r = await admin('history', { enc: encH, index: 1 });
+ok(r.ok && r.missing, 'історія: невідома команда пропущена');
+r = await admin('history', { enc: encH, index: 2 });
+ok(r.ok && r.done, 'історія: кінець списку');
+const impTeam = (await api(VOVA, 'me')).data.scopes.find((x) => x.name === 'Імпорт Тест');
+r = await api(VOVA, 'financeGet', { teamId: impTeam.unitId, month: '2025-10' });
+ok(r.ok && r.data.current.balance === 300 && r.data.current.prev === 400, 'історія: фінанси місяця');
+r = await api(VOVA, 'knownList', { units: [impTeam.key] });
+ok(r.ok && JSON.stringify(r.data).includes('Макс'), 'історія: знані');
+
+
+// ── звірка балансу каси ──
+let fz = await api(CAP, 'finTx', { teamId: capTeam.id });
+const balZ = fz.data.balance;
+fz = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'adj', balance: '1234,5', note: 'перерахували гаманець' });
+ok(fz.ok && fz.data.balance === 1234.5 && fz.data.items[0].kind === 'adj' && fz.data.items[0].amount === Math.round((1234.5 - balZ) * 100) / 100, 'каса: звірка балансу');
+r = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'adj', balance: 1234.5 });
+ok(!r.ok, 'каса: звірка без змін відхиляється');
+fz = await api(CAP, 'finTxDelete', { teamId: capTeam.id, id: fz.data.items[0].id });
+ok(fz.ok && fz.data.balance === balZ, 'каса: скасування звірки');
+r = await api(VOVA, 'nudge', { units: ['a:a1'], type: 'mg' });
+ok(!r.ok, 'нагадати можна лише про клуб');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
@@ -774,7 +808,7 @@ const rem = sent.filter((s) => /Нагадування/.test(s.text || ''));
 const evr = sent.filter((s) => /Табір/.test(s.text || ''));
 console.log('   тижневих нагадувань:', rem.length, rem.map((s) => s.chat_id).join(','), '| про подію:', evr.length);
 const capMsg = rem.find((s) => s.chat_id === '4');
-ok(rem.some((s) => s.chat_id === '1') && !rem.some((s) => s.chat_id === '5') && capMsg && !/Клуб/.test(capMsg.text) && /Мала група/.test(capMsg.text), 'тижневе нагадування: лише те, що не здано (лідер усе здав, капітану — без клубу)');
+ok(!capMsg && !rem.some((s) => /Мала група|Контактна/.test(s.text)) && rem.every((s) => /Клуб/.test(s.text)), 'тижневе нагадування: лише клуб, і лише якщо не здано');
 ok(evr.length === 2, 'нагадування про подію двом учасникам');
 console.log(fails ? fails + ' FAILED' : 'ALL OK (cron)');
 if (fails) process.exit(1);

@@ -446,7 +446,7 @@
   // ───────────── ГОЛОВНА ─────────────
   VIEWS.home = function () {
     const m = me(), c = caps();
-    let h = `<div class="row">${myAvatar()}<div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
+    let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
@@ -996,7 +996,13 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const D = F.data;
     h += `<div class="card col" style="gap:4px;text-align:center"><div class="small muted">Каса команди${ids.length > 1 ? ' · ' + esc(teamName(F.teamId)) : ''}</div>
       <div class="b" style="font-size:32px;${D.balance < 0 ? 'color:var(--coral)' : ''}">${money(D.balance)}</div>
-      <div class="small muted">Цього місяця: <b style="color:var(--teal)">+${money(D.month.inc)}</b> · <b>−${money(D.month.spent)}</b></div></div>`;
+      <div class="small muted">Цього місяця: <b style="color:var(--teal)">+${money(D.month.inc)}</b> · <b>−${money(D.month.spent)}</b></div>
+      ${F.adj ? `<div class="col" style="gap:8px;text-align:left;margin-top:8px;border-top:1px solid var(--line);padding-top:10px">
+        <label class="f"><span>Скільки зараз реально в касі, ₴</span><input class="in" type="text" inputmode="decimal" autocomplete="off" data-bind="fx.adjBal" value="${esc(F.adjBal)}" placeholder="${esc(String(D.balance))}"></label>
+        <label class="f"><span>Коментар (необовʼязково)</span><input class="in" type="text" maxlength="200" data-bind="fx.adjNote" value="${esc(F.adjNote || '')}" placeholder="Наприклад: давно не вели, перерахували гаманець"></label>
+        <div class="grid2"><button type="button" class="btn" data-a="fxAdjSave">Зберегти баланс</button><button type="button" class="btn ghost" data-a="fxAdj">Скасувати</button></div>
+        <div class="xs muted">Різниця запишеться як «Звірка балансу» — її видно в записах і можна скасувати.</div></div>`
+        : '<button type="button" class="link-btn" style="align-self:center" data-a="fxAdj">Редагувати баланс</button>'}</div>`;
     h += `<div class="card col"><div class="seg"><button type="button" class="${F.kind === 'in' ? 'on' : ''}" data-a="fxKind" data-v="in">+ Дохід</button><button type="button" class="${F.kind === 'out' ? 'on' : ''}" data-a="fxKind" data-v="out">− Витрата</button></div>
       <label class="f"><span>Сума, ₴</span><input class="in" type="text" inputmode="decimal" autocomplete="off" data-bind="fx.amount" value="${esc(F.amount)}" placeholder="0"></label>
       ${F.kind === 'in' ? `<div class="f"><span>Звідки</span><div class="pills">${FIN_SRC.map((x) => `<button type="button" class="pill${F.src === x[0] ? ' on' : ''}" data-a="fxSrc" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>` : ''}
@@ -1005,7 +1011,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <button type="button" class="btn" data-a="fxAdd"${F.busy ? ' disabled' : ''}>${F.kind === 'out' ? 'Записати витрату' : 'Записати дохід'}</button>
       <div class="xs muted">Кожен запис одразу потрапляє в місячний фінансовий звіт команди.</div></div>`;
     if (D.items.length) {
-      h += `<div class="sec">Останні записи</div><div class="card list">${D.items.map((t) => `<div class="li" style="cursor:default"><span class="grow"><span class="b" style="display:block;color:${t.kind === 'in' ? 'var(--teal)' : 'var(--coral)'}">${t.kind === 'in' ? '+' : '−'}${money(t.amount)}</span>
+      h += `<div class="sec">Останні записи</div><div class="card list">${D.items.map((t) => `<div class="li" style="cursor:default"><span class="grow"><span class="b" style="display:block;color:${t.kind === 'adj' ? 'var(--text)' : t.kind === 'in' ? 'var(--teal)' : 'var(--coral)'}">${t.kind === 'adj' ? '⚖️ Звірка ' + (t.amount > 0 ? '+' : '−') + money(Math.abs(t.amount)) : (t.kind === 'in' ? '+' : '−') + money(t.amount)}</span>
         <span class="xs muted">${esc(fmtShortDay(t.date))} · ${esc([t.srcLabel, t.note].filter(Boolean).join(' · '))}${t.author ? ' · ' + esc(t.author) : ''}</span></span>
         <button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="fxDel" data-id="${esc(t.id)}" aria-label="Видалити запис">✕</button></div>`).join('')}</div>`;
     }
@@ -1608,6 +1614,13 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.addFinTab = () => { S.addFin = true; S.addKnown = false; render(); };
   A.fxTeam = (d, el) => { S.fx.teamId = el.value; S.fx.data = null; S.fx.err = ''; render(); };
   A.fxKind = (d) => { S.fx.kind = d.v; render(); };
+  A.fxAdj = () => { S.fx.adj = !S.fx.adj; S.fx.adjBal = ''; S.fx.adjNote = ''; render(); };
+  A.fxAdjSave = async () => {
+    const F = S.fx, v = String(F.adjBal || '').replace(/\s/g, '').replace(',', '.');
+    if (v === '' || !isFinite(Number(v))) return toast('Вкажи суму, яка зараз у касі');
+    const res = await run(() => api('finTxAdd', { teamId: F.teamId, kind: 'adj', balance: v, note: F.adjNote }), 'Баланс зведено');
+    if (res) { F.data = res; F.adj = false; render(); }
+  };
   A.fxSrc = (d) => { S.fx.src = d.v; render(); };
   A.fxAdd = async () => {
     const F = S.fx, amount = Number(String(F.amount).replace(',', '.'));
@@ -1622,7 +1635,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.fxDel = (d) => {
     const F = S.fx, t = F.data.items.filter((x) => x.id === d.id)[0];
     const doIt = async () => { const res = await run(() => api('finTxDelete', { teamId: F.teamId, id: d.id }), 'Запис видалено'); if (res) { F.data = res; render(); } };
-    const msg = 'Видалити запис ' + (t.kind === 'in' ? '+' : '−') + money(t.amount) + '? Баланс каси перерахується.';
+    const msg = t.kind === 'adj' ? 'Скасувати звірку балансу? Баланс повернеться до попереднього.' : 'Видалити запис ' + (t.kind === 'in' ? '+' : '−') + money(t.amount) + '? Баланс каси перерахується.';
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
   A.addType = (d) => { S.addFin = false; S.addKnown = false; initAdd(d.type, S.add && S.add.teamId); render(); };
