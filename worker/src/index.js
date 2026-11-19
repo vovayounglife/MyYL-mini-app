@@ -337,7 +337,10 @@ class Store {
 // одиниця автора для особистих записів: найвища не-командна роль; інакше — ерія його команди
 function authorUnit_(b, tgId) {
   const act = b.roles.filter((r) => r.tgId === String(tgId) && r.status === ST.ACTIVE).sort((a, x) => a.rank - x.rank);
-  const up = act.filter((r) => r.level !== 'team')[0];
+  const mainId = (b.people[String(tgId)] || {}).main;
+  const main = mainId && act.filter((r) => r.id === mainId)[0];
+  const up = main && main.level !== 'team' ? main : main ? null : act.filter((r) => r.level !== 'team')[0];
+  if (main && main.level === 'team' && b.team[main.unitId]) { const t = b.team[main.unitId]; return { areaId: t.areaId, regionId: (b.area[t.areaId] || {}).regionId || '' }; }
   if (up) {
     if (up.level === 'area') return { areaId: up.unitId, regionId: (b.area[up.unitId] || {}).regionId || '' };
     if (up.level === 'region') return { areaId: '', regionId: up.unitId };
@@ -359,7 +362,7 @@ function indexBase(b) {
 function personFromRow(r) {
   let notif = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
-  return { tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
+  return { main: r.main || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -426,6 +429,7 @@ function savePerson_(c, d) {
   Object.keys(F).forEach((k) => { if (d[k] != null) v[F[k]] = clip_(d[k]); });
   if (d.email != null) v.email = clip_(String(d.email).trim().toLowerCase());
   if (d.title != null) v.title = clip_(String(d.title).slice(0, 60));
+  if (d.main != null) v.main = clip_(d.main);
   if (d.notif && typeof d.notif === 'object') {
     const n = {};
     NOTIF.forEach((k) => { if (d.notif[k] != null) n[k] = d.notif[k] ? 1 : 0; });
@@ -540,7 +544,9 @@ function ownTeams_(c, maxRank) {
 }
 // вища роль без команди: особистий запис МГ/КР іде на рівень її одиниці (ерія / регіон / Україна)
 function upperSelfUnit_(c) {
-  const r = c.roles.filter((x) => x.level !== 'team').sort((a, b) => a.rank - b.rank)[0];
+  const mainId = (getPerson_(c.id) || {}).main;
+  const main = mainId && c.roles.filter((x) => x.id === mainId && x.level !== 'team')[0];
+  const r = main || c.roles.filter((x) => x.level !== 'team').sort((a, b) => a.rank - b.rank)[0];
   return r ? { level: r.level, unitId: r.unitId } : null;
 }
 const canSelf_ = (c, rank) => ownTeams_(c, rank).length > 0 || !!upperSelfUnit_(c);
@@ -715,6 +721,7 @@ API.removeRole = function (c, d) {
 
 API.saveProfile = function (c, d) {
   if (!getPerson_(c.id)) bad_('Спершу зареєструйся.');
+  if (d.main != null && d.main !== '' && !c.active.some((r) => r.id === String(d.main))) bad_('Обери одну зі своїх ролей.');
   savePerson_(c, d);
   return profileOf_(getPerson_(c.id));
 };
@@ -875,6 +882,9 @@ API.teamMembers = function (c, d) {
     const p = byPerson[k];
     const person = getPerson_(p.tgId);
     if (person) { p.name = person.name || p.name; p.username = person.username; p.profile = profileOf_(person); }
+    // усі ролі людини (у будь-яких командах і на будь-яких рівнях) — щоб бачити, хто де служить
+    p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE).sort((a, b) => a.rank - b.rank)
+      .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), canRemove: r.tgId !== c.id && canDecide_(c, r) }));
     return p;
   }).sort((a, b) => a.team.localeCompare(b.team) || a.rank - b.rank || a.name.localeCompare(b.name));
 };
@@ -1105,15 +1115,15 @@ API.teamDelete = function (c, d) {
   const roles = loadRoles_().filter((r) => r.level === 'team' && r.unitId === t.id && (r.status === ST.ACTIVE || r.status === ST.PENDING));
   const u = Object.assign({ people: uniq_(roles.map((r) => r.tgId)).length }, S.usage || {});
   const empty = !u.people && !u.reports && !u.known && !u.finance;
-  const targets = st.teams.filter((x) => x.id !== t.id && x.state !== 'closed' && canEditTeams_(c, x.areaId))
+  const targets = st.teams.filter((x) => x.id !== t.id && x.state !== 'closed' && x.areaId === t.areaId && canEditTeams_(c, x.areaId))
     .map((x) => ({ id: x.id, name: x.name, area: (st.area[x.areaId] || {}).name || '', same: x.areaId === t.areaId }))
     .sort((a, b) => (b.same - a.same) || a.area.localeCompare(b.area) || a.name.localeCompare(b.name));
   if (d.dry) return { usage: u, empty: empty, targets: targets };
   const into = str_(d.mergeInto);
-  if (!empty && !into) bad_('У команді є дані. Обери, в яку команду їх перенести.');
+  if (!empty && !into && !d.drop) bad_('У команді є дані. Обери, куди їх перенести, або видали разом з даними.');
   if (into) {
     const tt = st.team[into];
-    if (!tt || into === t.id) bad_('Обери іншу команду.');
+    if (!tt || into === t.id || tt.areaId !== t.areaId) bad_('Переносити можна лише в іншу команду цієї ж ерії.');
     if (!canEditTeams_(c, tt.areaId)) deny_('Ти не можеш переносити в цю команду.');
     const reg = st.teamRegion(into);
     S.run('UPDATE roles SET unit_id = ? WHERE level = ? AND unit_id = ?', [into, 'team', t.id], true);
@@ -1128,7 +1138,13 @@ API.teamDelete = function (c, d) {
     S.run('UPDATE events SET aud = REPLACE(aud, ?, ?) WHERE aud LIKE ?', [',t:' + t.id + ',', ',t:' + into + ',', '%,t:' + t.id + ',%']);
     refreshKnownCount_(into);
   } else {
+    // без перенесення: ролі знімаються, дані команди видаляються
     S.run("UPDATE roles SET status = ? WHERE level = 'team' AND unit_id = ?", [ST.REMOVED, t.id], true);
+    S.run('DELETE FROM reports WHERE team_id = ?', [t.id]);
+    S.run('DELETE FROM known WHERE team_id = ?', [t.id]);
+    S.run('DELETE FROM finance WHERE team_id = ?', [t.id]);
+    S.run('DELETE FROM rsvp WHERE event_id IN (SELECT id FROM events WHERE level = ? AND unit_id = ?)', ['team', t.id]);
+    S.run("DELETE FROM events WHERE level = 'team' AND unit_id = ?", [t.id]);
   }
   S.run('DELETE FROM teams WHERE id = ?', [t.id], true);
   return { ok: true, merged: !!into };
@@ -1989,7 +2005,7 @@ function uid_() { return crypto.randomUUID().replace(/-/g, '').slice(0, 10); }
 function uniq_(a) { return a.filter((x, i) => x && a.indexOf(x) === i); }
 function fullName_(f) { return [f.first_name, f.last_name].filter(Boolean).join(' ') || f.username || String(f.id); }
 function nowIso() { return new Date().toISOString(); }
-function profileOf_(p) { return { name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
+function profileOf_(p) { return { main: p.main || '', name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
 // bc — розсилки від інших; remind — нагадування про звіти; events — про події; requests — нові заявки
 const NOTIF = ['bc', 'remind', 'events', 'requests'];
 function notifOf_(tgId) {

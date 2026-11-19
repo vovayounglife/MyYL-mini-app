@@ -507,6 +507,37 @@ r = await api(AD, 'teamSave', { id: momT, dir: 'Хакер' });
 tree = (await api(AD, 'structureTree')).data;
 ok(tree[0].areas[0].teams.find((x) => x.id === momT).dir === 'College', 'напрям: невідомий ігнорується');
 
+
+// основна роль: особисті знані рахуються там
+await api(VOVA, 'requestRoles', { roles: ['REGIONAL_DIRECTOR'], regionId: 'r0' });
+await api(VOVA, 'knownBulk', { teamId: '', names: 'Вовин 1\nВовин 2\nВовин 3' });
+const kr0 = Number((await api(VOVA, 'stats', { units: ['r:r0'], cat: 'known' })).data.kpis[0].v);
+me = await api(VOVA, 'me');
+const rdRole = me.data.roles.find((x) => x.key === 'REGIONAL_DIRECTOR' && x.unitId === 'r0');
+r = await api(VOVA, 'saveProfile', { main: rdRole.id });
+ok(r.ok && r.data.main === rdRole.id, 'основна роль збережена');
+const kr1 = Number((await api(VOVA, 'stats', { units: ['r:r0'], cat: 'known' })).data.kpis[0].v);
+ok(kr1 - kr0 === 3, 'основна роль West: особисті знані рахуються в West (' + kr0 + '→' + kr1 + ')');
+r = await api(VOVA, 'saveProfile', { main: 'чужа' });
+ok(!r.ok, 'основна роль: лише своя');
+// склад: усі ролі людини, можна зняти
+r = await api(RD, 'teamMembers', { units: ['t:' + teamId] });
+const vv = r.data.find((p) => p.tgId === '1');
+ok(vv && vv.all.some((x) => x.label === 'Раб Божий' && !x.canRemove) && vv.all.some((x) => x.label === 'Капітан'), 'склад: видно всі ролі людини, Раба Божого не зняти');
+const duo = r.data.find((p) => p.tgId === '77');
+const duoOther = duo && duo.all.find((x) => x.label === 'Лідер' && x.unit !== 'Команда «Тернопіль-Центр»');
+ok(duoOther && duoOther.canRemove, 'склад: РД може зняти роль в іншій команді');
+// видалення без перенесення
+r = await api(AD, 'teamSave', { areaId: 'a1', name: 'Тимчасова' });
+const tmpT = r.data.id;
+await api({ id: 91, first_name: 'Т' }, 'register', { name: 'Тимч', roles: ['CAPTAIN'], teamId: tmpT, areaId: 'a1', email: 't@gmail.com' });
+reqs = await api(AD, 'requests'); for (const p of reqs.data.filter((x) => x.tgId === '91')) await api(AD, 'decide', { roleIds: p.roles.map((x) => x.id), approve: true });
+await api({ id: 91, first_name: 'Т' }, 'saveReport', { type: 'club', teamId: tmpT, mode: 'week', teens: 9 });
+r = await api(AD, 'teamDelete', { id: tmpT, dry: true });
+ok(r.data.targets.every((x) => x.same), 'видалення: перенести можна лише в межах ерії');
+r = await api(AD, 'teamDelete', { id: tmpT, drop: true });
+ok(r.ok && (await api({ id: 91, first_name: 'Т' }, 'me')).data.status !== 'active', 'видалення без перенесення: ролі зняті, команда зникла');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

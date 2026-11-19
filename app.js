@@ -1029,9 +1029,11 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       h += `<div class="row"><button type="button" class="btn sec2 sm" data-a="structDelCancel">Скасувати</button><button type="button" class="btn sm grow" style="background:var(--pink)" data-a="structDelGo">Видалити</button></div>`;
     } else {
       h += `<div class="small">У команді є дані: ${[u.people ? u.people + ' люд.' : '', u.reports ? u.reports + ' звітів' : '', u.known ? u.known + ' знаних' : '', u.finance ? u.finance + ' фін. звітів' : ''].filter(Boolean).join(', ')}.</div>
-        <div class="small muted">Щоб нічого не загубилось, обери команду, куди все перенести (людей, звіти, знаних, фінанси й події). Потім ця команда видалиться.</div>
-        <label class="f"><span>Перенести в</span><select class="in" data-bind="structDelS.into"><option value="">— обери команду —</option>${x.info.targets.map((t) => `<option value="${esc(t.id)}"${x.into === t.id ? ' selected' : ''}>${esc(t.name)} · ${esc(t.area)}</option>`).join('')}</select></label>
-        <div class="row"><button type="button" class="btn sec2 sm" data-a="structDelCancel">Скасувати</button><button type="button" class="btn sm grow" style="background:var(--pink)" data-a="structDelGo">Перенести й видалити</button></div>`;
+        <div class="pills" style="flex-wrap:wrap">${x.info.targets.length ? `<button type="button" class="pill${x.mode !== 'drop' ? ' on' : ''}" data-a="structDelMode" data-m="move">Перенести в іншу команду ерії</button>` : ''}<button type="button" class="pill${x.mode === 'drop' || !x.info.targets.length ? ' on' : ''}" data-a="structDelMode" data-m="drop">Не переносити</button></div>
+        ${x.mode !== 'drop' && x.info.targets.length ? `<div class="small muted">Люди, звіти, знані, фінанси й події перейдуть у вибрану команду.</div>
+          <label class="f"><span>Перенести в</span><select class="in" data-bind="structDelS.into"><option value="">— обери команду —</option>${x.info.targets.map((t) => `<option value="${esc(t.id)}"${x.into === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>`
+        : '<div class="small" style="color:var(--pink)">Ролі людей у цій команді знімуться, а її звіти, знані, фінанси й події видаляться назавжди.</div>'}
+        <div class="row"><button type="button" class="btn sec2 sm" data-a="structDelCancel">Скасувати</button><button type="button" class="btn sm grow" style="background:var(--pink)" data-a="structDelGo">${x.mode !== 'drop' && x.info.targets.length ? 'Перенести й видалити' : 'Видалити з даними'}</button></div>`;
     }
     return h + '</div>';
   }
@@ -1164,7 +1166,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(oid)}"><span class="avatar">${esc(initials(p.name))}</span>
         <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span><span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r.label)}</span>`).join('')}</span></span></button>
         ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${[['Telegram', p.username ? '@' + p.username : ''], ['Телефон', pr.phone], ['Дата народження', pr.bday ? fmtDay(pr.bday) : ''], ['Рік покаяння', pr.repent], ['Рік хрещення', pr.baptism], ['Рік ЛПYL', pr.lpyl], ['Відповідальності', pr.resp]].filter((x) => x[1]).map((x) => `<div class="kv small"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="small muted">Анкету ще не заповнено</div>'}
-          ${p.roles.filter((r) => r.canRemove).map((r) => `<button type="button" class="btn ghost sm" style="margin-top:8px;width:100%" data-a="roleRemove" data-id="${esc(r.id)}" data-label="${esc(r.label)}" data-name="${esc(p.name)}">Зняти роль «${esc(r.label)}»</button>`).join('')}</div>` : ''}`;
+          <div class="sec" style="margin:10px 0 4px">Ролі й команди</div>
+          ${(p.all || p.roles.map((r) => ({ id: r.id, label: r.label, unit: p.team, canRemove: r.canRemove }))).map((r) => `<div class="row" style="padding:6px 0;border-top:1px solid var(--line);gap:8px"><span class="grow small"><b>${esc(r.label)}</b> · ${esc(r.unit)}</span>${r.canRemove ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="roleRemove" data-id="${esc(r.id)}" data-label="${esc(r.label + ' · ' + r.unit)}" data-name="${esc(p.name)}">Зняти</button>` : ''}</div>`).join('')}</div>` : ''}`;
     }).join('')}</div>`).join('') + '<div class="xs muted">Анкету кожен заповнює у своєму профілі.</div>';
     return h;
   };
@@ -1226,6 +1229,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const m = me(), p = S.profile || {};
     let h = header('Мій профіль', '', IN_TG ? '' : '<button type="button" class="btn ghost sm" data-a="logout">Вийти</button>');
     h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
+    const act = (m.roles || []).filter((r) => r.status === 'активна');
+    if (act.length > 1) h += `<div class="sec">Основна роль</div><div class="card col" style="gap:6px"><select class="in" data-ch="mainRole"><option value="">Автоматично — найвища роль</option>${act.map((r) => `<option value="${esc(r.id)}"${(m.profile || {}).main === r.id ? ' selected' : ''}>${esc(r.label + ' · ' + r.unitName)}</option>`).join('')}</select>
+      <div class="xs muted">Тут рахуються твої особисті записи: знані «Без команди», а для вищих ролей — мала група й контактна робота.</div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
       <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${activeRoles().some((r) => r.key === 'SUPER') ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
     const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
@@ -1445,13 +1451,15 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (S.structDelS && S.structDelS.id === d.id) { S.structDelS.info = r; render(); }
   };
   A.structDelCancel = () => { S.structDelS = null; render(); };
+  A.structDelMode = (d) => { S.structDelS.mode = d.m; render(); };
   A.structDelGo = () => {
     const x = S.structDelS; if (!x || !x.info) return;
-    if (!x.info.empty && !x.into) return toast('Обери, куди перенести дані', 'error');
+    const drop = !x.info.empty && (x.mode === 'drop' || !x.info.targets.length);
+    if (!x.info.empty && !drop && !x.into) return toast('Обери, куди перенести дані', 'error');
     const target = x.into ? (x.info.targets.filter((t) => t.id === x.into)[0] || {}).name : '';
-    const msg = x.info.empty ? 'Видалити команду «' + x.name + '»?' : 'Перенести все з «' + x.name + '» у «' + target + '» і видалити «' + x.name + '»? Цю дію не можна скасувати.';
+    const msg = x.info.empty ? 'Видалити команду «' + x.name + '»?' : drop ? 'Видалити «' + x.name + '» разом з усіма даними? Ролі людей знімуться. Цю дію не можна скасувати.' : 'Перенести все з «' + x.name + '» у «' + target + '» і видалити «' + x.name + '»? Цю дію не можна скасувати.';
     const doIt = async () => {
-      const r = await run(() => api('teamDelete', { id: x.id, mergeInto: x.into || '' }), x.info.empty ? 'Команду видалено' : 'Перенесено й видалено');
+      const r = await run(() => api('teamDelete', { id: x.id, mergeInto: drop ? '' : x.into || '', drop: drop }), x.info.empty || drop ? 'Команду видалено' : 'Перенесено й видалено');
       if (r) { S.structDelS = null; S.me = await api('me').catch(() => S.me); loadTree(); }
     };
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
@@ -1620,6 +1628,10 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const n = Object.assign({}, (S.me.profile && S.me.profile.notif) || {}); n[d.k] = el.checked;
     const res = await run(() => api('saveProfile', { notif: n }), el.checked ? 'Сповіщення увімкнено' : 'Сповіщення вимкнено');
     if (res) { S.me.profile = res; LS.set('me', S.me); } else el.checked = !el.checked;
+  };
+  A.mainRole = async (d, el) => {
+    const res = await run(() => api('saveProfile', { main: el.value }), 'Основну роль збережено');
+    if (res) { S.me.profile = res; LS.set('me', S.me); }
   };
   A.profileSave = async () => { const res = await run(() => api('saveProfile', Object.assign({}, S.profile, { notif: undefined })), 'Анкету збережено'); if (res) { S.me.profile = res; S.me.user.name = res.name || S.me.user.name; S.me.user.title = res.title || ''; render(); } };
   A.roleReqOpen = () => {
