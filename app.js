@@ -397,25 +397,16 @@
     const m = me(), c = caps();
     let h = `<div class="row">${myAvatar()}<div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
-    if (items.length) {
-      const done = items.filter((x) => x.status !== 'missing').length;
-      h += `<div class="card col"><div class="row between"><div><h2>Цей тиждень</h2><div class="small muted">${esc(m.week.label)}</div></div>
-        <div style="font:800 22px Manrope,Inter,sans-serif">${done}<span class="small muted"> з ${items.length}</span></div></div>
-        ${items.map((it) => `<div class="week-item"><span class="grow b" style="font-weight:500">${esc(it.label)}</span>${
-          it.status === 'ok' ? `<button type="button" class="status ok" data-a="openAdd" data-type="${it.type}" data-team="${esc(it.teamId)}">${it.type === 'kr' ? df(it.hours) + ' год' : 'Внесено'}</button>`
-          : it.status === 'none' ? `<button type="button" class="status none" data-a="openAdd" data-type="${it.type}" data-team="${esc(it.teamId)}">Не було</button>`
-          : `<button type="button" class="btn ghost sm" data-a="markNone" data-type="${it.type}" data-team="${esc(it.teamId)}">Не було</button><button type="button" class="btn sm" data-a="openAdd" data-type="${it.type}" data-team="${esc(it.teamId)}">Внести</button>`
-        }</div>`).join('')}</div>`;
-    }
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
     }
+    // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     const quick = TYPES.filter((t) => canType(t.k));
-    if (quick.length && items.length) {
-      h += `<div class="sec">Швидко внести</div><div class="grid3">${quick.map((t) =>
-        `<button type="button" class="tile" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}</button>`).join('')}</div>`;
-    }
+    const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
+    const qt = quick.map((t) => `<button type="button" class="tile" style="position:relative" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}${doneT(t.k) ? '<span class="tile-ok" aria-label="цього тижня внесено">✓</span>' : ''}</button>`);
+    if (canKnownAdd()) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
+    if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 4 ? '2' : '3'}">${qt.join('')}</div>`;
     const tiles = sectionTiles();
     if (tiles.length) {
       h += `<div class="sec">Розділи</div><div class="grid2">${tiles.map((t) =>

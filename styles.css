@@ -223,3 +223,4 @@ html.standalone .main { padding-top: calc(18px + env(safe-area-inset-top)); }
 html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 button, a, label, input, select, textarea, .li, .pill, .kcard { touch-action: manipulation; }
 input, select, textarea, .in { font-size: 16px !important; }
+.tile-ok { position: absolute; top: 6px; right: 8px; font-size: 12px; font-weight: 800; color: var(--teal); }
