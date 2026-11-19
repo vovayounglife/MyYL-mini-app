@@ -722,29 +722,42 @@
     sc.forEach((x) => { if (x.level === 'team' && ok[x.key]) for (let k = x.key; k && by[k]; k = by[k].parent) keep[k] = true; });
     return sc.filter((x) => keep[x.key]);
   }
-  function ensurePick(scr, prefer) {
+  // стан вибору: keys — що вибрано; ctx — чиїх «дітей» показуємо (регіони України, ерії регіону, команди ерії)
+  function pkTree(scr) {
     const units = unitsFor(scr), by = {};
     units.forEach((x) => { by[x.key] = x; });
-    let P = S.pick[scr];
-    if (!P || !P.keys.length || !P.keys.every((k) => by[k])) {
-      const k0 = (prefer || []).filter((k) => by[k])[0] || (units[0] && units[0].key);
-      P = S.pick[scr] = { keys: k0 ? [k0] : [], level: k0 ? by[k0].level : '', multi: P ? !!P.multi : false };
-    }
-    return P;
+    const kids = (k) => units.filter((x) => (k ? x.parent === k : !by[x.parent])).sort(byName);
+    return { units: units, by: by, kids: kids };
+  }
+  function ctxFor(T, key) {
+    const x = T.by[key];
+    if (!x) return '';
+    if (T.kids(key).length) return key;           // є що вибирати глибше — показуємо дітей
+    return T.by[x.parent] ? x.parent : '';         // команда — лишаємось серед сусідів
+  }
+  function makePick(scr, keys, multi) {
+    const T = pkTree(scr);
+    const ks = (keys || []).filter((k) => T.by[k]);
+    const first = ks[0] || (T.units[0] && T.units[0].key);
+    S.pick[scr] = { keys: first ? (ks.length ? ks : [first]) : [], ctx: first ? (ks.length > 1 ? (T.by[T.by[ks[0]].parent] ? T.by[ks[0]].parent : '') : ctxFor(T, first)) : '', multi: !!multi || ks.length > 1 };
+    return S.pick[scr];
+  }
+  function ensurePick(scr, prefer) {
+    const T = pkTree(scr);
+    const P = S.pick[scr];
+    if (P && P.keys.length && P.keys.every((k) => T.by[k])) return P;
+    const k0 = (prefer || []).filter((k) => T.by[k])[0];
+    return makePick(scr, k0 ? [k0] : [], P ? P.multi && false : false);
   }
   const ownTeamKeys = (scr) => { const list = caps()[PICK_TEAMS[scr]] || []; const id = (S.me.myTeams || []).map((t) => t.id).filter((x) => list.indexOf(x) >= 0)[0]; return id ? ['t:' + id] : []; };
-  function setPick(scr, key) {
-    const x = scopeBy()[key];
-    if (!x) return;
-    S.pick[scr] = { keys: [key], level: x.level, multi: S.pick[scr] ? S.pick[scr].multi && false : false };
-  }
+  function setPick(scr, key) { makePick(scr, [key], false); }
   function levelTarget(units, curKey, level) {
     const by = {};
     units.forEach((x) => { by[x.key] = x; });
     const cur = by[curKey];
     const ORD = LEVELS.map((l) => l[0]);
     let t = '';
-    if (cur && ORD.indexOf(level) < ORD.indexOf(cur.level)) { for (let k = cur.parent; k && by[k]; k = by[k].parent) if (by[k].level === level) { t = k; break; } }
+    if (cur && ORD.indexOf(level) <= ORD.indexOf(cur.level)) { for (let k = cur.key; k && by[k]; k = by[k].parent) if (by[k].level === level) { t = k; break; } }
     else if (cur) {
       const under = (x) => { for (let k = x.parent; k && by[k]; k = by[k].parent) if (k === cur.key) return true; return false; };
       const c = units.filter((x) => x.level === level && under(x)).sort(byName); t = c[0] ? c[0].key : '';
@@ -752,30 +765,27 @@
     if (!t) { const c = units.filter((x) => x.level === level).sort(byName); t = c[0] ? c[0].key : ''; }
     return t;
   }
+  const LV_PLURAL = { region: 'Регіони', area: 'Ерії', team: 'Команди', nat: 'Україна' };
+  const LV_OF = { nat: 'України', region: 'регіону', area: 'ерії' };
   function picker(scr) {
-    const units = unitsFor(scr), P = S.pick[scr];
-    if (!P || units.length < 2) return '';
-    const by = {};
-    units.forEach((x) => { by[x.key] = x; });
-    const lv = LEVELS.filter((l) => units.some((x) => x.level === l[0]));
-    const level = P.level || (by[P.keys[0]] || {}).level;
-    const pn = (x) => (by[x.parent] || {}).name || '';
-    const cur = by[P.keys[0]];
-    const parentKey = cur && cur.level === level && by[cur.parent] ? cur.parent : '';
-    // у межах батьківської одиниці: регіони — в Україні, ерії — в регіоні, команди — в ерії
-    const list = units.filter((x) => x.level === level && (parentKey ? x.parent === parentKey : !by[x.parent])).sort((a, b) => pn(a).localeCompare(pn(b)) || byName(a, b));
-    const manyParents = !parentKey && new Set(list.map(pn)).size > 1;
-    const pLbl = parentKey ? ({ nat: '', region: 'регіону ', area: 'ерії ' }[by[parentKey].level] || '') + (by[parentKey].level === 'nat' ? 'України' : by[parentKey].name) : '';
+    const P = S.pick[scr];
+    const T = pkTree(scr);
+    if (!P || T.units.length < 2) return '';
+    const ctxU = T.by[P.ctx];
+    const list = T.kids(P.ctx);
+    const shownLevel = (list[0] || ctxU || T.by[P.keys[0]] || {}).level;
+    const lv = LEVELS.filter((l) => l[0] !== 'nat' && T.units.some((x) => x.level === l[0])); // «Україна» = «Усі» серед регіонів
+    const allOn = ctxU && P.keys.length === 1 && P.keys[0] === P.ctx;
     let h = `<div class="col pick" id="pk-${scr}" style="gap:8px">`;
-    if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === level}" class="${l[0] === level ? 'on' : ''}" data-a="pkLevel" data-s="${scr}" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
-    if (list.length > 1) {
-      if (list.length > 10) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти: ${esc(((LEVELS.filter((l) => l[0] === level)[0] || [])[1] || '').toLowerCase())}…" data-live="pkFind" data-s="${scr}" aria-label="Пошук">`;
-      if (pLbl && level !== 'region') h += `<div class="xs muted" style="margin:-2px 0 -4px">${esc(((LEVELS.filter((l) => l[0] === level)[0] || [])[1] || '').replace('Ерія', 'Ерії').replace('Команда', 'Команди'))} ${esc(pLbl)} · щоб змінити, обери вище «${level === 'team' ? 'Ерія' : 'Регіон'}»</div>`;
-      h += `<div class="pills lvl"><button type="button" class="pill multi${P.multi ? ' on' : ''}" data-a="pkMulti" data-s="${scr}" aria-pressed="${P.multi}">${P.multi ? '☑' : '☐'} Кілька</button>${list.map((x) => {
+    if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === shownLevel}" class="${l[0] === shownLevel ? 'on' : ''}" data-a="pkLevel" data-s="${scr}" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
+    if (list.length) {
+      if (ctxU) h += `<div class="xs muted" style="margin:-2px 0 -4px">${esc(LV_PLURAL[shownLevel] || '')} ${esc(LV_OF[ctxU.level] || '')} ${esc(ctxU.level === 'nat' ? '' : ctxU.name)}</div>`;
+      if (list.length > 10) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти…" data-live="pkFind" data-s="${scr}" aria-label="Пошук">`;
+      h += `<div class="pills lvl">${ctxU ? `<button type="button" class="pill${allOn ? ' on' : ''}" data-a="pkAll" data-s="${scr}" aria-pressed="${!!allOn}">Усі</button>` : ''}${list.map((x) => {
         const on = P.keys.indexOf(x.key) >= 0;
-        return `<button type="button" class="pill${on ? ' on' : ''}" data-a="pkUnit" data-s="${scr}" data-k="${esc(x.key)}" data-q="${esc((x.name + ' ' + pn(x)).toLowerCase())}" aria-pressed="${on}">${esc(x.name)}${manyParents && level !== 'region' ? `<span class="hint"> · ${esc(pn(x))}</span>` : ''}</button>`;
-      }).join('')}</div>`;
-      if (P.multi && P.keys.length > 1) h += `<div class="xs muted">Вибрано: ${P.keys.length} · <button type="button" class="link-btn xs" data-a="pkReset" data-s="${scr}">скинути</button></div>`;
+        return `<button type="button" class="pill${on ? ' on' : ''}" data-a="pkUnit" data-s="${scr}" data-k="${esc(x.key)}" data-q="${esc(x.name.toLowerCase())}" aria-pressed="${on}">${esc(x.name)}</button>`;
+      }).join('')}${list.length > 1 ? `<button type="button" class="pill multi${P.multi ? ' on' : ''}" data-a="pkMulti" data-s="${scr}" aria-pressed="${P.multi}">${P.multi ? '☑' : '☐'} Кілька</button>` : ''}</div>`;
+      if (P.multi && P.keys.length > 1) h += `<div class="xs muted">Вибрано: ${P.keys.length} · <button type="button" class="link-btn xs" data-a="pkAll" data-s="${scr}">скинути</button></div>`;
     }
     return h + '</div>';
   }
@@ -1301,7 +1311,7 @@
   function resetEvPick(keys) {
     const f = S.evForm, u = evUnits(f)[Number(f.unit) || 0], by = scopeBy();
     const ks = (keys && keys.length ? keys : [ownerKeyOf(u)]).filter((k) => by[k]);
-    S.pick.event = { keys: ks, level: ks[0] ? by[ks[0]].level : '', multi: ks.length > 1 };
+    makePick('event', ks, ks.length > 1);
   }
   A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), end: '', time: '', place: '', desc: '', roles: [] }; resetEvPick(); render(); };
   A.evOwner = () => { resetEvPick(); render(); };
@@ -1427,15 +1437,30 @@
     const res = await run(() => api('knownBulk', { teamId: b.teamId || '', names: b.text, stage: b.stage }));
     if (res) { toast('Додано: ' + res.added, 'success'); S.known.bulk = null; S.knownMem = {}; loadKnown(true); }
   };
-  A.pkLevel = (d) => { const P = S.pick[d.s]; if (!P || P.level === d.l) return; const t = levelTarget(unitsFor(d.s), P.keys[0], d.l); P.level = d.l; P.keys = t ? [t] : []; onPick(d.s); };
-  A.pkUnit = (d) => {
+  A.pkLevel = (d) => {
     const P = S.pick[d.s]; if (!P) return;
-    if (P.multi) { const i = P.keys.indexOf(d.k); if (i >= 0) { if (P.keys.length > 1) P.keys.splice(i, 1); else return; } else P.keys.push(d.k); }
-    else { if (P.keys.length === 1 && P.keys[0] === d.k) return; P.keys = [d.k]; }
+    const T = pkTree(d.s);
+    const t = levelTarget(T.units, P.keys[0], d.l); if (!t) return;
+    if (T.by[t].parent === P.keys[0] && P.keys.length === 1) { P.ctx = P.keys[0]; render(); return; } // на рівень нижче: показуємо дітей, вибір той самий («Усі»)
+    P.keys = [t]; P.multi = false; P.ctx = T.by[T.by[t].parent] ? T.by[t].parent : '';
     onPick(d.s);
   };
-  A.pkMulti = (d) => { const P = S.pick[d.s]; if (!P) return; P.multi = !P.multi; const was = P.keys.length; if (!P.multi) P.keys = P.keys.slice(0, 1); if (was !== P.keys.length) onPick(d.s); else render(); };
-  A.pkReset = (d) => { const P = S.pick[d.s]; if (!P) return; P.keys = P.keys.slice(0, 1); onPick(d.s); };
+  A.pkUnit = (d) => {
+    const P = S.pick[d.s]; if (!P) return;
+    const T = pkTree(d.s);
+    if (P.multi) {
+      let ks = P.keys.filter((k) => k !== P.ctx);
+      const i = ks.indexOf(d.k);
+      if (i >= 0) ks.splice(i, 1); else ks.push(d.k);
+      P.keys = ks.length ? ks : [P.ctx || d.k];
+    } else {
+      if (P.keys.length === 1 && P.keys[0] === d.k && T.by[d.k].level === 'team') return;
+      P.keys = [d.k]; P.ctx = ctxFor(T, d.k);   // вибрав регіон — далі його ерії; ерію — її команди
+    }
+    onPick(d.s);
+  };
+  A.pkAll = (d) => { const P = S.pick[d.s]; if (!P || !P.ctx) return; P.keys = [P.ctx]; P.multi = false; onPick(d.s); };
+  A.pkMulti = (d) => { const P = S.pick[d.s]; if (!P) return; P.multi = !P.multi; if (!P.multi && P.keys.length > 1) { P.keys = [P.ctx || P.keys[0]]; onPick(d.s); } else render(); };
   A.pkFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('#pk-' + d.s + ' [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0)); };
 
   // склад
