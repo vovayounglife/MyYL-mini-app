@@ -92,6 +92,8 @@ export default {
     if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     try {
       if (url.pathname === '/tg' && req.method === 'POST') return await handleTelegram(req, env, ctx);
+      if (url.pathname === '/upload' && req.method === 'POST') return await handleUpload(req, env, ctx);
+      if (url.pathname.indexOf('/f/') === 0 && req.method === 'GET') return await handleFile(req, env, url);
       if (url.pathname.startsWith('/auth/') && req.method === 'POST') return await handleAuth(req, env, url);
       if (url.pathname.startsWith('/admin/') && req.method === 'POST') return await handleAdmin(req, env, ctx, url);
       if (req.method === 'POST' && (url.pathname === '/' || url.pathname === '/api')) return await handleApi(req, env, ctx);
@@ -143,6 +145,7 @@ const NEEDS = {
   memberAdd: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
   dirStats: { log: 'stats' },
+  resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
 };
@@ -176,6 +179,7 @@ async function handleApi(req, env, ctx) {
     }
     if (need.ftx) await S.loadFinTx(str_(d.teamId));
     if (need.bc) await S.loadBroadcasts();
+    if (need.res) await S.loadRes();
     if (need.tp) await S.loadTP();
     if (need.usage) await S.loadTeamUsage(str_(d.id));
     const data = use(S, () => fn(ctx_(tgUser), d));
@@ -340,6 +344,10 @@ class Store {
     this.taskPeople = (tp.results || []).map((r) => ({ taskId: r.task_id, tgId: r.tg_id, name: r.name || '', status: TASK_ST[r.status] ? r.status : 'todo', note: r.note || '', updated: r.updated || '' }));
     this.polls = (p.results || []).map((r) => Object.assign(base(r), { question: r.question || '', options: JSON.parse(r.options || '[]'), multi: !!r.multi, open: !!r.open_results, people: list(r.people) }));
     this.votes = (pv.results || []).map((r) => ({ pollId: r.poll_id, tgId: r.tg_id, opt: Number(r.opt), name: r.name || '' }));
+  }
+  async loadRes() {
+    const rs = await this.db.prepare("SELECT * FROM resources WHERE status != 'відхилено' ORDER BY created DESC LIMIT 500").all();
+    this.res = (rs.results || []).map((r) => ({ id: r.id, title: r.title || '', url: r.url || '', fileId: r.file_id || '', fileName: r.file_name || '', fkey: r.fkey || '', note: r.note || '', aud: r.aud || 'all', status: r.status, authorId: r.author_id || '', author: r.author || '', created: r.created || '' }));
   }
   async loadBroadcasts() {
     const [h, q] = await this.db.batch([
@@ -1932,6 +1940,131 @@ API.pollDelete = function (c, d) {
   S.run('DELETE FROM polls WHERE id = ?', [p.id]);
   return { ok: true };
 };
+
+// ── «Корисні ресурси»: посилання й файли; кому корисно — усім, регіону або напрямку служіння ──
+const RES_ADD = ['SUPER', 'NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'OFFICE'];
+const RES_ST = { PENDING: 'очікує', ACTIVE: 'активний', REJECTED: 'відхилено' };
+const canAddRes_ = (c) => (c.active || c.roles).some((r) => RES_ADD.indexOf(r.key) >= 0);
+// експерт напрямку — працівник нацофісу з посадою «Експерт <напрямок>»
+const isExpert_ = (r, dir) => r.key === 'OFFICE' && /експерт/i.test(r.title || '') && na_(r.title).indexOf(na_(dir)) >= 0;
+function resApprovers_(aud) {
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && isReal_(r.tgId));
+  const supers = uniq_(act.filter((r) => r.key === 'SUPER').map((r) => r.tgId));
+  let ids = [];
+  if (aud.indexOf('r:') === 0) ids = act.filter((r) => r.key === 'REGIONAL_DIRECTOR' && r.unitId === aud.slice(2)).map((r) => r.tgId);
+  if (aud.indexOf('dir:') === 0) ids = act.filter((r) => isExpert_(r, aud.slice(4))).map((r) => r.tgId);
+  return { primary: uniq_(ids).length ? uniq_(ids) : supers, all: uniq_(ids.concat(supers)) };
+}
+const resAudLabel_ = (aud) => (aud === 'all' ? 'Для всіх' : aud.indexOf('r:') === 0 ? 'Регіон ' + unitName_('region', aud.slice(2)) : aud.indexOf('dir:') === 0 ? aud.slice(4) : '');
+function resSees_(c, x) {
+  if (isSuper_(c) || x.authorId === c.id) return true;
+  if (x.status !== RES_ST.ACTIVE) return resApprovers_(x.aud).all.indexOf(c.id) >= 0;
+  if (x.aud === 'all') return true;
+  const mine = c.active || c.roles;
+  if (mine.some((r) => r.level === 'nat')) return true;
+  const st = loadStruct_();
+  if (x.aud.indexOf('r:') === 0) {
+    const rid = x.aud.slice(2);
+    return mine.some((r) => (r.level === 'region' && r.unitId === rid) || (r.level === 'area' && (st.area[r.unitId] || {}).regionId === rid) || (r.level === 'team' && st.teamRegion(r.unitId) === rid));
+  }
+  if (x.aud.indexOf('dir:') === 0) {
+    const dir = x.aud.slice(4);
+    return mine.some((r) => (r.level === 'team' && (st.team[r.unitId] || {}).dir === dir) || isExpert_(r, dir) ||
+      (r.level !== 'team' && st.teams.some((t) => t.dir === dir && covers_(r, 'team', t.id))));
+  }
+  return false;
+}
+function resOut_(c, x) {
+  return { id: x.id, title: x.title, url: x.url, hasFile: !!x.fileId, fileName: x.fileName, fkey: x.fkey, note: x.note, aud: x.aud, audLabel: resAudLabel_(x.aud), status: x.status,
+    pending: x.status === RES_ST.PENDING, author: x.author, created: x.created,
+    canDecide: x.status === RES_ST.PENDING && (isSuper_(c) || resApprovers_(x.aud).all.indexOf(c.id) >= 0), canDelete: isSuper_(c) || x.authorId === c.id };
+}
+API.resList = function (c) {
+  return {
+    list: (S.res || []).filter((x) => resSees_(c, x)).map((x) => resOut_(c, x)),
+    canAdd: canAddRes_(c), regions: loadStruct_().regions.map((r) => ({ id: r.id, name: r.name })), dirs: DIRS,
+  };
+};
+API.resSave = function (c, d) {
+  if (!canAddRes_(c)) deny_('Додавати ресурси можуть Регіональні директори й адміни, Національний офіс і Раб Божий.');
+  const title = clip_(d.title).slice(0, 150);
+  if (title.length < 2) bad_('Напиши назву.');
+  let url = clip_(d.url).trim();
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const f = d.file && d.file.fileId ? d.file : null;
+  if (!url && !f) bad_('Додай посилання або файл.');
+  let aud = str_(d.aud) || 'all';
+  if (aud.indexOf('r:') === 0 && !loadStruct_().region[aud.slice(2)]) bad_('Обери регіон.');
+  if (aud.indexOf('dir:') === 0 && DIRS.indexOf(aud.slice(4)) < 0) bad_('Обери напрямок.');
+  if (aud !== 'all' && aud.indexOf('r:') !== 0 && aud.indexOf('dir:') !== 0) aud = 'all';
+  const ap = resApprovers_(aud);
+  const auto = isSuper_(c) || ap.primary.indexOf(c.id) >= 0;
+  const x = { id: uid_(), title: title, url: url, fileId: f ? clip_(f.fileId) : '', fileName: f ? clip_(f.name).slice(0, 120) : '', fkey: f ? uid_() + uid_() : '', note: clip_(d.note).slice(0, 500),
+    aud: aud, status: auto ? RES_ST.ACTIVE : RES_ST.PENDING, authorId: c.id, author: c.name, created: nowIso() };
+  S.run('INSERT INTO resources (id, title, url, file_id, file_name, fkey, note, aud, status, author_id, author, created, decided_by, decided) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [x.id, x.title, x.url, x.fileId, x.fileName, x.fkey, x.note, x.aud, x.status, x.authorId, x.author, x.created, auto ? c.name : '', auto ? x.created : '']);
+  S.res = [x].concat(S.res || []);
+  if (!auto) {
+    const text = '📚 <b>Новий корисний ресурс</b> чекає підтвердження\n\n<b>' + esc_(title) + '</b>\nКому: ' + esc_(resAudLabel_(aud)) + '\nДодав(ла): ' + esc_(c.name);
+    ap.primary.filter((id) => id !== c.id && wants_(id, 'requests')).forEach((id) => sendApp_(id, text, 'Переглянути', 'res'));
+  }
+  return resOut_(c, x);
+};
+API.resDecide = function (c, d) {
+  const x = (S.res || []).filter((y) => y.id === str_(d.id))[0];
+  if (!x) bad_('Ресурс не знайдено.');
+  if (!resOut_(c, x).canDecide) deny_();
+  x.status = d.approve ? RES_ST.ACTIVE : RES_ST.REJECTED;
+  S.run('UPDATE resources SET status = ?, decided_by = ?, decided = ? WHERE id = ?', [x.status, c.name, nowIso(), x.id]);
+  if (x.authorId !== c.id && wants_(x.authorId, 'requests')) sendApp_(x.authorId, (d.approve ? '✅ Ресурс «' : '🚫 Ресурс «') + esc_(x.title) + (d.approve ? '» опубліковано' : '» не підтверджено') + ' (' + esc_(c.name) + ')', 'Корисні ресурси', 'res');
+  return resOut_(c, x);
+};
+API.resDelete = function (c, d) {
+  const x = (S.res || []).filter((y) => y.id === str_(d.id))[0];
+  if (!x) bad_('Ресурс не знайдено.');
+  if (!(isSuper_(c) || x.authorId === c.id)) deny_('Видалити може лише автор або Раб Божий.');
+  S.run('DELETE FROM resources WHERE id = ?', [x.id]);
+  return { ok: true };
+};
+
+// файл для ресурсу: зберігаємо в Telegram (до 20 МБ), віддаємо за посиланням /f/<id>?k=<ключ>
+async function handleUpload(req, env, ctx) {
+  let form;
+  try { form = await req.formData(); } catch (e) { return json({ ok: false, error: 'bad_request', message: 'Невірний запит.' }); }
+  const S1 = new Store(env, ctx);
+  try {
+    const sess = form.get('session'), init = form.get('initData');
+    const u = sess ? await verifySession(String(sess), env) : await verifyInitData(String(init || ''), env.BOT_TOKEN);
+    if (!u) return json({ ok: false, error: 'auth', message: 'Не вдалося перевірити Telegram.' });
+    await S1.loadBase();
+    if (!use(S1, () => canAddRes_(ctx_(u)))) return json({ ok: false, error: 'forbidden', message: 'Додавати файли можуть ті, хто додає ресурси.' });
+    const file = form.get('file');
+    if (!file || typeof file === 'string') return json({ ok: false, error: 'bad_request', message: 'Файл не отримано.' });
+    if (file.size > 20 * 1024 * 1024) return json({ ok: false, error: 'too_big', message: 'Файл більший за 20 МБ — додай його посиланням (Google Диск).' });
+    const fd = new FormData();
+    fd.append('chat_id', String(u.id));
+    fd.append('caption', '📎 Файл для «Корисних ресурсів» MyYL');
+    fd.append('document', file, file.name || 'file');
+    const r = await tgForm(env, 'sendDocument', fd);
+    const m = (r && r.result) || {};
+    const doc = m.document || m.video || m.audio || m.animation || (m.photo && m.photo[m.photo.length - 1]);
+    if (!r || !r.ok || !doc) return json({ ok: false, error: 'upload', message: 'Не вдалося зберегти файл. Спробуй ще раз або додай посиланням.' });
+    return json({ ok: true, data: { fileId: doc.file_id, name: file.name || doc.file_name || 'file', size: file.size } });
+  } catch (e) {
+    return json({ ok: false, error: 'error', message: e.message || 'Помилка' });
+  }
+}
+async function handleFile(req, env, url) {
+  const id = url.pathname.slice(3).replace(/[^a-z0-9]/gi, '');
+  const row = await env.DB.prepare('SELECT * FROM resources WHERE id = ?').bind(id).first();
+  if (!row || !row.file_id || row.fkey !== url.searchParams.get('k') || row.status !== RES_ST.ACTIVE) return new Response('Файл не знайдено', { status: 404 });
+  const info = await tg(env, 'getFile', { file_id: row.file_id });
+  if (!info.ok || !info.result || !info.result.file_path) return new Response('Файл недоступний', { status: 404 });
+  const f = await fetch('https://api.telegram.org/file/bot' + env.BOT_TOKEN + '/' + info.result.file_path);
+  const name = row.file_name || 'file';
+  return new Response(f.body, { headers: { 'content-type': f.headers.get('content-type') || 'application/octet-stream',
+    'content-disposition': "inline; filename*=UTF-8''" + encodeURIComponent(name), 'cache-control': 'private, max-age=3600' } });
+}
 
 // ── «Дозволи й доступ»: кожна ланка (Капітан і вище) налаштовує ролі нижче у своїй одиниці ──
 function permUnits_(c) {

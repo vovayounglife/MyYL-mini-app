@@ -57,6 +57,8 @@
     task: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9',
     poll: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
     lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+    res: 'M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z',
+    link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
     phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   };
@@ -90,6 +92,7 @@
     add: null, knownCache: {},
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false, from: '', to: '' },
     dirs: { data: null, period: 'month', from: '', to: '' },
+    res: { data: null, form: null },
     known: { teamId: null, list: null, mode: 'mine', detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
@@ -115,7 +118,7 @@
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.res.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -200,12 +203,13 @@
     if (S.screen === 'tasks' && (S.tasks.form || S.tasks.open)) { if (S.tasks.form) S.tasks.form = null; else S.tasks.open = null; return render(); }
     if (S.screen === 'polls' && S.polls.form) { S.polls.form = null; return render(); }
     if (S.screen === 'team' && S.team.add) { S.team.add = null; return render(); }
+    if (S.screen === 'res' && S.res.form) { S.res.form = null; return render(); }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form) || (S.screen === 'team' && !!S.team.add);
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form) || (S.screen === 'team' && !!S.team.add) || (S.screen === 'res' && !!S.res.form);
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
   let histOn = false, histIgnore = false;
@@ -233,6 +237,7 @@
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
     if (screen === 'perms') loadPerms();
+    if (screen === 'res') { S.res.form = null; loadRes(); }
     if (screen === 'dirs') { ensurePick('dirs'); loadDirs(); }
     if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
     if (screen === 'polls') { S.polls.form = null; loadPolls(); }
@@ -1086,6 +1091,52 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     return h;
   };
 
+  // ───────────── КОРИСНІ РЕСУРСИ ─────────────
+  const API_BASE = () => API_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+  const resFileUrl = (x) => API_BASE() + '/f/' + x.id + '?k=' + x.fkey;
+  async function loadRes() {
+    try { S.res.data = await api('resList'); } catch (e) { S.res.data = S.res.data || { list: [], canAdd: false, regions: [], dirs: [] }; toast(e.message); }
+    if (S.screen === 'res' && !S.res.form) render();
+  }
+  function resItem(x) {
+    const ic = x.hasFile ? 'doc' : 'link';
+    return `<div class="li" style="align-items:flex-start;padding-top:12px;padding-bottom:12px"><span class="ic ic-yellow">${icon(ic, 18)}</span>
+      <button type="button" class="grow" style="all:unset;cursor:pointer;flex:1;min-width:0" data-a="resOpen" data-id="${esc(x.id)}">
+        <span class="b" style="display:block">${esc(x.title)}</span>
+        ${x.note ? `<span class="small muted" style="display:block;margin-top:2px">${esc(x.note)}</span>` : ''}
+        <span class="row wrap" style="gap:6px;margin-top:6px"><span class="tag">${esc(x.audLabel)}</span>${x.hasFile ? `<span class="xs muted">${esc(x.fileName)}</span>` : ''}${x.pending ? '<span class="tag warn">чекає підтвердження</span>' : ''}</span></button>
+      ${x.canDelete ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="resDel" data-id="${esc(x.id)}" aria-label="Видалити">✕</button>` : ''}</div>
+      ${x.canDecide ? `<div class="grid2" style="padding:0 16px 12px"><button type="button" class="btn sm" data-a="resDecide" data-id="${esc(x.id)}" data-ok="1">Підтвердити</button><button type="button" class="btn ghost sm" data-a="resDecide" data-id="${esc(x.id)}">Відхилити</button></div>` : ''}`;
+  }
+  VIEWS.res = function () {
+    const R = S.res;
+    if (R.form) return resFormView();
+    let h = header('Корисні ресурси', '', R.data && R.data.canAdd ? `<button type="button" class="icon-btn accent" data-a="resNew" aria-label="Додати ресурс">${icon('plus', 22)}</button>` : '');
+    if (!R.data) return h + loading();
+    const L = R.data.list;
+    if (!L.length) return h + '<div class="empty">Ще немає ресурсів</div>';
+    const pend = L.filter((x) => x.pending), act = L.filter((x) => !x.pending);
+    if (pend.length) h += `<div class="sec">Чекають підтвердження · ${pend.length}</div><div class="card list">${pend.map(resItem).join('')}</div>`;
+    if (act.length) h += `${pend.length ? '<div class="sec">Опубліковані</div>' : ''}<div class="card list">${act.map(resItem).join('')}</div>`;
+    return h;
+  };
+  function resFormView() {
+    const f = S.res.form, D = S.res.data;
+    const audKind = f.aud === 'all' ? 'all' : f.aud.indexOf('r:') === 0 ? 'r' : 'dir';
+    const hint = { all: 'Для всіх — публікує після підтвердження Раб Божий.', r: 'Для регіону — підтверджує Регіональний директор цього регіону.', dir: 'Для напрямку — підтверджує експерт цього напрямку з Національного офісу.' }[audKind];
+    return header('Новий ресурс') + `<div class="card col">
+      <label class="f"><span>Назва</span><input class="in" type="text" maxlength="150" data-bind="res.form.title" value="${esc(f.title)}" placeholder="Наприклад: Подкаст «Будні лідера»"></label>
+      <label class="f"><span>Посилання</span><input class="in" type="url" inputmode="url" data-bind="res.form.url" value="${esc(f.url)}" placeholder="https://…"></label>
+      <div class="f"><span>або файл (до 20 МБ)</span>${f.file ? `<div class="row between small"><span>📎 ${esc(f.file.name)}</span><button type="button" class="link-btn xs" data-a="resFileDrop">прибрати</button></div>`
+        : `<input class="in" type="file" data-ch="resFile"${f.uploading ? ' disabled' : ''}>${f.uploading ? '<div class="xs muted">Завантажую…</div>' : ''}`}</div>
+      <label class="f"><span>Коротко, про що (необовʼязково)</span><textarea class="in" rows="2" maxlength="500" data-bind="res.form.note">${esc(f.note)}</textarea></label>
+      <div class="f"><span>Кому буде корисно</span><div class="seg">${[['all', 'Всім'], ['r', 'Регіону'], ['dir', 'Напрямку']].map((x) => `<button type="button" class="${audKind === x[0] ? 'on' : ''}" data-a="resAud" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>
+      ${audKind === 'r' ? `<select class="in" data-ch="resAudSel">${D.regions.map((r) => `<option value="r:${esc(r.id)}"${f.aud === 'r:' + r.id ? ' selected' : ''}>${esc(r.name)}</option>`).join('')}</select>` : ''}
+      ${audKind === 'dir' ? `<select class="in" data-ch="resAudSel">${D.dirs.map((d) => `<option value="dir:${esc(d)}"${f.aud === 'dir:' + d ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}
+      <div class="xs muted">${hint} Свій регіон / свій напрямок публікується одразу.</div>
+      <button type="button" class="btn" data-a="resSave"${f.uploading ? ' disabled' : ''}>Додати</button></div>`;
+  }
+
   // ───────────── ЗАДАЧІ ─────────────
   const TASK_ST = [['todo', 'Не почато'], ['doing', 'В процесі'], ['done', 'Виконано']];
   const taskStLabel = (k) => (TASK_ST.filter((x) => x[0] === k)[0] || TASK_ST[0])[1];
@@ -1330,7 +1381,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const td = me().todo || {};
     const team = [{ k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' },
       { k: 'tasks', label: 'Задачі до виконання', sub: c.broadcast ? 'доручити й стежити за виконанням' : 'що тобі доручили', icon: 'task', ic: 'ic-teal', badge: td.tasks },
-      { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
+      { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls },
+      { k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання для служіння', icon: 'res', ic: 'ic-yellow' }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
     if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
@@ -1784,6 +1836,43 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
 
+  // ресурси
+  const resById = (id) => S.res.data.list.filter((x) => x.id === id)[0];
+  A.resOpen = (d) => { const x = resById(d.id); const u = x.hasFile ? resFileUrl(x) : x.url; if (tg && tg.openLink) tg.openLink(u); else window.open(u, '_blank', 'noopener'); };
+  A.resNew = () => { S.res.form = { title: '', url: '', note: '', aud: 'all', file: null }; render(); window.scrollTo(0, 0); };
+  A.resAud = (d) => { const f = S.res.form, D = S.res.data; f.aud = d.v === 'all' ? 'all' : d.v === 'r' ? 'r:' + ((D.regions[0] || {}).id || '') : 'dir:' + (D.dirs[0] || ''); render(); };
+  A.resAudSel = (d, el) => { S.res.form.aud = el.value; };
+  A.resFileDrop = () => { S.res.form.file = null; render(); };
+  A.resFile = async (d, el) => {
+    const file = el.files && el.files[0], f = S.res.form;
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) { el.value = ''; return toast('Файл більший за 20 МБ — додай його посиланням (Google Диск)'); }
+    f.uploading = true; render();
+    try {
+      const fd = new FormData();
+      if (IN_TG) fd.append('initData', tg.initData); else fd.append('session', SESSION && SESSION.token);
+      fd.append('file', file, file.name);
+      const j = await (await fetch(API_BASE() + '/upload', { method: 'POST', body: fd })).json();
+      if (!j.ok) throw new Error(j.message || 'Не вдалося завантажити');
+      f.file = j.data; if (!String(f.title).trim()) f.title = file.name.replace(/\.[^.]+$/, '');
+      toast('Файл завантажено', 'success');
+    } catch (e) { toast(e.message || 'Не вдалося завантажити'); }
+    f.uploading = false; render();
+  };
+  A.resSave = async () => {
+    const f = S.res.form;
+    if (String(f.title).trim().length < 2) return toast('Напиши назву');
+    if (!String(f.url).trim() && !f.file) return toast('Додай посилання або файл');
+    const res = await run(() => api('resSave', { title: f.title, url: f.url, note: f.note, aud: f.aud, file: f.file }));
+    if (res) { toast(res.pending ? 'Надіслано на підтвердження' : 'Ресурс додано', 'success'); S.res.form = null; S.res.data = null; render(); loadRes(); }
+  };
+  A.resDecide = async (d) => { const res = await run(() => api('resDecide', { id: d.id, approve: d.ok === '1' }), d.ok === '1' ? 'Опубліковано' : 'Відхилено'); if (res) loadRes(); };
+  A.resDel = (d) => {
+    const x = resById(d.id);
+    const doIt = async () => { const res = await run(() => api('resDelete', { id: d.id }), 'Ресурс видалено'); if (res) loadRes(); };
+    const msg = 'Видалити ресурс «' + x.title + '»?';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
   // дозволи
   A.permUnit = (d) => { S.perms.unit = d.k; S.perms.data = null; render(); loadPerms(); };
   A.permRole = (d) => { S.perms.role = d.k; render(); };

@@ -807,6 +807,42 @@ ok(wy && wy.clubs === 1 && wy.teens === 12 && wy.teams === 1 && r.data.rows.leng
 r = await api(LEAD, 'dirStats', {});
 ok(r.ok, 'напрямки: доступно в межах своєї команди');
 
+
+// ── корисні ресурси ──
+r = await api(LEAD, 'resList', {});
+ok(r.ok && r.data.list.some((x) => /Будні лідера/.test(x.title)) && !r.data.canAdd, 'ресурси: подкаст видно всім; лідер не додає');
+r = await api(LEAD, 'resSave', { title: 'X', url: 'x.com' });
+ok(!r.ok, 'ресурси: лідер не може додати');
+sent.length = 0;
+r = await api(RD, 'resSave', { title: 'Посібник для лідерів', url: 'drive.google.com/x', aud: 'all' });
+ok(r.ok && r.data.pending && sent.some((m) => m.chat_id === '1' && /чекає підтвердження/.test(m.text)), 'ресурси: «для всіх» від РД чекає Раба Божого');
+const resAll = r.data.id;
+ok(!(await api(LEAD, 'resList', {})).data.list.some((x) => x.id === resAll), 'ресурси: непідтверджене не видно іншим');
+r = await api(RD, 'resDecide', { id: resAll, approve: true });
+ok(!r.ok, 'ресурси: РД не підтверджує «для всіх»');
+r = await api(VOVA, 'resDecide', { id: resAll, approve: true });
+ok(r.ok && !r.data.pending && (await api(LEAD, 'resList', {})).data.list.some((x) => x.id === resAll), 'ресурси: Раб Божий підтвердив — бачать усі');
+r = await api(RD, 'resSave', { title: 'Для West', url: 'https://w.example', aud: 'r:r0' });
+ok(r.ok && !r.data.pending, 'ресурси: РД для свого регіону — одразу');
+r = await api(LEAD, 'resList', {});
+ok(r.data.list.some((x) => x.title === 'Для West'), 'ресурси: людина з West бачить ресурс регіону');
+r = await api(NO, 'resSave', { title: 'Матеріали College', url: 'https://c.example', aud: 'dir:College' });
+ok(r.ok && r.data.pending, 'ресурси: напрямок — чекає експерта');
+r = await api(VOVA, 'resDecide', { id: r.data.id, approve: true });
+r = await api(LEAD, 'resList', {});
+ok(!r.data.list.some((x) => x.title === 'Матеріали College'), 'ресурси: напрямок не для цієї команди — не видно');
+r = await api(LEAD, 'resDelete', { id: resAll });
+ok(!r.ok, 'ресурси: видаляє лише автор або Раб Божий');
+
+
+{
+  const fd = new FormData(); fd.append('initData', initData(LEAD)); fd.append('file', new Blob(['hi']), 'a.txt');
+  const ru = await (await W.fetch(new Request('https://yl.example.workers.dev/upload', { method: 'POST', body: fd }), env, ectx)).json();
+  ok(!ru.ok && ru.error === 'forbidden', 'файли: лідер не завантажує');
+  const rf = await W.fetch(new Request('https://yl.example.workers.dev/f/res0budni?k=x'), env, ectx);
+  ok(rf.status === 404, 'файли: без ключа — 404');
+}
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
