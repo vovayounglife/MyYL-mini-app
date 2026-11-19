@@ -462,7 +462,8 @@
     const types = TYPES.filter((t) => (c.report[t.k] || []).length);
     let h = header('Новий запис');
     if (types.length > 1) h += `<div class="seg">${types.map((t) => `<button type="button" class="${t.k === a.type ? 'on' : ''}" data-a="addType" data-type="${t.k}">${t.short}</button>`).join('')}</div>`;
-    h += teamSelect(c.report[a.type], a.teamId, 'addTeam');
+    if (a.type === 'club') h += teamSelect(c.report[a.type], a.teamId, 'addTeam');
+    else { const ts = c.report[a.type] || []; h += `<div class="small muted">Вносиш за себе · зараховується ${ts.length > 1 ? 'всім твоїм командам: ' : 'команді '}<b>${esc(ts.map(teamName).join(', '))}</b></div>`; }
     h += `<div class="pills">${[['event', 'Окрема подія'], ['week', 'Підсумок тижня']].map((m) => `<button type="button" class="pill${a.mode === m[0] ? ' on' : ''}" data-a="addMode" data-m="${m[0]}">${m[1]}</button>`).join('')}</div>`;
     h += '<div class="card rows">';
     h += a.mode === 'event'

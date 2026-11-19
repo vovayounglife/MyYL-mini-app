@@ -425,6 +425,32 @@ ok(r.ok && r.data.cats.some((x) => x.key === 'people' && x.label === 'Коман
 r = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'people' });
 ok(r.ok && r.data.breakdown.title === 'Ролі' && r.data.breakdown.rows.some((x) => x.name === 'Волонтер'), 'статистика «Команда» по команді — ролі');
 
+
+// хто вносить: клуб — Капітан, Адмін команди, Еріа Директор; МГ і КР — кожен за себе
+r = await api(RD, 'saveReport', { type: 'club', teamId: capTeam.id, mode: 'week', teens: 3 });
+ok(!r.ok && /Еріа Директор/.test(r.message), 'клуб: РД не вносить');
+r = await api(AD, 'saveReport', { type: 'club', teamId: capTeam.id, mode: 'week', teens: 3 });
+ok(r.ok, 'клуб: Еріа Директор вносить');
+me = await api(AD, 'me');
+ok(me.data.caps.report.club.length === 2 && me.data.caps.report.kr.length === 0, 'caps: ЕД — клуби своєї ерії, КР — ні');
+r = await api(AD, 'saveReport', { type: 'kr', mode: 'week', hours: 2 });
+ok(!r.ok, 'КР: ЕД без командної ролі не вносить');
+const DUO = { id: 77, first_name: 'Дует' };
+await api(DUO, 'register', { name: 'Дует Лідер', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
+await api(DUO, 'requestRoles', { roles: ['LEADER'], teamId: teamId, areaId: 'a1' });
+reqs = await api(VOVA, 'requests');
+for (const p of reqs.data.filter((x) => x.tgId === '77')) await api(VOVA, 'decide', { roleIds: p.roles.map((x) => x.id), approve: true });
+me = await api(DUO, 'me');
+ok(me.data.caps.report.kr.length === 2 && me.data.week.items.filter((x) => x.type === 'kr').length === 1, 'КР: одна позиція тижня для людини у двох командах');
+const before = (await api(VOVA, 'stats', { units: ['a:a1'], cat: 'kr', period: 'week' })).data;
+r = await api(DUO, 'saveReport', { type: 'kr', mode: 'week', hours: 3, teamId: 'будь-яка' });
+ok(r.ok && r.data.week.items.find((x) => x.type === 'kr').hours === 3, 'КР: внесено за себе (3 год, не 6)');
+const after = (await api(VOVA, 'stats', { units: ['a:a1'], cat: 'kr', period: 'week' })).data;
+const hrs = (d) => Number(String(d.kpis[0].v).replace(',', '.'));
+ok(Math.abs(hrs(after) - hrs(before) - 3) < 0.01, 'КР: в ерії +3 год без подвійного рахунку (' + hrs(before) + '→' + hrs(after) + ')');
+const tA = (await api(VOVA, 'stats', { units: ['t:' + capTeam.id], cat: 'kr', period: 'week' })).data, tB = (await api(VOVA, 'stats', { units: ['t:' + teamId], cat: 'kr', period: 'week' })).data;
+ok(hrs(tA) >= 3 && hrs(tB) >= 3, 'КР: зараховано в обидві команди');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

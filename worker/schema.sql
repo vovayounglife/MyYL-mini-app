@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT NOT NULL, tg_id TEXT NOT NULL, na
 CREATE TABLE IF NOT EXISTS reports (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, created TEXT, date TEXT, week TEXT, type TEXT, mode TEXT,
   team_id TEXT, area_id TEXT, region_id TEXT, count REAL DEFAULT 0, new_t REAL DEFAULT 0, leaders REAL DEFAULT 0, hours REAL DEFAULT 0,
-  topic TEXT, note TEXT, attendees TEXT, author_id TEXT, author TEXT
+  topic TEXT, note TEXT, attendees TEXT, author_id TEXT, author TEXT, pid TEXT
 );
 CREATE INDEX IF NOT EXISTS reports_week ON reports (week);
 
