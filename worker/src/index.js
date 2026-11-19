@@ -70,7 +70,9 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
-    const p = kyivParts(new Date(event.scheduledTime || Date.now()));
+    const when = new Date(event.scheduledTime || Date.now());
+    const p = kyivParts(when);
+    if (when.getUTCMinutes() !== 5) { await drainOutbox(env, 40); return; }
     const S = new Store(env, ctx);
     await S.loadBase();
     const day = String(S.setting('REMINDER_DAY') || 'SUNDAY').toUpperCase();
@@ -79,6 +81,7 @@ export default {
     if (DAYS[p.dow % 7] === day && p.hour === hour) { await S.loadLog(weekKey_(new Date())); use(S, () => weeklyReminder()); }
     if (p.hour === 9) { await S.loadEvents(); use(S, () => eventReminder()); }
     await S.flush();
+    await drainOutbox(env, 30);
   },
 };
 
@@ -103,6 +106,7 @@ const NEEDS = {
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, areaSave: {}, teamSave: {}, stats: { log: 'stats' }, nudge: { log: 'week' },
+  myylTree: {}, broadcastInfo: { bc: true }, broadcast: {},
 };
 
 async function handleApi(req, env, ctx) {
@@ -122,6 +126,7 @@ async function handleApi(req, env, ctx) {
     if (need.events) await S.loadEvents();
     if (need.known) await S.loadKnown(str_(d.teamId));
     if (need.finance) await S.loadFinance(str_(d.teamId));
+    if (need.bc) await S.loadBroadcasts();
     const data = use(S, () => fn(ctx_(tgUser), d));
     await S.flush();
     return json({ ok: true, data: data });
@@ -161,6 +166,7 @@ async function verifyInitData(initData, token) {
 
 // ───────────────────────────── СХОВИЩЕ (D1 + памʼять) ─────────────────────────────
 
+const DIRECT_SEND = 25; // скільки повідомлень надсилати прямо в запиті (ліміт підзапитів Cloudflare)
 let BASE = null; // кеш довідників у памʼяті ізоляту: перевіряється за версією в meta
 
 let S = null; // поточне сховище — встановлюється лише на час синхронної логіки (без await)
@@ -233,6 +239,14 @@ class Store {
     const rs = await this.db.prepare('SELECT * FROM finance WHERE team_id = ?').bind(teamId).all();
     this.finance[teamId] = rs.results || [];
   }
+  async loadBroadcasts() {
+    const [h, q] = await this.db.batch([
+      this.db.prepare('SELECT * FROM broadcasts ORDER BY created DESC LIMIT 5'),
+      this.db.prepare('SELECT COUNT(*) AS n FROM outbox'),
+    ]);
+    this.broadcasts = h.results || [];
+    this.queued = ((q.results || [])[0] || {}).n || 0;
+  }
   setting(k) { return this.b.settings[k]; }
   run(sql, params, base) {
     this.q.push(this.db.prepare(sql).bind(...(params || [])));
@@ -248,7 +262,15 @@ class Store {
     this.q = [];
     if (this.out.length) {
       const msgs = this.out.splice(0);
-      const p = sendAll(this.env, msgs);
+      let p;
+      if (msgs.length <= DIRECT_SEND) p = sendAll(this.env, msgs);
+      else {
+        // багато повідомлень — у чергу, перші надсилаємо одразу, решту щохвилини дошле cron
+        const rows = msgs.map((m) => ({ c: m.chat_id, t: m.text, e: m.extra ? JSON.stringify(m.extra) : null }));
+        await this.db.prepare("INSERT INTO outbox (chat_id, text, extra, created) SELECT json_extract(value, '$.c'), json_extract(value, '$.t'), json_extract(value, '$.e'), ? FROM json_each(?)")
+          .bind(nowIso(), JSON.stringify(rows)).run();
+        p = drainOutbox(this.env, DIRECT_SEND);
+      }
       if (this.ctx && this.ctx.waitUntil) this.ctx.waitUntil(p); else await p;
     }
   }
@@ -447,6 +469,8 @@ API.me = function (c) {
     sugarOnly: isSugarOnly_(c),
     surveys: false,
     manage: c.roles.some((r) => MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0),
+    myyl: allowedScopes_(c).length > 0,
+    broadcast: isSuper_(c),
   };
   out.myTeams = Object.keys(myTeams).map(teamOut_);
   out.scopes = allowedScopes_(c);
@@ -845,6 +869,103 @@ API.teamSave = function (c, d) {
   return { id: createTeam_(areaId, name, true) };
 };
 
+// ── Моя команда в MyYL: дерево людей у межах відповідальності ──
+API.myylTree = function (c) {
+  const st = loadStruct_();
+  const scopes = allowedScopes_(c);
+  if (!scopes.length) deny_();
+  const units = {};
+  scopes.forEach((s) => { units[s.key] = { key: s.key, level: s.level, id: s.unitId, name: s.name, sub: s.sub, children: [], people: [], parent: '' }; });
+  const parentKey = (u) => {
+    if (u.level === 'team') return 'a:' + (st.team[u.id] || {}).areaId;
+    if (u.level === 'area') return 'r:' + (st.area[u.id] || {}).regionId;
+    if (u.level === 'region') return 'nat';
+    return '';
+  };
+  Object.keys(units).forEach((k) => {
+    const u = units[k];
+    const pk = parentKey(u);
+    if (units[pk]) { u.parent = pk; units[pk].children.push(k); }
+  });
+  // люди з активними ролями — на тій одиниці, де роль
+  const byUnit = {};
+  loadRoles_().filter((r) => r.status === ST.ACTIVE).forEach((r) => {
+    const k = r.level === 'nat' ? 'nat' : (r.level === 'region' ? 'r:' : r.level === 'area' ? 'a:' : 't:') + r.unitId;
+    if (!units[k]) return;
+    const m = byUnit[k] = byUnit[k] || {};
+    const p = m[r.tgId] = m[r.tgId] || { tgId: r.tgId, name: r.name, roles: [], rank: 99 };
+    p.roles.push({ label: r.label, rank: r.rank });
+    p.rank = Math.min(p.rank, r.rank);
+  });
+  Object.keys(byUnit).forEach((k) => {
+    units[k].people = Object.keys(byUnit[k]).map((id) => {
+      const p = byUnit[k][id];
+      const person = getPerson_(id) || {};
+      return { tgId: id, name: person.name || p.name, username: person.username || '', title: person.title || '', rank: p.rank,
+        roles: p.roles.sort((a, b) => a.rank - b.rank).map((x) => x.label) };
+    }).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  });
+  // підсумки по гілці: люди й команди
+  const walk = (k) => {
+    const u = units[k];
+    const ids = {};
+    u.people.forEach((p) => { ids[p.tgId] = true; });
+    let teams = u.level === 'team' ? 1 : 0;
+    u.children.forEach((ck) => { const r = walk(ck); Object.assign(ids, r.ids); teams += r.teams; });
+    u.peopleCount = Object.keys(ids).length;
+    u.teamsCount = teams;
+    return { ids, teams };
+  };
+  const roots = Object.keys(units).filter((k) => !units[k].parent);
+  roots.forEach(walk);
+  Object.keys(units).forEach((k) => {
+    const u = units[k];
+    u.children.sort((a, b) => units[a].name.localeCompare(units[b].name));
+  });
+  return { roots: roots, units: units };
+};
+
+// ── розсилка від Раба Божого ──
+function audiences_() {
+  const st = loadStruct_();
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE);
+  const regionOf = (r) => (r.level === 'region' ? r.unitId : r.level === 'area' ? (st.area[r.unitId] || {}).regionId : r.level === 'team' ? st.teamRegion(r.unitId) : '');
+  const ids = (pred) => uniq_(act.filter(pred).map((r) => r.tgId));
+  const out = [
+    { key: 'all', label: 'Усім зареєстрованим', ids: uniq_(Object.keys(S.b.people).concat(act.map((r) => r.tgId))) },
+    { key: 'active', label: 'Усім з підтвердженою роллю', ids: ids(() => true) },
+    { key: 'leaders', label: 'Капітанам і вище', ids: ids((r) => r.rank <= RANK.APPROVE) },
+  ];
+  st.regions.forEach((rg) => out.push({ key: 'r:' + rg.id, label: 'Регіон ' + rg.name, ids: ids((r) => regionOf(r) === rg.id) }));
+  return out;
+}
+
+API.broadcastInfo = function (c) {
+  if (!isSuper_(c)) deny_();
+  return {
+    audiences: audiences_().map((a) => ({ key: a.key, label: a.label, count: a.ids.length })),
+    history: (S.broadcasts || []).map((b) => ({ text: b.text, audience: b.audience, count: b.count, created: b.created })),
+    queued: S.queued || 0,
+  };
+};
+
+API.broadcast = function (c, d) {
+  if (!isSuper_(c)) deny_('Писати всім може лише Раб Божий.');
+  const text = String(d.text || '').trim();
+  if (text.length < 2) bad_('Напиши текст повідомлення.');
+  if (text.length > 3500) bad_('Задовге повідомлення: максимум 3500 символів.');
+  const a = audiences_().filter((x) => x.key === d.audience)[0];
+  if (!a) bad_('Обери, кому надіслати.');
+  if (!a.ids.length) bad_('У цій групі ще нікого немає.');
+  const body = esc_(text);
+  a.ids.forEach((id) => {
+    if (d.button === false) S.send(id, body);
+    else sendApp_(id, body, 'Відкрити Young Life');
+  });
+  S.run('INSERT INTO broadcasts (id, text, audience, count, author, created) VALUES (?,?,?,?,?,?)', [uid_(), text, a.label, a.ids.length, c.name, nowIso()]);
+  return { sent: a.ids.length, audience: a.label };
+};
+
 // ── статистика ──
 API.stats = function (c, d) {
   const scopes = allowedScopes_(c);
@@ -1153,18 +1274,43 @@ function sendApp_(chatId, text, button, screen) {
 }
 
 async function tg(env, method, params) {
-  const res = await fetch('https://api.telegram.org/bot' + env.BOT_TOKEN + '/' + method, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params || {}),
-  });
-  const data = await res.json().catch(() => ({ ok: false }));
+  let data;
+  try {
+    const res = await fetch('https://api.telegram.org/bot' + env.BOT_TOKEN + '/' + method, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params || {}),
+    });
+    data = await res.json().catch(() => ({ ok: false }));
+  } catch (e) { data = { ok: false, error_code: 429, description: 'network: ' + e.message }; }
   if (!data.ok) console.warn('Telegram ' + method + ': ' + data.description);
   return data;
 }
 async function sendAll(env, msgs) {
+  const out = [];
   for (const m of msgs) {
-    await tg(env, 'sendMessage', Object.assign({ chat_id: m.chat_id, text: m.text, parse_mode: 'HTML', disable_web_page_preview: true }, m.extra || {}));
-    if (msgs.length > 20) await new Promise((r) => setTimeout(r, 40));
+    const r = await tg(env, 'sendMessage', Object.assign({ chat_id: m.chat_id, text: m.text, parse_mode: 'HTML', disable_web_page_preview: true }, m.extra || {}));
+    out.push(r);
+    if (r.error_code === 429) break; // Telegram просить зачекати — решта лишиться в черзі
+    if (msgs.length > 20) await new Promise((res) => setTimeout(res, 40));
   }
+  return out;
+}
+
+// Надсилає до n повідомлень із черги. Рядки спершу «бронюються», тож паралельні запуски не дублюють.
+async function drainOutbox(env, n) {
+  const now = Date.now();
+  const rs = await env.DB.prepare('UPDATE outbox SET claimed = ? WHERE id IN (SELECT id FROM outbox WHERE claimed IS NULL OR claimed < ? ORDER BY id LIMIT ?) RETURNING id, chat_id, text, extra')
+    .bind(now, now - 5 * 60 * 1000, n).all();
+  const rows = (rs.results || []).sort((a, b) => a.id - b.id);
+  if (!rows.length) return 0;
+  const res = await sendAll(env, rows.map((r) => ({ chat_id: r.chat_id, text: r.text, extra: r.extra ? JSON.parse(r.extra) : null })));
+  // надіслані (або назавжди недоступні: бот заблоковано тощо) — прибираємо; при 429 решта повернеться в чергу
+  const done = rows.filter((r, i) => res[i] && res[i].error_code !== 429).map((r) => r.id);
+  const back = rows.filter((r, i) => !res[i] || res[i].error_code === 429).map((r) => r.id);
+  const st = [];
+  if (done.length) st.push(env.DB.prepare('DELETE FROM outbox WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(done)));
+  if (back.length) st.push(env.DB.prepare('UPDATE outbox SET claimed = NULL WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(back)));
+  if (st.length) await env.DB.batch(st);
+  return done.length;
 }
 
 // ───────────────────────────── НАГАДУВАННЯ ─────────────────────────────

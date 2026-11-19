@@ -46,3 +46,7 @@ CREATE TABLE IF NOT EXISTS finance (
   author TEXT, updated TEXT, PRIMARY KEY (team_id, month)
 );
 CREATE INDEX IF NOT EXISTS finance_updated ON finance (updated);
+
+-- черга повідомлень у Telegram (великі розсилки йдуть частинами щохвилини)
+CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, text TEXT, extra TEXT, created TEXT, claimed INTEGER);
+CREATE TABLE IF NOT EXISTS broadcasts (id TEXT PRIMARY KEY, text TEXT, audience TEXT, count INTEGER, author TEXT, created TEXT);

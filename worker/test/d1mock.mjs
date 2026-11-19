@@ -5,7 +5,7 @@ class Stmt {
   bind(...p) { const s = new Stmt(this.db, this.sql); s.params = p.map((v) => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v)); return s; }
   _run() {
     const st = this.db.prepare(this.sql);
-    if (/^\s*(SELECT|WITH)/i.test(this.sql)) return { results: st.all(...this.params), success: true };
+    if (/^\s*(SELECT|WITH)/i.test(this.sql) || /\bRETURNING\b/i.test(this.sql)) return { results: st.all(...this.params), success: true };
     const r = st.run(...this.params); return { results: [], success: true, meta: { changes: r.changes } };
   }
   async all() { return this._run(); }

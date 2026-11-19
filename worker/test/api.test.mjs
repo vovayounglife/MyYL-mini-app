@@ -185,6 +185,43 @@ const wk = { scheduledTime: Date.now() };
 await W.scheduled(wk, env, ectx); await Promise.all(waits.splice(0));
 console.log('   cron надіслав:', sent.length);
 
+
+// Моя команда в MyYL
+let tr = await api(VOVA, 'myylTree');
+ok(tr.ok && tr.data.roots[0] === 'nat' && tr.data.units.nat.children.length === 7, 'MyYL: Раб Божий бачить Україну і 7 регіонів');
+ok(tr.data.units['r:r0'].peopleCount >= 5 && tr.data.units['r:r0'].people.some((p) => p.tgId === '2'), 'MyYL: у West видно РД і людей гілки');
+tr = await api(AD, 'myylTree');
+ok(tr.ok && tr.data.roots.length === 1 && tr.data.roots[0] === 'a:a1' && tr.data.units['a:a1'].children.length === 2 && !tr.data.units['r:r0'], 'MyYL: Еріа Директор бачить лише свою ерію і її команди');
+const capKey = 't:' + capTeam.id;
+ok(tr.data.units[capKey].people.length === 3 && tr.data.units[capKey].people[0].roles[0] === 'Капітан', 'MyYL: склад команди в гілці, капітан першим');
+tr = await api(SUG, 'myylTree');
+ok(tr.ok && tr.data.roots[0] === capKey && Object.keys(tr.data.units).length === 1, 'MyYL: сахарок бачить лише свою команду');
+
+// Написати всім
+r = await api(AD, 'broadcastInfo');
+ok(!r.ok, 'розсилка: не Раб Божий — немає доступу');
+r = await api(AD, 'broadcast', { audience: 'all', text: 'Привіт' });
+ok(!r.ok, 'розсилка: не Раб Божий не може надіслати');
+r = await api(VOVA, 'broadcastInfo');
+ok(r.ok && r.data.audiences.find((a) => a.key === 'all').count === 6 && r.data.audiences.find((a) => a.key === 'leaders').count === 4, 'розсилка: аудиторії пораховано');
+sent.length = 0;
+r = await api(VOVA, 'broadcast', { audience: 'all', text: 'Молимось за табір <3' });
+const bmsg = sent.filter((s) => /Молимось за табір &lt;3/.test(s.text || ''));
+ok(r.ok && r.data.sent === 6 && bmsg.length === 6 && bmsg[0].reply_markup, 'розсилка: 6 повідомлень з кнопкою, HTML екрановано');
+// велика розсилка — через чергу
+for (let i = 100; i < 140; i++) await api({ id: i, first_name: 'Т' + i }, 'register', { name: 'Тест ' + i, roles: ['VOLUNTEER'], teamId: capTeam.id, areaId: 'a1' });
+sent.length = 0;
+r = await api(VOVA, 'broadcast', { audience: 'all', text: 'Велика розсилка', button: false });
+const first = sent.filter((s) => s.text === 'Велика розсилка').length;
+let left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
+ok(r.ok && r.data.sent === 46 && first === 25 && left === 21, 'велика розсилка: 25 одразу, 21 у черзі (' + first + '/' + left + ')');
+const notFive = new Date(); notFive.setUTCMinutes(7);
+await W.scheduled({ scheduledTime: notFive.getTime() }, env, ectx);
+left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
+ok(left === 0 && sent.filter((s) => s.text === 'Велика розсилка').length === 46, 'cron дослав решту, без дублів');
+r = await api(VOVA, 'broadcastInfo');
+ok(r.data.history.length === 2 && r.data.queued === 0, 'історія розсилок');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

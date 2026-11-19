@@ -24,6 +24,9 @@
     back: 'M15 18l-6-6 6-6',
     chev: 'M9 18l6-6-6-6',
     check: 'M20 6L9 17l-5-5',
+    tree: 'M12 3v6M12 9H5v5M12 9h7v5M3 14h4v4H3zM17 14h4v4h-4zM10 14h4v4h-4zM12 9v5',
+    send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
+    tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
     phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   };
   const icon = (n, s) => `<svg width="${s || 20}" height="${s || 20}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${IC[n]}"></path></svg>`;
@@ -61,6 +64,8 @@
     thanks: false, reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
     reg: { step: 1, name: '', phone: '', email: '', regionId: '', areaId: '', teamId: '', newTeam: '', roles: {}, upper: false },
     roleReq: null, profile: null,
+    myyl: { data: null, at: null, open: null },
+    bc: { info: null, text: '', audience: 'all', button: true, sending: false },
   };
   let toastTimer = null;
 
@@ -72,7 +77,7 @@
   };
   const statsKey = () => [S.stats.scope || '', S.stats.cat, S.stats.period].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -147,14 +152,16 @@
     if (S.screen === 'profile' && S.roleReq) { S.roleReq = null; return render(); }
     if (S.screen === 'structure' && S.structEdit) { S.structEdit = null; return render(); }
     if (S.screen === 'stats' && S.stats.find) { S.stats.find = false; return render(); }
+    if (S.screen === 'myyl' && myylParent()) { S.myyl.at = myylParent(); S.myyl.open = null; render(); window.scrollTo(0, 0); return; }
     if (S.screen === 'onboarding' && S.reg.step > 1) { S.reg.step--; return render(); }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find);
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
   }
+  function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
   function syncBack() {
     if (!tg || !tg.BackButton) return;
     if (canBack()) tg.BackButton.show(); else tg.BackButton.hide();
@@ -170,6 +177,8 @@
     if (screen === 'team') { S.team.open = null; S.team.teamId = S.team.teamId && caps().viewTeams.indexOf(S.team.teamId) >= 0 ? S.team.teamId : myTeamFirst(caps().viewTeams); loadTeam(); }
     if (screen === 'finance') { S.fin.teamId = S.fin.teamId && caps().financeTeams.indexOf(S.fin.teamId) >= 0 ? S.fin.teamId : myTeamFirst(caps().financeTeams); loadFin(); }
     if (screen === 'requests') loadReqs();
+    if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
+    if (screen === 'broadcast') loadBc();
     if (screen === 'structure') { S.structEdit = null; loadTree(); }
     if (screen === 'stats') { S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; }
     if (screen === 'profile') { S.roleReq = null; S.profile = Object.assign({}, S.me.profile || {}); }
@@ -256,6 +265,20 @@
     S.tree = null; render();
     try { S.tree = await api('structureTree'); } catch (e) { S.tree = []; toast(e.message); }
     if (S.screen === 'structure') render();
+  }
+  async function loadMyyl() {
+    if (!S.myyl.data) { S.myyl.data = LS.get('myyl'); }
+    render();
+    try {
+      S.myyl.data = await api('myylTree'); LS.set('myyl', S.myyl.data);
+      if (!S.myyl.at || !S.myyl.data.units[S.myyl.at]) S.myyl.at = S.myyl.data.roots.length === 1 ? S.myyl.data.roots[0] : null;
+    } catch (e) { if (!S.myyl.data) S.myyl.data = { roots: [], units: {} }; toast(e.message); }
+    if (S.screen === 'myyl') render();
+  }
+  async function loadBc() {
+    S.bc.info = null; render();
+    try { S.bc.info = await api('broadcastInfo'); } catch (e) { S.bc.info = { audiences: [], history: [], queued: 0 }; toast(e.message); }
+    if (S.screen === 'broadcast') { const t = document.getElementById('bcText'); if (t) S.bc.text = t.value; render(); }
   }
   async function loadReqs() {
     S.reqs = null; render();
@@ -345,6 +368,8 @@
   function sectionTiles() {
     const c = caps();
     const out = [];
+    if (c.myyl) out.push({ k: 'myyl', label: 'Моя команда в MyYL', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-blue' });
+    if (c.broadcast) out.push({ k: 'broadcast', label: 'Написати всім', sub: 'повідомлення в боті', icon: 'send', ic: 'ic-coral' });
     if ((c.knownTeams || []).length) out.push({ k: 'known', label: 'Знані по імені', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
     if ((c.viewTeams || []).length) out.push({ k: 'team', label: 'Склад команди', sub: 'ролі й анкети', icon: 'club', ic: 'ic-teal' });
     if ((c.financeTeams || []).length) out.push({ k: 'finance', label: 'Фінансовий звіт', sub: 'щомісяця', icon: 'finance', ic: 'ic-yellow' });
@@ -583,6 +608,102 @@
     h += '<div class="xs muted">Закрита команда зникає зі списків і статистики, але її дані зберігаються. Відкрити можна будь-коли.</div>';
     return h;
   };
+
+  // ───────────── МОЯ КОМАНДА В MyYL ─────────────
+  const plural = (n, one, few, many) => { const a = n % 10, b = n % 100; return n + ' ' + (a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many); };
+  const LV_PEOPLE = { nat: 'Національна команда', region: 'Команда регіону', area: 'Команда ерії', team: 'Склад команди' };
+  const LV_KIDS = { nat: 'Регіони', region: 'Ерії', area: 'Команди' };
+  const LV_NAME = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
+  const unitCounts = (u) => [plural(u.peopleCount, 'людина', 'людини', 'людей'), u.level !== 'team' ? plural(u.teamsCount, 'команда', 'команди', 'команд') : ''].filter(Boolean).join(' · ');
+  VIEWS.myyl = function () {
+    const m = S.myyl, d = m.data;
+    if (!d) return header('Моя команда в MyYL') + loading();
+    if (!d.roots.length) return header('Моя команда в MyYL') + '<div class="empty">Тут зʼявляться люди, коли в тебе буде роль у команді, ерії чи регіоні</div>';
+    const units = d.units;
+    if (!m.at && d.roots.length === 1) m.at = d.roots[0];
+    // кілька незалежних гілок (напр., ролі у двох командах) — спершу вибір
+    if (!m.at || !units[m.at]) {
+      return header('Моя команда в MyYL', 'Обери гілку') + `<div class="card list">${d.roots.map((k) => unitLi(units[k])).join('')}</div>`;
+    }
+    const u = units[m.at];
+    const chain = [];
+    for (let k = m.at; k && units[k]; k = units[k].parent) chain.unshift(units[k]);
+    let h = header(LV_NAME[u.level] + u.name, unitCounts(u));
+    if (chain.length > 1 || d.roots.length > 1) {
+      h += `<nav aria-label="Гілка" class="row wrap" style="gap:4px">${d.roots.length > 1 ? '<button type="button" class="pill" data-a="myylGo" data-k="">Усі</button><span class="muted" aria-hidden="true">›</span>' : ''}${chain.map((x, i) => i === chain.length - 1
+        ? `<span class="pill on" style="display:inline-flex;align-items:center">${esc(x.name)}</span>`
+        : `<button type="button" class="pill" data-a="myylGo" data-k="${esc(x.key)}">${esc(x.name)}</button><span class="muted" aria-hidden="true">›</span>`).join('')}</nav>`;
+    }
+    // пошук по всій гілці
+    const sub = [];
+    const collect = (k) => { units[k].children.forEach((ck) => { sub.push(units[ck]); collect(ck); }); };
+    collect(m.at);
+    if (sub.length > 6) {
+      const ppl = [];
+      [u].concat(sub).forEach((x) => x.people.forEach((p) => ppl.push({ p, x })));
+      h += `<input class="in" type="search" placeholder="Знайти команду чи людину" data-live="myylFind" aria-label="Пошук у гілці">
+        <div id="myylFindList" class="card list hidden">${sub.map((x) => `<button type="button" class="li" data-a="myylGo" data-k="${esc(x.key)}" data-q="${esc((x.name + ' ' + (x.sub || '')).toLowerCase())}">
+          <span class="ic ${x.level === 'team' ? 'ic-teal' : 'ic-blue'}">${icon(x.level === 'team' ? 'club' : 'tree', 18)}</span><span class="grow"><span class="b" style="display:block">${esc(LV_NAME[x.level] + x.name)}</span><span class="small muted">${esc(x.sub || '')}</span></span>${icon('chev', 18)}</button>`).join('')}
+          ${ppl.map((o) => `<button type="button" class="li" data-a="myylGo" data-k="${esc(o.x.key)}" data-q="${esc(o.p.name.toLowerCase())}"><span class="avatar">${esc(initials(o.p.name))}</span><span class="grow"><span class="b" style="display:block">${esc(o.p.name)}</span><span class="small muted">${esc(o.p.roles[0] + ' · ' + o.x.name)}</span></span></button>`).join('')}
+          <div class="li small muted" data-empty>Нічого не знайдено</div></div>`;
+    }
+    h += '<div id="myylMain" style="display:contents">';
+    // люди цього рівня
+    h += `<div class="sec">${LV_PEOPLE[u.level]}</div>`;
+    if (!u.people.length) h += `<div class="empty small">${u.level === 'team' ? 'У команді ще нікого немає' : 'На цьому рівні ще немає людей з ролями'}</div>`;
+    else {
+      h += `<div class="card list">${u.people.map((p) => {
+        const open = m.open === p.tgId;
+        return `<button type="button" class="li" data-a="myylPerson" data-id="${esc(p.tgId)}" aria-expanded="${open}"><span class="avatar">${esc(initials(p.name))}</span>
+          <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span>${p.title ? `<span class="small muted" style="display:block">${esc(p.title)}</span>` : ''}
+          <span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r)}</span>`).join('')}</span></span></button>
+          ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${p.username
+            ? `<button type="button" class="btn sec2 sm" style="width:100%" data-a="openUrl" data-url="https://t.me/${esc(encodeURIComponent(p.username))}">${icon('tg', 18)} Написати @${esc(p.username)}</button>`
+            : '<div class="small muted">Немає публічного імені в Telegram</div>'}</div>` : ''}`;
+      }).join('')}</div>`;
+    }
+    if (u.level === 'team' && (caps().viewTeams || []).indexOf(u.id) >= 0) {
+      h += `<button type="button" class="btn sec2" data-a="myylTeam" data-id="${esc(u.id)}">Анкети й ролі команди →</button>`;
+    }
+    // гілки нижче
+    if (u.children.length) {
+      h += `<div class="sec">${LV_KIDS[u.level]} · ${u.children.length}</div><div class="card list">${u.children.map((k) => unitLi(units[k])).join('')}</div>`;
+    } else if (u.level !== 'team') {
+      h += `<div class="sec">${LV_KIDS[u.level]}</div><div class="empty small">Поки немає</div>`;
+    }
+    h += '</div>';
+    return h;
+  };
+  function unitLi(x) {
+    const lead = x.people.filter((p) => p.rank <= 6).slice(0, 2).map((p) => p.name.split(/\s+/)[0]).join(', ');
+    return `<button type="button" class="li" data-a="myylGo" data-k="${esc(x.key)}"><span class="ic ${x.level === 'team' ? 'ic-teal' : 'ic-blue'}">${icon(x.level === 'team' ? 'club' : 'tree', 18)}</span>
+      <span class="grow"><span class="b" style="display:block">${esc(LV_NAME[x.level] + x.name)}</span><span class="small muted">${esc(unitCounts(x) + (lead ? ' · ' + lead : ''))}</span></span><span class="muted">${icon('chev', 18)}</span></button>`;
+  }
+
+  // ───────────── НАПИСАТИ ВСІМ ─────────────
+  VIEWS.broadcast = function () {
+    const b = S.bc, info = b.info;
+    let h = header('Написати всім', 'Повідомлення прийде від бота');
+    if (!info) return h + loading();
+    const aud = info.audiences.filter((a) => a.key === b.audience)[0] || info.audiences[0];
+    if (aud) b.audience = aud.key;
+    h += `<div class="card col">
+      <label class="f"><span>Кому</span><select class="in" data-bind="bc.audience" data-ch="bcAud">${info.audiences.map((a) => `<option value="${esc(a.key)}"${a.key === b.audience ? ' selected' : ''}>${esc(a.label)} · ${a.count}</option>`).join('')}</select></label>
+      <label class="f"><span>Текст</span><textarea id="bcText" class="in" rows="7" maxlength="3500" data-bind="bc.text" data-live="bcCount" placeholder="Наприклад: Друзі, цієї суботи молимось за табір о 19:00…">${esc(b.text)}</textarea></label>
+      <div class="xs muted" id="bcCount" style="text-align:right;margin-top:-6px">${b.text.length} / 3500</div>
+      <label class="toggle-row" style="padding:4px 0"><span><span class="b" style="display:block">Кнопка «Відкрити Young Life»</span><span class="small muted">під повідомленням</span></span><input type="checkbox" data-bind="bc.button"${b.button ? ' checked' : ''}></label>
+      <button type="button" class="btn" data-a="bcSend"${b.sending ? ' disabled' : ''}>${icon('send', 18)} Надіслати${aud ? ' · ' + plural(aud.count, 'людина', 'людини', 'людей') : ''}</button>
+    </div>`;
+    if (info.queued) h += `<div class="small muted">Ще доставляється: ${plural(info.queued, 'повідомлення', 'повідомлення', 'повідомлень')} (до 40 на хвилину).</div>`;
+    if (info.history.length) {
+      h += `<div class="sec">Останні розсилки</div><div class="card list">${info.history.map((x) => `<div class="li" style="align-items:flex-start;padding-top:10px;padding-bottom:10px"><span class="grow">
+        <span style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line">${esc(x.text)}</span>
+        <span class="xs muted" style="display:block;margin-top:4px">${esc(x.audience)} · ${plural(x.count, 'людина', 'людини', 'людей')} · ${esc(fmtWhen(x.created))}</span></span></div>`).join('')}</div>`;
+    }
+    h += '<div class="xs muted">Великі розсилки доходять частинами: перші 25 — одразу, решта — протягом кількох хвилин.</div>';
+    return h;
+  };
+  const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
@@ -931,6 +1052,32 @@
   };
 
   // склад
+  A.myylGo = (d) => { const f = document.querySelector('[data-live="myylFind"]'); if (f) f.value = ''; S.myyl.at = d.k || null; S.myyl.open = null; render(); window.scrollTo(0, 0); };
+  A.myylPerson = (d) => { S.myyl.open = S.myyl.open === d.id ? null : d.id; render(); };
+  A.myylTeam = (d) => { S.team.teamId = d.id; go('team'); };
+  A.myylFind = (d, el) => {
+    const q = el.value.trim().toLowerCase();
+    const list = document.getElementById('myylFindList'), main = document.getElementById('myylMain');
+    if (!list) return;
+    list.classList.toggle('hidden', !q); if (main) main.classList.toggle('hidden', !!q);
+    let n = 0;
+    list.querySelectorAll('[data-q]').forEach((x) => { const hit = !!q && x.dataset.q.indexOf(q) >= 0; x.classList.toggle('hidden', !hit); if (hit) n++; });
+    const e = list.querySelector('[data-empty]'); if (e) e.classList.toggle('hidden', n > 0);
+  };
+  A.bcAud = () => render();
+  A.bcCount = (d, el) => { const c = document.getElementById('bcCount'); if (c) c.textContent = el.value.length + ' / 3500'; };
+  A.bcSend = () => {
+    const b = S.bc, aud = (b.info.audiences.filter((a) => a.key === b.audience)[0] || {});
+    if (b.text.trim().length < 2) return toast('Напиши текст повідомлення', 'error');
+    const doIt = async () => {
+      b.sending = true; render();
+      const r = await run(() => api('broadcast', { audience: b.audience, text: b.text, button: b.button }));
+      b.sending = false;
+      if (r) { toast('Надіслано: ' + plural(r.sent, 'людина', 'людини', 'людей'), 'success'); b.text = ''; loadBc(); } else render();
+    };
+    const msg = 'Надіслати повідомлення: ' + (aud.label || '') + ' (' + plural(aud.count || 0, 'людина', 'людини', 'людей') + ')?';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
   A.teamTeam = (d, el) => { S.team.teamId = el.value; loadTeam(); };
   A.teamOpen = (d) => { S.team.open = S.team.open === d.id ? null : d.id; render(); };
   A.roleRemove = (d) => {
