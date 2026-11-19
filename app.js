@@ -2353,7 +2353,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   function renderLogin(msg) {
     const L = S.login;
     $app.innerHTML = `<main class="main no-nav login"><div class="login-box">
-      <img src="icons/icon-192.png?v=4" alt="" class="login-logo" width="88" height="88">
+      <img src="icons/icon-192.png?v=5" alt="" class="login-logo" width="88" height="88">
       <h1 style="font-size:28px;margin:0">MyYL</h1><div class="muted">Young Life Україна</div>
       ${msg ? `<div class="note small">${esc(msg)}</div>` : ''}
       ${L ? `<div class="card col" style="gap:10px;text-align:center"><div class="spin" style="margin:0 auto"></div>
