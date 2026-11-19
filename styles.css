@@ -186,3 +186,27 @@ nav.tabs .dot { position: absolute; top: 4px; left: 50%; margin-left: 8px; width
 .rtab tr.ch td:first-child { padding-left: 18px; color: var(--muted); }
 .rtab tr.tot td { font-weight: 800; border-top: 2px solid var(--text); border-bottom: 0; }
 .pills.lvl { scroll-behavior: smooth; }
+
+/* єдиний вибір одиниць */
+.pill .hint { font-weight: 400; opacity: .7; }
+.pill.multi { border-style: dashed; }
+.pill.multi.on { background: var(--soft); color: var(--text); border-color: var(--accent); border-style: solid; }
+.link-btn.xs { font-size: 12px; padding: 0; min-height: 0; }
+
+/* знані: 4 колонки */
+.board { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; scrollbar-width: none; align-items: flex-start; }
+.board::-webkit-scrollbar { display: none; }
+.col-st { flex: 0 0 82%; max-width: 330px; scroll-snap-align: start; background: var(--soft); border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 4px solid var(--line); }
+.col-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; padding: 2px 4px; }
+.col-h .n { font: 800 13px Manrope, Inter, sans-serif; background: var(--card); border-radius: 999px; padding: 2px 9px; }
+.kcard { display: block; width: 100%; text-align: left; border: 0; border-radius: 12px; background: var(--card); color: var(--text); padding: 10px 12px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.st-meet { border-top-color: var(--blue); }
+.st-friends { border-top-color: var(--yellow); }
+.st-grow { border-top-color: var(--coral); }
+.st-own { border-top-color: var(--teal); }
+.pill.st-pill { border-top-width: 1px; }
+.pill.st-pill.on { border-color: var(--accent); }
+
+/* головна: компактний підсумок */
+.mini-stat { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: transparent; color: var(--text); text-align: left; }
+.mini-stat .track { display: block; }

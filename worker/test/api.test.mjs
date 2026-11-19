@@ -262,13 +262,52 @@ ok(r.data.total.values.club.v === '12', 'звіт: «Разом» без под�
 r = await api(VOVA, 'report', { units: ['nat', 'r:r0'], items: ['club', 'kr'], from: monthAgo, to: today });
 ok(r.ok, 'звіт: Раб Божий — Україна і регіон');
 r = await api(VOVA, 'report', { units: ['a:a1'], items: ['club'], from: monthAgo, to: today });
-ok(!r.ok, 'звіт: Раб Божий не замовляє ерію (два рівні нижче)');
+ok(r.ok, 'звіт: Раб Божий замовляє будь-яку одиницю (ерію)');
+r = await api(AD, 'report', { units: ['t:' + capTeam.id], items: ['club'], from: monthAgo, to: today });
+ok(r.ok, 'звіт: ЕД — команда (рівень нижче)');
 r = await api(SUG, 'report', { units: ['t:' + capTeam.id], items: ['club', 'finance'], from: monthAgo, to: today });
 ok(r.ok && r.data.sections.length === 1 && r.data.sections[0].key === 'club', 'звіт: сахарок — лише клуби');
 sent.length = 0;
 r = await api(AD, 'report', { units: ['a:a1'], items: ['club', 'mg'], from: monthAgo, to: today, send: true });
 const doc = sent.find((x) => x.m === 'sendDocument');
 ok(r.ok && doc && doc.chat_id === '3' && /<table>/.test(doc.document.text) && /Тернопіль/.test(doc.document.text), 'звіт: HTML-файл надіслано в Telegram');
+
+
+// знані: масове додавання й етапи
+r = await api(LEAD, 'knownBulk', { teamId: capTeam.id, names: '1. Марко Іванюк\nСофія Бойко\n\nоля підліток\n• Денис, Тарас', stage: 'friends' });
+ok(r.ok && r.data.added === 4, 'знані: додано 4 нових, дубль «Оля» пропущено (' + (r.data && r.data.added) + ')');
+r = await api(LEAD, 'knownList', { teamId: capTeam.id });
+const marko = r.data.find((x) => x.name === 'Марко Іванюк');
+ok(r.data.length === 5 && marko && marko.stage === 'friends' && r.data.find((x) => x.name === 'Оля Підліток').stage === 'meet', 'знані: етапи збережено');
+r = await api(LEAD, 'knownStage', { teamId: capTeam.id, id: marko.id, stage: 'grow' });
+ok(r.ok, 'знані: зміна етапу');
+r = await api(LEAD, 'knownSave', { teamId: capTeam.id, item: Object.assign({}, marko, { phone: '0501112233', stage: 'own' }) });
+r = await api(LEAD, 'knownList', { teamId: capTeam.id });
+ok(r.data.find((x) => x.id === marko.id).stage === 'own' && r.data.find((x) => x.id === marko.id).phone === '0501112233', 'знані: редагування контактів і етапу');
+r = await api(SUG, 'knownBulk', { teamId: capTeam.id, names: 'Хтось' });
+ok(!r.ok, 'знані: сахарок не додає');
+r = await api(AD, 'knownList', { units: ['a:a1'] });
+ok(r.ok && r.data.length === 5 && r.data[0].team, 'знані: по всій ерії, з назвою команди');
+r = await api(AD, 'stats', { units: ['a:a1'], cat: 'known' });
+ok(r.ok && r.data.kpis[0].v === '5' && r.data.kpis.find((k) => k.l === 'Дружимо').v === '3' && r.data.kpis.find((k) => k.l === 'Йдуть самі').v === '1', 'статистика знаних по етапах');
+r = await api(AD, 'report', { units: ['a:a1'], items: ['known'], from: monthAgo, to: today });
+ok(r.ok && r.data.rows[0].values.known.friends === '3', 'звіт знаних по етапах');
+
+// кілька одиниць
+r = await api(VOVA, 'stats', { units: ['t:' + capTeam.id, 't:' + teamId], cat: 'club' });
+ok(r.ok && r.data.scope.level === 'multi' && r.data.breakdown.rows.length === 2 && r.data.kpis[1].v === '12', 'статистика: дві команди разом');
+r = await api(VOVA, 'stats', { units: ['r:r0', 'r:r1'], cat: 'overview' });
+ok(r.ok && r.data.breakdown.title === 'Вибрані', 'статистика: два регіони');
+r = await api(LEAD, 'stats', { units: ['r:r0'] });
+ok(r.ok && r.data.scope.key === 't:' + capTeam.id, 'статистика: чужа одиниця → своя');
+r = await api(AD, 'teamMembers', { units: ['a:a1'] });
+ok(r.ok && r.data.some((p) => p.team === 'Нова команда') && r.data.some((p) => p.team === 'Тернопіль-Центр'), 'склад: по ерії, з назвами команд');
+r = await api(LEAD, 'teamMembers', { units: ['a:a1'] });
+ok(!r.ok, 'склад: лідер не може відкрити ерію');
+r = await api(RD, 'financeGet', { units: ['r:r0'] });
+ok(r.ok && r.data.mode === 'overview' && r.data.rows.length === 2 && r.data.total.done === 1 && r.data.total.inc === 550, 'фінанси: огляд регіону');
+r = await api(RD, 'financeGet', { units: ['t:' + capTeam.id] });
+ok(r.ok && !r.data.mode && r.data.current.balance === 350 && r.data.canEdit === false, 'фінанси: одна команда через units');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

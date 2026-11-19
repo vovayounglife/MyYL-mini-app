@@ -23,7 +23,7 @@ const TEAM_HEAD = {
   'Клуби': ['Записано', 'Дата', 'Тиждень', 'Режим', 'Підлітків', 'Нових', 'Лідерів', 'Присутні', 'Нотатка', 'Автор'],
   'Малі групи': ['Записано', 'Дата', 'Тиждень', 'Режим', 'Учасників', 'Нових', 'Тема', 'Присутні', 'Нотатка', 'Автор'],
   'КР': ['Записано', 'Дата', 'Тиждень', 'Режим', 'Годин', 'Нотатка', 'Автор'],
-  'Знані': ['ID', "Ім'я", 'Телефон', 'Instagram', 'День народження', 'Школа', 'Клас', 'Лідер', 'Нотатка', 'Додано', 'Активний'],
+  'Знані': ['ID', "Ім'я", 'Телефон', 'Instagram', 'День народження', 'Школа', 'Клас', 'Лідер', 'Нотатка', 'Додано', 'Активний', 'Етап'],
   'Фінанси': ['Місяць', 'Попередній залишок', 'Дав офіс', 'Дала церква', 'Зібрали командою', 'Витратили', 'Залишок', 'Автор', 'Оновлено'],
 };
 const SYS = {
@@ -245,9 +245,11 @@ function writeReports_(res, map, timeLeft, seq) {
 function writeKnown_(ss, rows) {
   const sh = ss.getSheetByName('Знані');
   const head = TEAM_HEAD['Знані'];
+  const STAGE = { meet: 'Хочу познайомитись', friends: 'Дружимо', grow: 'Допомагаю зростати в вірі', own: 'Йдуть самі' };
+  sh.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, sh.getMaxColumns()).clearContent();
   if (!rows.length) return;
-  const vals = rows.map(function (r) { return [r.id, r.name, r.phone, r.ig, r.bday, r.school, r.grade, r.leader, r.note, r.added, r.active ? 'так' : 'ні'].map(safe_); });
+  const vals = rows.map(function (r) { return [r.id, r.name, r.phone, r.ig, r.bday, r.school, r.grade, r.leader, r.note, r.added, r.active ? 'так' : 'ні', STAGE[r.stage] || STAGE.meet].map(safe_); });
   sh.getRange(2, 1, vals.length, head.length).setValues(vals);
 }
 

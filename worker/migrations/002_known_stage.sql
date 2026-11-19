@@ -1,0 +1,1 @@
+ALTER TABLE known ADD COLUMN stage TEXT;

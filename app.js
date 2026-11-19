@@ -60,7 +60,7 @@
     events: null, ev: null, evForm: null, evFilter: 'all',
     add: null, knownCache: {},
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false },
-    known: { teamId: null, list: null, mine: false, detail: null, edit: null },
+    known: { teamId: null, list: null, mine: false, detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
     thanks: false, reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
@@ -78,9 +78,9 @@
     get(k) { try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
   };
-  const statsKey = () => [S.stats.scope || '', S.stats.cat, S.stats.period].join('|');
+  const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -151,6 +151,7 @@
   }
   function back() {
     if (S.screen === 'calendar' && (S.ev || S.evForm)) { S.ev = null; S.evForm = null; return render(); }
+    if (S.screen === 'known' && S.known.bulk) { S.known.bulk = null; return render(); }
     if (S.screen === 'known' && (S.known.detail || S.known.edit)) { if (S.known.edit && S.known.detail) S.known.edit = null; else { S.known.detail = null; S.known.edit = null; } return render(); }
     if (S.screen === 'profile' && S.roleReq) { S.roleReq = null; return render(); }
     if (S.screen === 'structure' && S.structEdit) { S.structEdit = null; return render(); }
@@ -161,7 +162,7 @@
     render();
   }
   function canBack() {
-    return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit)) ||
+    return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
       (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
@@ -175,10 +176,10 @@
     if (screen === 'calendar' && S.events) { /* показуємо, що є, і тихо оновлюємо */ }
     if (screen === 'calendar') { S.ev = o.ev || null; S.evForm = null; loadEvents(); }
     if (screen === 'add') initAdd(o.type, o.teamId);
-    if (screen === 'stats') { if (o.scope) S.stats.scope = o.scope; if (o.cat) S.stats.cat = o.cat; loadStats(); }
-    if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.teamId = S.known.teamId && caps().knownTeams.indexOf(S.known.teamId) >= 0 ? S.known.teamId : myTeamFirst(caps().knownTeams); loadKnown(); }
-    if (screen === 'team') { S.team.open = null; S.team.teamId = S.team.teamId && caps().viewTeams.indexOf(S.team.teamId) >= 0 ? S.team.teamId : myTeamFirst(caps().viewTeams); loadTeam(); }
-    if (screen === 'finance') { S.fin.teamId = S.fin.teamId && caps().financeTeams.indexOf(S.fin.teamId) >= 0 ? S.fin.teamId : myTeamFirst(caps().financeTeams); loadFin(); }
+    if (screen === 'stats') { if (o.scope) setPick('stats', o.scope); ensurePick('stats'); if (o.cat) S.stats.cat = o.cat; loadStats(); }
+    if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.bulk = null; ensurePick('known', ownTeamKeys('known')); loadKnown(); }
+    if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
+    if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
     if (screen === 'broadcast') loadBc();
@@ -234,10 +235,11 @@
     if (hit) S.stats.data = hit;
     S.stats.loading = true; render();
     try {
-      const d = await api('stats', { scope: S.stats.scope, cat: S.stats.cat, period: S.stats.period });
+      const d = await api('stats', { units: S.pick.stats.keys, cat: S.stats.cat, period: S.stats.period });
       if (statsKey() !== key) return; // людина вже перейшла далі
       S.stats.data = d;
-      S.stats.scope = d.scope.key; S.stats.cat = d.cat;
+      if (d.scope.level !== 'multi' && S.pick.stats.keys.join() !== d.scope.key) setPick('stats', d.scope.key);
+      S.stats.cat = d.cat;
       S.statsMem = S.statsMem || {}; S.statsMem[key] = d; S.statsMem[statsKey()] = d;
       LS.set('st:' + statsKey(), d);
     } catch (e) { toast(e.message); }
@@ -245,24 +247,29 @@
     if (S.screen === 'stats' && !S.stats.find) render();
   }
   async function loadKnown(force) {
-    const id = S.known.teamId;
-    if (!id) { S.known.list = []; return render(); }
-    if (!force && S.knownCache[id]) { S.known.list = S.knownCache[id]; return render(); }
-    const hit = LS.get('kn:' + id);
-    S.known.list = hit || null; render();
-    try { S.knownCache[id] = S.known.list = await api('knownList', { teamId: id }); LS.set('kn:' + id, S.known.list); } catch (e) { S.known.list = S.known.list || []; toast(e.message); }
-    if ((S.screen === 'known' && !S.known.edit) || (S.screen === 'add' && S.add && S.add.mark)) render();
+    const P = S.pick.known;
+    if (!P || !P.keys.length) { S.known.list = []; return render(); }
+    const key = P.keys.join(',');
+    if (!force && S.knownMem[key]) S.known.list = S.knownMem[key];
+    else S.known.list = LS.get('kn:' + key) || null;
+    render();
+    try { S.knownMem[key] = await api('knownList', { units: P.keys }); if (S.pick.known.keys.join(',') === key) S.known.list = S.knownMem[key]; LS.set('kn:' + key, S.knownMem[key]); } catch (e) { S.known.list = S.known.list || []; toast(e.message); }
+    S.knownCache = {};
+    if (S.screen === 'known' && !S.known.edit && !S.known.bulk) render();
   }
   async function loadTeam() {
-    if (!S.team.teamId) { S.team.list = []; return render(); }
+    const P = S.pick.team;
+    if (!P || !P.keys.length) { S.team.list = []; return render(); }
     S.team.list = null; render();
-    try { S.team.list = await api('teamMembers', { teamId: S.team.teamId }); } catch (e) { S.team.list = []; toast(e.message); }
+    try { S.team.list = await api('teamMembers', { units: P.keys }); } catch (e) { S.team.list = []; toast(e.message); }
     if (S.screen === 'team') render();
   }
   async function loadFin() {
-    if (!S.fin.teamId) return render();
+    const P = S.pick.finance;
+    if (!P || !P.keys.length) return render();
+    S.fin.teamId = P.keys.length === 1 && P.keys[0].indexOf('t:') === 0 ? P.keys[0].slice(2) : null;
     S.fin.data = null; render();
-    try { S.fin.data = await api('financeGet', { teamId: S.fin.teamId, month: S.fin.month }); S.fin.cur = Object.assign({}, S.fin.data.current); } catch (e) { toast(e.message); }
+    try { S.fin.data = await api('financeGet', { units: P.keys, month: S.fin.month }); S.fin.cur = S.fin.data.mode ? null : Object.assign({}, S.fin.data.current); } catch (e) { toast(e.message); }
     if (S.screen === 'finance') render();
   }
   async function loadTree() {
@@ -342,13 +349,6 @@
           : `<button type="button" class="btn ghost sm" data-a="markNone" data-type="${it.type}" data-team="${esc(it.teamId)}">Не було</button><button type="button" class="btn sm" data-a="openAdd" data-type="${it.type}" data-team="${esc(it.teamId)}">Внести</button>`
         }</div>`).join('')}</div>`;
     }
-    if (m.scopeCard) {
-      const sc = m.scopeCard; const pct = sc.total ? Math.round(sc.done / sc.total * 100) : 0;
-      h += `<div class="card col"><h2>${esc(sc.title)}</h2><div class="small muted">Звітували про клуби цього тижня</div>
-        <div class="row" style="align-items:baseline;gap:6px"><span style="font:800 30px Manrope,Inter,sans-serif">${sc.done}</span><span class="muted">з ${sc.total} команд</span></div>
-        <div class="track"><i style="width:${pct}%;background:var(--turq)"></i></div>
-        <button type="button" class="btn sec2 sm" data-a="goStats" data-scope="${esc(sc.scope)}" data-cat="club">Хто ще не здав →</button></div>`;
-    }
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
@@ -367,6 +367,11 @@
     if (!S.events) h += loading();
     else if (!S.events.length) h += '<div class="empty small">Подій поки немає</div>';
     else h += S.events.slice(0, 2).map(evCard).join('');
+    if (m.scopeCard) {
+      const sc = m.scopeCard; const pct = sc.total ? Math.round(sc.done / sc.total * 100) : 0;
+      h += `<button type="button" class="mini-stat" data-a="goStats" data-scope="${esc(sc.scope)}" data-cat="club"><span class="grow"><span class="xs muted" style="display:block">${esc(sc.title)} · клуби цього тижня</span>
+        <span class="small"><b>${sc.done}</b> з ${sc.total} команд звітували</span><span class="track" style="height:4px;margin-top:6px"><i style="width:${pct}%;background:var(--turq)"></i></span></span><span class="xs muted">Деталі ›</span></button>`;
+    }
     return h;
   };
 
@@ -507,18 +512,11 @@
   // ───────────── СТАТИСТИКА ─────────────
   VIEWS.stats = function () {
     const st = S.stats, d = st.data;
-    const pathSub = d && d.path && d.path.length > 1 ? d.path.slice(0, -1).map((p) => p.label).join(' › ') : '';
-    let h = header('Статистика', pathSub, d && (d.scopes || []).length > 1 ? `<button type="button" class="icon-btn" data-a="statsFindToggle" aria-label="Знайти регіон, ерію чи команду"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg></button>` : '');
+    const pathSub = !d ? '' : d.scope.level === 'multi' ? d.scope.label : d.path && d.path.length > 1 ? d.path.slice(0, -1).map((p) => p.label).join(' › ') : '';
+    let h = header('Статистика', pathSub);
+    // єдиний вибір рівня й одиниць — без гортання
+    h += picker('stats');
     if (!d) return h + loading();
-    // перемикач рівня й сусідніх одиниць — без гортання
-    h += statsLevelBar(d);
-    // пошук рівня
-    if (st.find) {
-      const LV = { nat: 'Україна', region: 'Регіон', area: 'Ерія', team: 'Команда' };
-      h += `<div class="card col" style="gap:8px"><input class="in" type="search" placeholder="Регіон, ерія або команда…" data-live="statsFind" id="statsFindIn">
-        <div id="statsFindList" style="max-height:320px;overflow:auto">${d.scopes.map((s) => `<button type="button" class="li" style="min-height:48px;padding:8px 4px" data-a="statsDrill" data-k="${esc(s.key)}" data-q="${esc((s.name + ' ' + s.sub).toLowerCase())}">
-          <span class="grow"><span class="b" style="display:block">${esc(s.name)}</span>${s.sub ? `<span class="xs muted">${esc(s.sub)}</span>` : ''}</span><span class="tag">${LV[s.level]}</span></button>`).join('')}</div></div>`;
-    }
     if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === d.cat ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
     h += `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік']].map((p) => `<button type="button" class="${p[0] === st.period ? 'on' : ''}" data-a="statsPeriod" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
     if (st.loading) h += '<div class="small muted center">Оновлюю…</div>';
@@ -623,19 +621,93 @@
 
   const LEVELS = [['nat', 'Україна'], ['region', 'Регіон'], ['area', 'Ерія'], ['team', 'Команда']];
   const byName = (a, b) => a.name.localeCompare(b.name);
-  function statsLevelBar(d) {
-    const sc = d.scopes || [], by = {};
-    sc.forEach((x) => { by[x.key] = x; });
-    const cur = by[d.scope.key] || d.scope;
-    const lv = LEVELS.filter((l) => sc.some((x) => x.level === l[0]));
-    let sib = cur.level === 'nat' ? [] : sc.filter((x) => x.level === cur.level && x.parent === cur.parent).sort(byName);
-    // одна в своїй гілці — показуємо сусідів рівнем вище (напр., усі команди регіону)
-    const gp = by[cur.parent] && by[cur.parent].parent;
-    if (sib.length < 2 && gp) sib = sc.filter((x) => x.level === cur.level && by[x.parent] && by[x.parent].parent === gp).sort(byName);
-    let h = '';
-    if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === cur.level}" class="${l[0] === cur.level ? 'on' : ''}" data-a="statsLevel" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
-    if (sib.length > 1) h += `<div class="pills lvl">${sib.map((x) => `<button type="button" class="pill${x.key === cur.key ? ' on' : ''}" data-a="statsDrill" data-k="${esc(x.key)}">${esc(x.name)}</button>`).join('')}</div>`;
-    return h;
+
+  // ───────────── ЄДИНИЙ ВИБІР: регіон / ерія / команда (одна або кілька) ─────────────
+  const scopeBy = () => { const m = {}; (S.me.scopes || []).forEach((x) => { m[x.key] = x; }); return m; };
+  function teamsUnder(keys) {
+    const by = scopeBy(), out = [];
+    (S.me.scopes || []).forEach((x) => {
+      if (x.level !== 'team') return;
+      for (let k = x.key; k && by[k]; k = by[k].parent) if (keys.indexOf(k) >= 0) { out.push(x.unitId); break; }
+    });
+    return out;
+  }
+  const PICK_TEAMS = { known: 'knownTeams', team: 'viewTeams', finance: 'financeTeams' };
+  function unitsFor(scr) {
+    const sc = S.me.scopes || [];
+    if (scr === 'report') return caps().broadcast ? sc : sc.filter((x) => x.depth <= 1);
+    const list = caps()[PICK_TEAMS[scr]];
+    if (!list) return sc;
+    const by = scopeBy(), ok = {}, keep = {};
+    list.forEach((id) => { ok['t:' + id] = true; });
+    sc.forEach((x) => { if (x.level === 'team' && ok[x.key]) for (let k = x.key; k && by[k]; k = by[k].parent) keep[k] = true; });
+    return sc.filter((x) => keep[x.key]);
+  }
+  function ensurePick(scr, prefer) {
+    const units = unitsFor(scr), by = {};
+    units.forEach((x) => { by[x.key] = x; });
+    let P = S.pick[scr];
+    if (!P || !P.keys.length || !P.keys.every((k) => by[k])) {
+      const k0 = (prefer || []).filter((k) => by[k])[0] || (units[0] && units[0].key);
+      P = S.pick[scr] = { keys: k0 ? [k0] : [], level: k0 ? by[k0].level : '', multi: P ? !!P.multi : false };
+    }
+    return P;
+  }
+  const ownTeamKeys = (scr) => { const list = caps()[PICK_TEAMS[scr]] || []; const id = (S.me.myTeams || []).map((t) => t.id).filter((x) => list.indexOf(x) >= 0)[0]; return id ? ['t:' + id] : []; };
+  function setPick(scr, key) {
+    const x = scopeBy()[key];
+    if (!x) return;
+    S.pick[scr] = { keys: [key], level: x.level, multi: S.pick[scr] ? S.pick[scr].multi && false : false };
+  }
+  function levelTarget(units, curKey, level) {
+    const by = {};
+    units.forEach((x) => { by[x.key] = x; });
+    const cur = by[curKey];
+    const ORD = LEVELS.map((l) => l[0]);
+    let t = '';
+    if (cur && ORD.indexOf(level) < ORD.indexOf(cur.level)) { for (let k = cur.parent; k && by[k]; k = by[k].parent) if (by[k].level === level) { t = k; break; } }
+    else if (cur) {
+      const under = (x) => { for (let k = x.parent; k && by[k]; k = by[k].parent) if (k === cur.key) return true; return false; };
+      const c = units.filter((x) => x.level === level && under(x)).sort(byName); t = c[0] ? c[0].key : '';
+    }
+    if (!t) { const c = units.filter((x) => x.level === level).sort(byName); t = c[0] ? c[0].key : ''; }
+    return t;
+  }
+  function picker(scr) {
+    const units = unitsFor(scr), P = S.pick[scr];
+    if (!P || units.length < 2) return '';
+    const by = {};
+    units.forEach((x) => { by[x.key] = x; });
+    const lv = LEVELS.filter((l) => units.some((x) => x.level === l[0]));
+    const level = P.level || (by[P.keys[0]] || {}).level;
+    const pn = (x) => (by[x.parent] || {}).name || '';
+    const list = units.filter((x) => x.level === level).sort((a, b) => pn(a).localeCompare(pn(b)) || byName(a, b));
+    const manyParents = new Set(list.map(pn)).size > 1;
+    let h = `<div class="col pick" id="pk-${scr}" style="gap:8px">`;
+    if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === level}" class="${l[0] === level ? 'on' : ''}" data-a="pkLevel" data-s="${scr}" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
+    if (list.length > 1) {
+      if (list.length > 10) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти: ${esc(((LEVELS.filter((l) => l[0] === level)[0] || [])[1] || '').toLowerCase())}…" data-live="pkFind" data-s="${scr}" aria-label="Пошук">`;
+      h += `<div class="pills lvl"><button type="button" class="pill multi${P.multi ? ' on' : ''}" data-a="pkMulti" data-s="${scr}" aria-pressed="${P.multi}">${P.multi ? '☑' : '☐'} Кілька</button>${list.map((x) => {
+        const on = P.keys.indexOf(x.key) >= 0;
+        return `<button type="button" class="pill${on ? ' on' : ''}" data-a="pkUnit" data-s="${scr}" data-k="${esc(x.key)}" data-q="${esc((x.name + ' ' + pn(x)).toLowerCase())}" aria-pressed="${on}">${esc(x.name)}${manyParents && level !== 'region' ? `<span class="hint"> · ${esc(pn(x))}</span>` : ''}</button>`;
+      }).join('')}</div>`;
+      if (P.multi && P.keys.length > 1) h += `<div class="xs muted">Вибрано: ${P.keys.length} · <button type="button" class="link-btn xs" data-a="pkReset" data-s="${scr}">скинути</button></div>`;
+    }
+    return h + '</div>';
+  }
+  const pickLabel = (scr) => {
+    const P = S.pick[scr], by = scopeBy();
+    if (!P || !P.keys.length) return '';
+    if (P.keys.length > 1) return 'Вибрано: ' + P.keys.length;
+    const x = by[P.keys[0]];
+    return x ? ({ nat: '', region: 'Регіон ', area: 'Ерія ', team: '' }[x.level] || '') + x.name : '';
+  };
+  function onPick(scr) {
+    if (scr === 'stats') { S.stats.showAll = false; S.stats.showMiss = false; loadStats(); }
+    if (scr === 'known') { S.known.detail = null; loadKnown(); }
+    if (scr === 'team') { S.team.open = null; loadTeam(); }
+    if (scr === 'finance') loadFin();
+    if (scr === 'report') { S.rep.data = null; render(); }
   }
 
   // ───────────── МОЯ КОМАНДА В MyYL ─────────────
@@ -737,7 +809,6 @@
   // ───────────── ПІДГОТУВАТИ ЗВІТ ─────────────
   const REP_ITEMS = { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота', known: 'Знані по імені', finance: 'Фінанси' };
   const REP_PRESETS = [['week', 'Цей тиждень'], ['lastweek', 'Минулий тиждень'], ['month', 'Цей місяць'], ['lastmonth', 'Минулий місяць'], ['q', '3 місяці'], ['year', 'З початку року'], ['custom', 'Свій період']];
-  const repUnits = () => (S.me.scopes || []).filter((x) => x.depth <= 1);
   function presetRange(p) {
     const t = new Date(); t.setHours(12, 0, 0, 0);
     const dow = (t.getDay() + 6) % 7, D = 864e5;
@@ -752,19 +823,17 @@
   function initReport() {
     const r = S.rep, items = caps().reportItems || [];
     if (!Object.keys(r.items).length) items.forEach((k) => { r.items[k] = ['club', 'mg', 'kr'].indexOf(k) >= 0; });
-    const units = repUnits();
-    if (!units.some((u) => r.units[u.key])) { r.units = {}; if (units[0]) r.units[units[0].key] = true; }
+    if (!S.pick.report) { ensurePick('report'); S.pick.report.multi = true; } else ensurePick('report');
     if (r.preset !== 'custom') { const x = presetRange(r.preset); r.from = x[0]; r.to = x[1]; }
   }
   const fmtD = (k) => { const p = String(k).split('-'); return p.length === 3 ? Number(p[2]) + '.' + p[1] + '.' + p[0] : ''; };
   VIEWS.report = function () {
-    const r = S.rep, units = repUnits(), items = caps().reportItems || [];
-    let h = header('Підготувати звіт', 'Свій рівень і рівень нижче');
+    const r = S.rep, units = unitsFor('report'), items = caps().reportItems || [];
+    let h = header('Підготувати звіт', caps().broadcast ? 'Будь-який регіон, ерія чи команда' : 'Свій рівень і рівень нижче');
     if (!units.length || !items.length) return h + '<div class="empty">Для твоєї ролі звіти недоступні</div>';
-    const LVN = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
-    h += `<div class="sec">По кому</div><div class="card list">${units.map((u) => `<label class="check" style="${u.depth ? 'padding-left:36px' : ''}"><input type="checkbox" data-ch="repUnit" data-k="${esc(u.key)}"${r.units[u.key] ? ' checked' : ''}>
-      <span class="grow"><span class="${u.depth ? '' : 'b'}" style="display:block">${esc(LVN[u.level] + u.name)}</span>${u.depth ? '' : `<span class="xs muted">${esc(u.sub || 'увесь твій рівень')}</span>`}</span></label>`).join('')}</div>`;
-    const canSplit = units.some((u) => r.units[u.key] && u.level !== 'team');
+    const by = scopeBy();
+    h += `<div class="sec">По кому · ${esc(pickLabel('report'))}</div>` + (units.length > 1 ? picker('report') : `<div class="small">${esc(pickLabel('report'))}</div>`);
+    const canSplit = S.pick.report.keys.some((k) => by[k] && by[k].level !== 'team');
     if (canSplit) h += `<div class="card" style="padding:4px 16px"><label class="toggle-row"><span><span class="b" style="display:block">Розбити на рівень нижче</span><span class="small muted">окремий рядок для кожної ерії / команди</span></span><input type="checkbox" data-bind="rep.split"${r.split ? ' checked' : ''}></label></div>`;
     h += `<div class="sec">Що включити</div><div class="card list">${items.map((k) => `<label class="check"><input type="checkbox" data-ch="repItem" data-k="${k}"${r.items[k] ? ' checked' : ''}><span class="grow">${REP_ITEMS[k]}</span></label>`).join('')}</div>`;
     h += `<div class="sec">Період</div><div class="pills" style="flex-wrap:wrap">${REP_PRESETS.map((p) => `<button type="button" class="pill${r.preset === p[0] ? ' on' : ''}" data-a="repPreset" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
@@ -785,7 +854,7 @@
   }
   function repParams() {
     const r = S.rep;
-    return { units: Object.keys(r.units).filter((k) => r.units[k]), items: Object.keys(r.items).filter((k) => r.items[k]), from: r.from, to: r.to, split: !!r.split };
+    return { units: S.pick.report.keys.slice(), items: Object.keys(r.items).filter((k) => r.items[k]), from: r.from, to: r.to, split: !!r.split };
   }
   async function repCall(send) {
     const r = S.rep, p = repParams();
@@ -814,40 +883,63 @@
   };
 
   // ───────────── ЗНАНІ ПО ІМЕНІ ─────────────
+  const STAGES = [['meet', 'Хочу познайомитись'], ['friends', 'Дружимо'], ['grow', 'Допомагаю зростати в вірі'], ['own', 'Йдуть самі']];
+  const stageLabel = (k) => (STAGES.filter((x) => x[0] === k)[0] || STAGES[0])[1];
+  const knownSelTeams = () => { const P = S.pick.known; const ok = caps().knownTeams || []; return P ? teamsUnder(P.keys).filter((id) => ok.indexOf(id) >= 0) : []; };
   VIEWS.known = function () {
     const k = S.known;
+    if (k.bulk) return knownBulkView();
     if (k.edit) return knownEditView();
     if (k.detail) return knownDetailView();
-    let h = header('Знані по імені', k.teamId ? teamName(k.teamId) : '', `<button type="button" class="icon-btn accent" data-a="knownNew" aria-label="Додати підлітка">${icon('plus', 22)}</button>`);
-    h += teamSelect(caps().knownTeams, k.teamId, 'knownTeam');
-    h += `<label class="sr" for="kq">Пошук</label><input id="kq" class="in" type="search" placeholder="Пошук за іменем" data-live="knownSearch">`;
-    h += `<div class="pills"><button type="button" class="pill${!k.mine ? ' on' : ''}" data-a="knownMine" data-v="0">Усі</button><button type="button" class="pill${k.mine ? ' on' : ''}" data-a="knownMine" data-v="1">Мої</button></div>`;
+    const teams = knownSelTeams();
+    let h = header('Знані по імені', pickLabel('known'));
+    h += picker('known');
+    if (teams.length) h += `<div class="grid2"><button type="button" class="btn sm" data-a="knownNew">${icon('plus', 18)} Одного</button><button type="button" class="btn sec2 sm" data-a="knownBulkOpen">Додати списком</button></div>`;
+    h += `<div class="row" style="gap:8px"><label class="sr" for="kq">Пошук</label><input id="kq" class="in grow" type="search" placeholder="Пошук за іменем" data-live="knownSearch">
+      <div class="pills" style="flex:0 0 auto"><button type="button" class="pill${!k.mine ? ' on' : ''}" data-a="knownMine" data-v="0">Усі</button><button type="button" class="pill${k.mine ? ' on' : ''}" data-a="knownMine" data-v="1">Мої</button></div></div>`;
     if (!k.list) return h + loading();
     const f = first().toLowerCase();
     const list = k.list.filter((p) => !k.mine || String(p.leader).toLowerCase().indexOf(f) >= 0);
-    if (!list.length) return h + `<div class="empty">${k.list.length ? 'Нікого не знайдено' : 'Список порожній. Додай першого підлітка кнопкою «+».'}</div>`;
-    h += `<div class="small muted">${list.length} ${list.length % 10 === 1 && list.length % 100 !== 11 ? 'підліток' : 'підлітків'} · за них молимось</div>`;
-    const AV = ['rgba(255,122,89,.2)', 'rgba(20,184,166,.2)', 'rgba(76,110,245,.2)', 'rgba(244,166,35,.26)', 'rgba(155,93,229,.2)', 'rgba(239,71,111,.2)'];
-    h += `<div class="card list" id="knownList">${list.map((p, i) => `<button type="button" class="li" data-a="knownOpen" data-id="${esc(p.id)}" data-name="${esc(p.name.toLowerCase())}">
-      <span class="avatar" style="background:${AV[i % 6]}">${esc(initials(p.name))}</span><span class="grow"><span class="b" style="display:block">${esc(p.name)}</span>
-      <span class="small muted">${esc([p.grade, p.school, p.leader ? 'веде ' + p.leader : ''].filter(Boolean).join(' · '))}</span></span></button>`).join('')}</div>`;
+    const multiTeam = new Set(k.list.map((p) => p.teamId)).size > 1;
+    h += `<div class="small muted">${list.length} ${list.length % 10 === 1 && list.length % 100 !== 11 ? 'підліток' : 'підлітків'} · за них молимось${list.length ? ' · гортай колонки вбік →' : ''}</div>`;
+    h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
+      const col = list.filter((p) => (p.stage || 'meet') === st[0]);
+      return `<section class="col-st st-${st[0]}" aria-label="${esc(st[1])}"><div class="col-h"><span>${esc(st[1])}</span><span class="n">${col.length}</span></div>
+        ${col.length ? col.map((p) => `<button type="button" class="kcard" data-a="knownOpen" data-id="${esc(p.id)}" data-name="${esc(p.name.toLowerCase())}"><span class="b" style="display:block">${esc(p.name)}</span>
+          <span class="xs muted">${esc([multiTeam ? p.team : '', p.grade, p.leader ? 'веде ' + p.leader : ''].filter(Boolean).join(' · ') || (p.phone ? p.phone : 'додай контакти'))}</span></button>`).join('') : '<div class="xs muted" style="padding:6px 4px">Поки нікого</div>'}</section>`;
+    }).join('')}</div>`;
+    if (!k.list.length) h += `<div class="empty small">${teams.length ? 'Список порожній. Додай підлітків — одного або одразу списком.' : 'Тут поки нікого'}</div>`;
     return h;
   };
+  const knownItem = () => (S.known.list || []).filter((x) => x.id === S.known.detail)[0];
+  function stagePills(cur, action) {
+    return `<div class="pills" style="flex-wrap:wrap">${STAGES.map((st) => `<button type="button" class="pill st-pill st-${st[0]}${cur === st[0] ? ' on' : ''}" data-a="${action}" data-st="${st[0]}" aria-pressed="${cur === st[0]}">${esc(st[1])}</button>`).join('')}</div>`;
+  }
   function knownDetailView() {
-    const p = (S.known.list || []).filter((x) => x.id === S.known.detail)[0];
+    const p = knownItem();
     if (!p) return header('Знані по імені') + '<div class="empty">Не знайдено</div>';
-    let h = header(p.name, [p.grade, p.school].filter(Boolean).join(' · '), `<button type="button" class="icon-btn" data-a="knownEdit" aria-label="Редагувати"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg></button>`);
+    let h = header(p.name, [p.team, p.grade, p.school].filter(Boolean).join(' · '), `<button type="button" class="icon-btn" data-a="knownEdit" aria-label="Редагувати"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg></button>`);
+    h += `<div class="card col" style="gap:8px"><div class="small muted">Етап</div>${stagePills(p.stage || 'meet', 'knownStage')}</div>`;
     const tel = String(p.phone || '').replace(/[^\d+]/g, '');
     const ig = String(p.ig || '').replace(/^@/, '');
     if (tel || ig) h += `<div class="grid2">${tel ? `<button type="button" class="btn sec2" data-a="openUrl" data-url="tel:${esc(tel)}">${icon('phone', 18)} Подзвонити</button>` : ''}${ig ? `<button type="button" class="btn sec2" data-a="openUrl" data-url="https://instagram.com/${esc(encodeURIComponent(ig))}">Instagram</button>` : ''}</div>`;
-    h += `<div class="card rows">${[['Телефон', p.phone], ['Instagram', p.ig], ['День народження', p.bday ? fmtDay(p.bday) : ''], ['Школа', p.school], ['Клас', p.grade], ['Веде', p.leader]].filter((x) => x[1]).map((x) => `<div class="kv"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="kv"><span>Даних поки немає</span><span></span></div>'}</div>`;
+    const rows = [['Телефон', p.phone], ['Instagram', p.ig], ['День народження', p.bday ? fmtDay(p.bday) : ''], ['Школа', p.school], ['Клас', p.grade], ['Веде', p.leader]].filter((x) => x[1]);
+    h += `<div class="card rows">${rows.map((x) => `<div class="kv"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="kv"><span>Контактів поки немає</span><span></span></div>'}</div>`;
+    if (!rows.length) h += `<button type="button" class="btn sec2" data-a="knownEdit">Додати контакти й дані</button>`;
     if (p.note) h += `<div class="note"><div class="sec" style="margin:0 0 6px">Молитовна нотатка</div><div style="white-space:pre-line">${esc(p.note)}</div></div>`;
     return h;
   }
+  function teamPick(bind, cur) {
+    const ids = knownSelTeams();
+    if (ids.length < 2) return '';
+    return `<label class="f"><span>Команда</span><select class="in" data-bind="${bind}">${ids.map((id) => `<option value="${esc(id)}"${id === cur ? ' selected' : ''}>${esc(teamName(id))}</option>`).join('')}</select></label>`;
+  }
   function knownEditView() {
     const e = S.known.edit;
-    return header(e.id ? 'Редагувати' : 'Новий підліток', teamName(S.known.teamId)) + `<div class="card col">
+    return header(e.id ? 'Редагувати' : 'Новий підліток', e.id ? e.team || '' : '') + `<div class="card col">
+      ${e.id ? '' : teamPick('known.edit.teamId', e.teamId)}
       <label class="f"><span>Імʼя та прізвище *</span><input class="in" type="text" data-bind="known.edit.name" value="${esc(e.name)}"></label>
+      <div class="f"><span>Етап</span>${stagePills(e.stage || 'meet', 'knownEditStage')}</div>
       <div class="grid2"><label class="f"><span>Телефон</span><input class="in" type="tel" data-bind="known.edit.phone" value="${esc(e.phone)}"></label>
       <label class="f"><span>Instagram</span><input class="in" type="text" data-bind="known.edit.ig" value="${esc(e.ig)}" placeholder="@нік"></label></div>
       <div class="grid2"><label class="f"><span>День народження</span><input class="in" type="date" data-bind="known.edit.bday" value="${esc(e.bday)}"></label>
@@ -859,22 +951,35 @@
       ${e.id ? '<button type="button" class="btn ghost" data-a="knownArchive">Прибрати зі списку</button>' : ''}</div>
       <div class="xs muted">Дані підлітків бачать лише команда, ерія й регіон. Переконайся, що батьки погодились.</div>`;
   }
+  function knownBulkView() {
+    const b = S.known.bulk;
+    const n = String(b.text).split(/[\n;,]+/).map((x) => x.trim()).filter((x) => x.length > 1).length;
+    return header('Додати списком', b.teamId ? teamName(b.teamId) : '') + `<div class="card col">
+      ${teamPick('known.bulk.teamId', b.teamId)}
+      <label class="f"><span>Імена — кожне з нового рядка</span><textarea id="bulkText" class="in" rows="9" data-bind="known.bulk.text" data-live="knownBulkCount" placeholder="Марко Іванюк&#10;Софія Бойко&#10;Денис Ткач">${esc(b.text)}</textarea></label>
+      <div class="xs muted" id="bulkCount">${n ? 'Імен: ' + n : 'Можна вставити список з нотаток чи чату. Номери й крапки на початку рядків приберуться самі.'}</div>
+      <div class="f"><span>Куди додати</span>${stagePills(b.stage, 'knownBulkStage')}</div>
+      <button type="button" class="btn" data-a="knownBulkSave">Додати</button></div>
+      <div class="xs muted">Ті, хто вже є у списку, пропускаються. Контакти й дані кожного можна дописати потім — натисни на імʼя.</div>`;
+  }
   const fmtDay = (s) => { const d = parseDay(s); return isNaN(d) ? s : d.getDate() + ' ' + MGEN[d.getMonth()]; };
 
   // ───────────── СКЛАД КОМАНДИ ─────────────
   VIEWS.team = function () {
     const t = S.team;
-    let h = header('Склад команди', t.teamId ? teamName(t.teamId) + (areaById((teamById(t.teamId) || {}).areaId) ? ' · ' + areaById(teamById(t.teamId).areaId).name : '') : '');
-    h += teamSelect(caps().viewTeams, t.teamId, 'teamTeam');
+    let h = header('Склад команди', pickLabel('team'));
+    h += picker('team');
     if (!t.list) return h + loading();
-    if (!t.list.length) return h + '<div class="empty">У команді ще нікого немає</div>';
-    h += `<div class="card list">${t.list.map((p) => {
-      const open = t.open === p.tgId, pr = p.profile || {};
-      return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(p.tgId)}"><span class="avatar">${esc(initials(p.name))}</span>
+    if (!t.list.length) return h + '<div class="empty">Тут ще нікого немає</div>';
+    const groups = [];
+    t.list.forEach((p) => { const g = groups[groups.length - 1]; if (g && g.id === p.teamId) g.list.push(p); else groups.push({ id: p.teamId, name: p.team, list: [p] }); });
+    h += groups.map((g) => `${groups.length > 1 ? `<div class="sec">${esc(g.name)} · ${g.list.length}</div>` : ''}<div class="card list">${g.list.map((p) => {
+      const oid = p.tgId + '|' + p.teamId, open = t.open === oid, pr = p.profile || {};
+      return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(oid)}"><span class="avatar">${esc(initials(p.name))}</span>
         <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span><span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r.label)}</span>`).join('')}</span></span></button>
         ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${[['Telegram', p.username ? '@' + p.username : ''], ['Телефон', pr.phone], ['Дата народження', pr.bday ? fmtDay(pr.bday) : ''], ['Рік покаяння', pr.repent], ['Рік хрещення', pr.baptism], ['Рік ЛПYL', pr.lpyl], ['Відповідальності', pr.resp]].filter((x) => x[1]).map((x) => `<div class="kv small"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="small muted">Анкету ще не заповнено</div>'}
           ${p.roles.filter((r) => r.canRemove).map((r) => `<button type="button" class="btn ghost sm" style="margin-top:8px;width:100%" data-a="roleRemove" data-id="${esc(r.id)}" data-label="${esc(r.label)}" data-name="${esc(p.name)}">Зняти роль «${esc(r.label)}»</button>`).join('')}</div>` : ''}`;
-    }).join('')}</div><div class="xs muted">Анкету кожен заповнює у своєму профілі.</div>`;
+    }).join('')}</div>`).join('') + '<div class="xs muted">Анкету кожен заповнює у своєму профілі.</div>';
     return h;
   };
 
@@ -884,10 +989,18 @@
   const monthLabel = (k) => { const p = String(k).split('-').map(Number); return MFULL[p[1] - 1] + ' ' + p[0]; };
   VIEWS.finance = function () {
     const f = S.fin;
-    let h = header('Фінансовий звіт', f.teamId ? teamName(f.teamId) + ' · бачать капітан, ерія і регіон' : '');
-    h += teamSelect(caps().financeTeams, f.teamId, 'finTeam');
+    let h = header('Фінансовий звіт', pickLabel('finance'));
+    h += picker('finance');
     h += `<label class="f"><span>Місяць</span><input class="in" type="month" value="${esc(f.month)}" max="${ym(new Date())}" data-ch="finMonth"></label>`;
-    if (!f.data || !f.cur) return h + loading();
+    if (!f.data) return h + loading();
+    if (f.data.mode === 'overview') {
+      const T = f.data.total;
+      h += `<div class="kpis"><div class="card kpi"><div class="v">${T.done} з ${T.teams}</div><div class="l">Команд здали за ${esc(monthLabel(f.month).toLowerCase())}</div></div><div class="card kpi"><div class="v">${nf(T.balance)} ₴</div><div class="l">Залишок разом</div></div>
+        <div class="card kpi"><div class="v">${nf(T.inc)} ₴</div><div class="l">Надійшло</div></div><div class="card kpi"><div class="v">${nf(T.spent)} ₴</div><div class="l">Витрачено</div></div></div>`;
+      h += `<div class="card" style="padding:0"><div class="rtab-w"><table class="rtab"><thead><tr><th>Команда</th><th>Надійшло</th><th>Витрачено</th><th>Залишок</th></tr></thead><tbody>${f.data.rows.map((r) => `<tr class="top"><td>${esc(r.name)}<div class="xs muted" style="font-weight:400">${esc(r.area)}</div></td>${r.done ? `<td>${nf(r.inc)}</td><td>${nf(r.spent)}</td><td>${nf(r.balance)}</td>` : '<td colspan="3" style="text-align:center"><span class="tag warn">ще не здали</span></td>'}</tr>`).join('')}</tbody></table></div></div>`;
+      return h + '<div class="xs muted">Щоб побачити деталі команди, вибери її вгорі.</div>';
+    }
+    if (!f.cur) return h + loading();
     const c = f.cur;
     const inSt = f.data.canEdit ? ' style="width:120px;min-height:40px;text-align:right"' : ' readonly tabindex="-1" style="width:120px;min-height:40px;text-align:right;background:transparent;border-color:transparent"';
     if (!f.data.canEdit) h += '<div class="note small">Фінансовий звіт вносять лише Капітан і Адмін команди. Ти можеш його переглядати.</div>';
@@ -1096,22 +1209,8 @@
   // статистика
   A.statsScope = (d, el) => { S.stats.scope = el.value; loadStats(); };
   A.statsCat = (d) => { S.stats.cat = d.c; loadStats(); };
-  A.statsLevel = (d) => {
-    const data = S.stats.data; if (!data) return;
-    const sc = data.scopes, by = {}; sc.forEach((x) => { by[x.key] = x; });
-    const cur = by[data.scope.key]; if (!cur || d.l === cur.level) return;
-    const ORD = LEVELS.map((l) => l[0]);
-    let target = '';
-    if (ORD.indexOf(d.l) < ORD.indexOf(cur.level)) { for (let k = cur.parent; k && by[k]; k = by[k].parent) if (by[k].level === d.l) { target = k; break; } }
-    else {
-      const under = (x) => { for (let k = x.parent; k && by[k]; k = by[k].parent) if (k === cur.key) return true; return false; };
-      const c = sc.filter((x) => x.level === d.l && under(x)).sort(byName); target = c[0] ? c[0].key : '';
-    }
-    if (!target) { const c = sc.filter((x) => x.level === d.l).sort(byName); target = c[0] ? c[0].key : ''; }
-    if (target) A.statsDrill({ k: target });
-  };
   A.statsPeriod = (d) => { S.stats.period = d.p; loadStats(); };
-  A.statsDrill = (d) => { S.stats.scope = d.k; S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
+  A.statsDrill = (d) => { setPick('stats', d.k); S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
   A.statsFindToggle = () => { S.stats.find = !S.stats.find; render(); const i = document.getElementById('statsFindIn'); if (i) i.focus(); };
   A.statsFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('#statsFindList [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0)); };
   A.statsRowFind = (d, el) => {
@@ -1145,28 +1244,57 @@
     else doIt();
   };
   async function refreshMe() { try { const m = await api('me'); S.me = m; } catch (e) { /* лишаємо старе */ } }
-  A.nudge = async (d) => { const r = await run(() => api('nudge', { scope: S.stats.scope, type: d.type })); if (r) toast('Нагадування надіслано: ' + r.sent, 'success'); };
+  A.nudge = async (d) => { const r = await run(() => api('nudge', { units: S.pick.stats.keys, type: d.type })); if (r) toast('Нагадування надіслано: ' + r.sent, 'success'); };
 
   // знані
   A.knownTeam = (d, el) => { S.known.teamId = el.value; loadKnown(); };
   A.knownMine = (d) => { S.known.mine = d.v === '1'; render(); };
   A.knownSearch = (d, el) => {
     const q = el.value.trim().toLowerCase();
-    document.querySelectorAll('#knownList .li').forEach((li) => { li.classList.toggle('hidden', !!q && li.dataset.name.indexOf(q) < 0); });
+    document.querySelectorAll('#knownBoard .kcard').forEach((li) => { li.classList.toggle('hidden', !!q && li.dataset.name.indexOf(q) < 0); });
   };
   A.knownOpen = (d) => { S.known.detail = d.id; render(); window.scrollTo(0, 0); };
-  A.knownNew = () => { S.known.edit = { id: '', name: '', phone: '', ig: '', bday: '', school: '', grade: '', leader: first(), note: '' }; render(); };
-  A.knownEdit = () => { const p = S.known.list.filter((x) => x.id === S.known.detail)[0]; S.known.edit = Object.assign({}, p); render(); };
+  const firstKnownTeam = () => { const ids = knownSelTeams(); return myTeamFirst(ids) || ids[0] || ''; };
+  A.knownNew = () => { S.known.edit = { id: '', teamId: firstKnownTeam(), stage: 'meet', name: '', phone: '', ig: '', bday: '', school: '', grade: '', leader: first(), note: '' }; render(); window.scrollTo(0, 0); };
+  A.knownEdit = () => { const p = knownItem(); if (p) { S.known.edit = Object.assign({}, p); render(); window.scrollTo(0, 0); } };
+  A.knownEditStage = (d) => { S.known.edit.stage = d.st; render(); };
+  A.knownStage = async (d) => {
+    const p = knownItem(); if (!p || p.stage === d.st) return;
+    const old = p.stage; p.stage = d.st; render(); haptic('success');
+    const res = await run(() => api('knownStage', { teamId: p.teamId, id: p.id, stage: d.st }));
+    if (!res) { p.stage = old; render(); } else { S.knownMem = {}; toast('Етап: ' + stageLabel(d.st)); }
+  };
   A.knownSave = async () => {
     const e = S.known.edit;
     if (String(e.name).trim().length < 2) return toast('Вкажи імʼя');
-    const res = await run(() => api('knownSave', { teamId: S.known.teamId, item: e }), 'Збережено');
-    if (res) { S.known.edit = null; S.known.detail = e.id ? e.id : null; delete S.knownCache[S.known.teamId]; loadKnown(true); }
+    const teamId = e.teamId || firstKnownTeam();
+    const res = await run(() => api('knownSave', { teamId: teamId, item: e }), 'Збережено');
+    if (res) { S.known.edit = null; S.known.detail = e.id ? e.id : null; S.knownMem = {}; loadKnown(true); }
   };
   A.knownArchive = () => {
-    const doIt = async () => { const res = await run(() => api('knownArchive', { teamId: S.known.teamId, id: S.known.edit.id }), 'Прибрано зі списку'); if (res) { S.known.edit = null; S.known.detail = null; delete S.knownCache[S.known.teamId]; loadKnown(true); } };
+    const e = S.known.edit;
+    const doIt = async () => { const res = await run(() => api('knownArchive', { teamId: e.teamId, id: e.id }), 'Прибрано зі списку'); if (res) { S.known.edit = null; S.known.detail = null; S.knownMem = {}; loadKnown(true); } };
     if (tg && tg.showConfirm) tg.showConfirm('Прибрати підлітка зі списку знаних?', (ok) => { if (ok) doIt(); }); else if (confirm('Прибрати зі списку?')) doIt();
   };
+  A.knownBulkOpen = () => { S.known.bulk = { text: '', stage: 'meet', teamId: firstKnownTeam() }; render(); window.scrollTo(0, 0); const t = document.getElementById('bulkText'); if (t) t.focus(); };
+  A.knownBulkStage = (d) => { S.known.bulk.stage = d.st; render(); };
+  A.knownBulkCount = (d, el) => { const n = el.value.split(/[\n;,]+/).map((x) => x.trim()).filter((x) => x.length > 1).length; const c = document.getElementById('bulkCount'); if (c) c.textContent = n ? 'Імен: ' + n : ''; };
+  A.knownBulkSave = async () => {
+    const b = S.known.bulk;
+    if (!String(b.text).trim()) return toast('Впиши імена — кожне з нового рядка', 'error');
+    const res = await run(() => api('knownBulk', { teamId: b.teamId || firstKnownTeam(), names: b.text, stage: b.stage }));
+    if (res) { toast('Додано: ' + res.added, 'success'); S.known.bulk = null; S.knownMem = {}; loadKnown(true); }
+  };
+  A.pkLevel = (d) => { const P = S.pick[d.s]; if (!P || P.level === d.l) return; const t = levelTarget(unitsFor(d.s), P.keys[0], d.l); P.level = d.l; P.keys = t ? [t] : []; onPick(d.s); };
+  A.pkUnit = (d) => {
+    const P = S.pick[d.s]; if (!P) return;
+    if (P.multi) { const i = P.keys.indexOf(d.k); if (i >= 0) { if (P.keys.length > 1) P.keys.splice(i, 1); else return; } else P.keys.push(d.k); }
+    else { if (P.keys.length === 1 && P.keys[0] === d.k) return; P.keys = [d.k]; }
+    onPick(d.s);
+  };
+  A.pkMulti = (d) => { const P = S.pick[d.s]; if (!P) return; P.multi = !P.multi; const was = P.keys.length; if (!P.multi) P.keys = P.keys.slice(0, 1); if (was !== P.keys.length) onPick(d.s); else render(); };
+  A.pkReset = (d) => { const P = S.pick[d.s]; if (!P) return; P.keys = P.keys.slice(0, 1); onPick(d.s); };
+  A.pkFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('#pk-' + d.s + ' [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0)); };
 
   // склад
   const homeOk = () => !!(tg && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0'));
@@ -1183,7 +1311,7 @@
   A.repSend = () => repCall(true);
   A.myylGo = (d) => { const f = document.querySelector('[data-live="myylFind"]'); if (f) f.value = ''; S.myyl.at = d.k || null; S.myyl.open = null; render(); window.scrollTo(0, 0); };
   A.myylPerson = (d) => { S.myyl.open = S.myyl.open === d.id ? null : d.id; render(); };
-  A.myylTeam = (d) => { S.team.teamId = d.id; go('team'); };
+  A.myylTeam = (d) => { setPick('team', 't:' + d.id); go('team'); };
   A.myylFind = (d, el) => {
     const q = el.value.trim().toLowerCase();
     const list = document.getElementById('myylFindList'), main = document.getElementById('myylMain');
