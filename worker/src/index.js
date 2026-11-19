@@ -107,12 +107,14 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
+  audCount: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
+  polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
 };
 
 async function handleApi(req, env, ctx) {
@@ -143,6 +145,7 @@ async function handleApi(req, env, ctx) {
       else await S.loadFinanceMonth(ids, /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : kyivDay(new Date()).slice(0, 7));
     }
     if (need.bc) await S.loadBroadcasts();
+    if (need.tp) await S.loadTP();
     if (need.usage) await S.loadTeamUsage(str_(d.id));
     const data = use(S, () => fn(ctx_(tgUser), d));
     await S.flush();
@@ -248,10 +251,10 @@ class Store {
   async loadEvents() {
     const today = kyivDay(new Date());
     const [ev, rs] = await this.db.batch([
-      this.db.prepare('SELECT * FROM events WHERE COALESCE(end_date, date) >= ?').bind(addDaysKey_(today, -1)),
-      this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON e.id = r.event_id WHERE COALESCE(e.end_date, e.date) >= ?').bind(addDaysKey_(today, -1)),
+      this.db.prepare(EV_LIVE_SQL('')).bind(addDaysKey_(today, -1), today),
+      this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON (r.event_id = e.id OR r.event_id LIKE e.id || \'@%\') WHERE ' + EV_LIVE_SQL('e.').replace(/^SELECT \* FROM events WHERE /, '')).bind(addDaysKey_(today, -1), today),
     ]);
-    this.events = (ev.results || []).map((r) => ({ id: r.id, roles: String(r.roles || '').split(',').filter(Boolean), aud: String(r.aud || '').split(',').filter(Boolean), level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
+    this.events = (ev.results || []).map((r) => ({ id: r.id, roles: String(r.roles || '').split(',').filter(Boolean), aud: String(r.aud || '').split(',').filter(Boolean), level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '', rep: REPEAT[r.rep] ? r.rep : '', until: r.rep_until || '', skip: String(r.rep_skip || '').split(',').filter(Boolean) }));
     this.rsvp = (rs.results || []).map((r) => ({ eventId: r.event_id, tgId: r.tg_id, name: r.name || '', team: r.team || '' }));
   }
   async loadKnownTeams(ids) {
@@ -285,6 +288,21 @@ class Store {
     ]);
     const n = (r) => ((r.results || [])[0] || {}).n || 0;
     this.usage = { reports: n(rep), known: n(kn), finance: n(fin) };
+  }
+  async loadTP() {
+    const since = new Date(Date.now() - 120 * 864e5).toISOString();
+    const [t, tp, p, pv] = await this.db.batch([
+      this.db.prepare("SELECT * FROM tasks WHERE COALESCE(closed, '') = '' OR created >= ?").bind(since),
+      this.db.prepare("SELECT x.* FROM task_people x JOIN tasks t ON t.id = x.task_id WHERE COALESCE(t.closed, '') = '' OR t.created >= ?").bind(since),
+      this.db.prepare("SELECT * FROM polls WHERE COALESCE(closed, '') = '' OR created >= ?").bind(since),
+      this.db.prepare("SELECT v.* FROM poll_votes v JOIN polls p ON p.id = v.poll_id WHERE COALESCE(p.closed, '') = '' OR p.created >= ?").bind(since),
+    ]);
+    const list = (v) => String(v || '').split(',').filter(Boolean);
+    const base = (r) => ({ id: r.id, units: list(r.units), roles: list(r.roles), audience: r.audience || '', authorId: r.author_id || '', author: r.author || '', authorRank: Number(r.author_rank) || 99, created: r.created || '', closed: r.closed || '' });
+    this.tasks = (t.results || []).map((r) => Object.assign(base(r), { title: r.title || '', desc: r.descr || '', due: r.due || '' }));
+    this.taskPeople = (tp.results || []).map((r) => ({ taskId: r.task_id, tgId: r.tg_id, name: r.name || '', status: TASK_ST[r.status] ? r.status : 'todo', note: r.note || '', updated: r.updated || '' }));
+    this.polls = (p.results || []).map((r) => Object.assign(base(r), { question: r.question || '', options: JSON.parse(r.options || '[]'), multi: !!r.multi, open: !!r.open_results, people: list(r.people) }));
+    this.votes = (pv.results || []).map((r) => ({ pollId: r.poll_id, tgId: r.tg_id, opt: Number(r.opt), name: r.name || '' }));
   }
   async loadBroadcasts() {
     const [h, q] = await this.db.batch([
@@ -412,6 +430,42 @@ const loadRoles_ = () => S.b.roles;
 const getPerson_ = (id) => S.b.people[String(id)] || null;
 const loadLog_ = () => S.log;
 const loadEvents_ = () => S.events;
+// ── повторювані події: серія зберігається одним рядком, дати розгортаються на льоту ──
+const REPEAT = { week: 'щотижня', '2week': 'раз на 2 тижні', month: 'щомісяця' };
+const EV_LIVE_SQL = (a) => 'SELECT * FROM events WHERE COALESCE(' + a + 'end_date, ' + a + 'date) >= ? OR (COALESCE(' + a + "rep, '') != '' AND (COALESCE(" + a + "rep_until, '') = '' OR " + a + 'rep_until >= ?))';
+const dayDiff_ = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
+// дати серії від from до to (включно, за датою початку); max — не більше стількох
+function repeatDates_(e, from, to, max) {
+  if (!e.rep) return e.date >= from && e.date <= to ? [e.date] : [];
+  const out = [];
+  const last = e.until && e.until < to ? e.until : to;
+  const p = e.date.split('-').map(Number);
+  for (let i = 0; out.length < (max || 400) && i < 1000; i++) {
+    let d;
+    if (e.rep === 'month') {
+      const dt = new Date(Date.UTC(p[0], p[1] - 1 + i, p[2]));
+      if (dt.getUTCDate() !== p[2]) continue; // у місяці немає такого числа (напр., 31-го)
+      d = dt.toISOString().slice(0, 10);
+    } else d = addDaysKey_(e.date, i * (e.rep === '2week' ? 14 : 7));
+    if (d > last) break;
+    if (d >= from && e.skip.indexOf(d) < 0) out.push(d);
+  }
+  return out;
+}
+// одна дата серії як окрема подія (id «серія@дата»)
+function occurrence_(e, date) {
+  if (!e.rep) return e;
+  const len = e.end ? dayDiff_(e.date, e.end) : 0;
+  return Object.assign({}, e, { id: e.id + '@' + date, seriesId: e.id, date: date, end: len ? addDaysKey_(date, len) : '', start0: e.date, end0: e.end });
+}
+function eventById_(id) {
+  const parts = String(id || '').split('@');
+  const e = loadEvents_().filter((x) => x.id === parts[0])[0];
+  if (!e) return null;
+  if (!parts[1]) return e.rep ? null : e;
+  if (!e.rep || !/^\d{4}-\d{2}-\d{2}$/.test(parts[1]) || repeatDates_(e, parts[1], parts[1]).indexOf(parts[1]) < 0) return null;
+  return occurrence_(e, parts[1]);
+}
 function unitName_(level, id) {
   const st = loadStruct_();
   if (level === 'nat') return 'Україна';
@@ -631,6 +685,7 @@ API.me = function (c) {
   out.myTeams = Object.keys(myTeams).map(teamOut_);
   out.scopes = allowedScopes_(c);
   out.week = weekStatus_(c);
+  out.todo = tpCounts_(c);
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
@@ -1019,7 +1074,13 @@ function canManageEvent_(c, ev) {
 
 API.events = function (c) {
   const today = kyivDay(new Date());
-  return loadEvents_().filter((e) => (e.end || e.date) >= today && canSeeEvent_(c, e)).map((e) => {
+  const all = [];
+  loadEvents_().forEach((e) => {
+    if (!e.rep) { all.push(e); return; }
+    const len = e.end ? dayDiff_(e.date, e.end) : 0;
+    repeatDates_(e, addDaysKey_(today, -len), addDaysKey_(today, 366), 12).forEach((d) => all.push(occurrence_(e, d)));
+  });
+  return all.filter((e) => (e.end || e.date) >= today && canSeeEvent_(c, e)).map((e) => {
     const people = S.rsvp.filter((r) => r.eventId === e.id);
     const manage = canManageEvent_(c, e);
     return Object.assign({}, e, {
@@ -1027,7 +1088,7 @@ API.events = function (c) {
       rolesLabel: (e.roles || []).map((k) => (roleDef_(k) || {}).label).filter(Boolean).join(', '),
       audLabel: (e.aud || []).map(unitLabel_).join(', '),
       isGoing: people.some((r) => r.tgId === c.id),
-      manage: manage,
+      manage: manage, repLabel: REPEAT[e.rep] || '', skip: undefined,
       people: manage ? people.map((r) => ({ name: r.name, team: r.team })) : [],
     });
   }).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time || '') < (b.time || '') ? -1 : 1));
@@ -1048,34 +1109,47 @@ API.eventSave = function (c, d) {
   const aud = uniq_((d.aud || []).map(String)).filter((k) => { const x = keyUnit_(k); return x.level && (k === ownerKey || covers_({ level: u.level, unitId: u.unitId }, x.level, x.unitId)); }).slice(0, 60);
   const audList = aud.length === 1 && aud[0] === ownerKey ? [] : aud;
   const audStr = audList.length ? ',' + audList.join(',') + ',' : '';
+  const rep = REPEAT[d.rep] ? d.rep : '';
+  const until = rep && /^\d{4}-\d{2}-\d{2}$/.test(d.until || '') ? d.until : '';
+  if (until && until < d.date) bad_('«Повторювати до» раніше за дату початку.');
+  if (rep && end && dayDiff_(d.date, end) >= (rep === 'month' ? 28 : rep === '2week' ? 14 : 7)) bad_('Подія довша за проміжок між повторами.');
   if (d.id) {
-    const ex = loadEvents_().filter((x) => x.id === str_(d.id))[0];
+    const ex = loadEvents_().filter((x) => x.id === str_(d.id).split('@')[0])[0];
     if (!ex) bad_('Подію не знайдено.');
     if (!canManageEvent_(c, ex)) deny_('Редагувати подію може автор або керівник цього рівня.');
-    Object.assign(ex, { level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), roles: roles, aud: audList });
-    S.run('UPDATE events SET level = ?, unit_id = ?, title = ?, date = ?, end_date = ?, time = ?, place = ?, descr = ?, roles = ?, aud = ? WHERE id = ?',
-      [ex.level, ex.unitId, ex.title, ex.date, ex.end || null, ex.time, ex.place, ex.desc, rolesStr, audStr, ex.id]);
+    Object.assign(ex, { level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), roles: roles, aud: audList, rep: rep, until: until });
+    S.run('UPDATE events SET level = ?, unit_id = ?, title = ?, date = ?, end_date = ?, time = ?, place = ?, descr = ?, roles = ?, aud = ?, rep = ?, rep_until = ? WHERE id = ?',
+      [ex.level, ex.unitId, ex.title, ex.date, ex.end || null, ex.time, ex.place, ex.desc, rolesStr, audStr, rep, until, ex.id]);
     return { id: ex.id };
   }
-  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name, roles: roles, aud: audList };
-  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created, roles, aud) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso(), rolesStr, audStr]);
+  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name, roles: roles, aud: audList, rep: rep, until: until, skip: [] };
+  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created, roles, aud, rep, rep_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso(), rolesStr, audStr, rep, until]);
   S.events.push(e);
-  rsvpSet_(c, e.id, true);
+  if (!rep) rsvpSet_(c, e.id, true);
   return { id: e.id };
 };
 
 API.eventDelete = function (c, d) {
-  const e = loadEvents_().filter((x) => x.id === str_(d.id))[0];
+  const id = str_(d.id);
+  const e = loadEvents_().filter((x) => x.id === id.split('@')[0])[0];
   if (!e) bad_('Подію не знайдено.');
   if (!canManageEvent_(c, e)) deny_();
+  // лише одна дата повторюваної події
+  if (d.only && id.indexOf('@') > 0) {
+    const day = id.split('@')[1];
+    if (e.skip.indexOf(day) < 0) e.skip.push(day);
+    S.run('UPDATE events SET rep_skip = ? WHERE id = ?', [e.skip.join(','), e.id]);
+    S.run('DELETE FROM rsvp WHERE event_id = ?', [id]);
+    return { ok: true };
+  }
   S.run('DELETE FROM events WHERE id = ?', [e.id]);
-  S.run('DELETE FROM rsvp WHERE event_id = ?', [e.id]);
+  S.run("DELETE FROM rsvp WHERE event_id = ? OR event_id LIKE ?", [e.id, e.id + '@%']);
   return { ok: true };
 };
 
 API.rsvp = function (c, d) {
-  const e = loadEvents_().filter((x) => x.id === str_(d.id))[0];
+  const e = eventById_(d.id);
   if (!e || !canSeeEvent_(c, e)) deny_();
   rsvpSet_(c, e.id, !!d.going);
   return { ok: true };
@@ -1399,20 +1473,26 @@ function reportHtml_(r) {
 
 // ── розсилка від Раба Божого ──
 const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE);
-function bcRecipients_(c, d) {
+// хто потрапляє у вибір «де + які ролі» (без автора)
+function audience_(c, d) {
   const p = pickScope_(c, Array.isArray(d.units) && d.units.length ? d.units : [allowedScopes_(c)[0] && allowedScopes_(c)[0].key]);
   if (!p.scope) deny_();
   const units = p.scope.level === 'multi' ? p.scope.members : [p.scope];
   const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
   const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && (!roles.length || roles.indexOf(r.key) >= 0) && units.some((u) => within_(u, r)));
-  let ids = uniq_(act.map((r) => r.tgId));
-  ids = ids.filter((id) => id !== c.id && wants_(id, 'bc'));
-  // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
-  if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people).filter((id) => id !== c.id && wants_(id, 'bc'))));
   const LV = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
   const where = units.map((u) => LV[u.level] + (u.level === 'nat' ? 'Україна' : u.name)).join(', ');
   const who = roles.length ? roles.map((k) => roleDef_(k).label).join(', ') : 'усі';
-  return { ids: ids, label: where + ' · ' + who };
+  return { ids: uniq_(act.map((r) => r.tgId)).filter((id) => id !== c.id), units: units.map((u) => u.key || unitKey_(u.level, u.unitId)), roles: roles, label: where + ' · ' + who };
+}
+function bcRecipients_(c, d) {
+  const a = audience_(c, d);
+  const units = a.units.map(keyUnit_);
+  const roles = a.roles;
+  let ids = a.ids.filter((id) => wants_(id, 'bc'));
+  // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
+  if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people).filter((id) => id !== c.id && wants_(id, 'bc'))));
+  return { ids: ids, label: a.label };
 }
 
 API.broadcastInfo = function (c, d) {
@@ -1441,6 +1521,167 @@ API.broadcast = function (c, d) {
   });
   S.run('INSERT INTO broadcasts (id, text, audience, count, author, created, author_id) VALUES (?,?,?,?,?,?,?)', [uid_(), text, r.label, r.ids.length, c.name, nowIso(), c.id]);
   return { sent: r.ids.length, audience: r.label };
+};
+
+// ── задачі й опитування ──
+const TASK_ST = { todo: 'Не почато', doing: 'В процесі', done: 'Виконано' };
+const topRank_ = (c) => Math.min.apply(null, c.roles.map((r) => r.rank).concat([99]));
+// бачить хід виконання / результати: автор, Раб Божий і вищі ролі, що охоплюють усі вибрані місця
+function oversees_(c, x) {
+  if (x.authorId === c.id || isSuper_(c)) return true;
+  return c.roles.some((r) => r.rank <= RANK.APPROVE && r.rank < x.authorRank && x.units.length > 0 && x.units.every((k) => { const u = keyUnit_(k); return covers_(r, u.level, u.unitId); }));
+}
+const authorLine_ = (c) => { const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0]; return esc_(c.name) + (top ? ' · ' + esc_(top.label + (top.level === 'nat' ? '' : ' · ' + unitName_(top.level, top.unitId))) : ''); };
+const fmtDue_ = (k) => { const M = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня']; return Number(k.slice(8, 10)) + ' ' + M[Number(k.slice(5, 7)) - 1]; };
+function tpCounts_(c) {
+  return {
+    tasks: (S.taskPeople || []).filter((x) => x.tgId === c.id && x.status !== 'done' && S.tasks.some((t) => t.id === x.taskId && !t.closed)).length,
+    polls: (S.polls || []).filter((p) => !p.closed && p.people.indexOf(c.id) >= 0 && !S.votes.some((v) => v.pollId === p.id && v.tgId === c.id)).length,
+  };
+}
+
+API.audCount = function (c, d) {
+  if (!canBroadcast_(c)) deny_();
+  const a = audience_(c, d || {});
+  return { count: a.ids.length, label: a.label };
+};
+
+function taskOut_(c, t) {
+  const ppl = S.taskPeople.filter((x) => x.taskId === t.id);
+  const mine = ppl.filter((x) => x.tgId === c.id)[0];
+  const see = oversees_(c, t);
+  const o = { id: t.id, title: t.title, desc: t.desc, due: t.due, author: t.author, audience: t.audience, created: t.created, closed: t.closed, total: ppl.length,
+    done: ppl.filter((x) => x.status === 'done').length, doing: ppl.filter((x) => x.status === 'doing').length, mine: mine ? { status: mine.status, note: mine.note } : null,
+    oversee: see, canEdit: t.authorId === c.id || isSuper_(c) };
+  if (see) o.people = ppl.map((x) => ({ tgId: x.tgId, name: (getPerson_(x.tgId) || {}).name || x.name, status: x.status, note: x.note, updated: x.updated }))
+    .sort((a, b) => ['doing', 'todo', 'done'].indexOf(a.status) - ['doing', 'todo', 'done'].indexOf(b.status) || a.name.localeCompare(b.name));
+  return o;
+}
+API.tasks = function (c) {
+  const list = S.tasks.filter((t) => oversees_(c, t) || S.taskPeople.some((x) => x.taskId === t.id && x.tgId === c.id)).map((t) => taskOut_(c, t));
+  return { list: list.sort((a, b) => (a.closed ? 1 : 0) - (b.closed ? 1 : 0) || (a.due || '9') .localeCompare(b.due || '9') || (a.created < b.created ? 1 : -1)), canCreate: canBroadcast_(c) };
+};
+API.taskSave = function (c, d) {
+  if (!canBroadcast_(c)) deny_('Створювати задачі можуть Капітан і вищі ролі.');
+  const title = clip_(d.title).slice(0, 200);
+  if (title.length < 2) bad_('Напиши, що треба зробити.');
+  const due = /^\d{4}-\d{2}-\d{2}$/.test(d.due || '') ? d.due : '';
+  const a = audience_(c, d);
+  if (!a.ids.length) bad_('За цим вибором ще нікого немає.');
+  if (a.ids.length > 1500) bad_('Забагато людей — звузь вибір.');
+  const t = { id: uid_(), title: title, desc: clip_(d.desc), due: due, units: a.units, roles: a.roles, audience: a.label, authorId: c.id, author: c.name, authorRank: topRank_(c), created: nowIso(), closed: '' };
+  S.run('INSERT INTO tasks (id, title, descr, due, units, roles, audience, author_id, author, author_rank, created, closed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    [t.id, t.title, t.desc, t.due, t.units.join(','), t.roles.join(','), t.audience, t.authorId, t.author, t.authorRank, t.created, '']);
+  S.run("INSERT OR IGNORE INTO task_people (task_id, tg_id, name, status, note, updated) SELECT ?, value, '', 'todo', '', '' FROM json_each(?)", [t.id, JSON.stringify(a.ids)]);
+  S.tasks.push(t);
+  a.ids.forEach((id) => S.taskPeople.push({ taskId: t.id, tgId: id, name: '', status: 'todo', note: '', updated: '' }));
+  const text = '✅ <b>Нова задача</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : '') + (t.desc ? '\n\n' + esc_(t.desc.slice(0, 1500)) : '');
+  a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', 'tasks'));
+  return { id: t.id, count: a.ids.length };
+};
+API.taskStatus = function (c, d) {
+  const t = S.tasks.filter((x) => x.id === str_(d.id))[0];
+  const me = t && S.taskPeople.filter((x) => x.taskId === t.id && x.tgId === c.id)[0];
+  if (!me) deny_();
+  if (t.closed) bad_('Задачу вже завершено.');
+  const st = TASK_ST[d.status] ? d.status : me.status;
+  const wasDone = me.status === 'done';
+  me.status = st; me.note = d.note != null ? clip_(d.note).slice(0, 1000) : me.note; me.updated = nowIso();
+  S.run('UPDATE task_people SET status = ?, note = ?, name = ?, updated = ? WHERE task_id = ? AND tg_id = ?', [me.status, me.note, c.name, me.updated, t.id, c.id]);
+  const ppl = S.taskPeople.filter((x) => x.taskId === t.id);
+  if (!wasDone && st === 'done' && ppl.every((x) => x.status === 'done') && wants_(t.authorId, 'tasks')) sendApp_(t.authorId, '🎉 Усі ' + ppl.length + ' виконали задачу «' + esc_(t.title) + '»', 'Переглянути', 'tasks');
+  return taskOut_(c, t);
+};
+function myTP_(list, c, id, what) {
+  const x = list.filter((y) => y.id === str_(id))[0];
+  if (!x) bad_(what + ' не знайдено.');
+  if (!(x.authorId === c.id || isSuper_(c))) deny_('Це може зробити лише автор.');
+  return x;
+}
+API.taskClose = function (c, d) {
+  const t = myTP_(S.tasks, c, d.id, 'Задачу');
+  t.closed = d.reopen ? '' : nowIso();
+  S.run('UPDATE tasks SET closed = ? WHERE id = ?', [t.closed, t.id]);
+  return taskOut_(c, t);
+};
+API.taskDelete = function (c, d) {
+  const t = myTP_(S.tasks, c, d.id, 'Задачу');
+  S.run('DELETE FROM task_people WHERE task_id = ?', [t.id]);
+  S.run('DELETE FROM tasks WHERE id = ?', [t.id]);
+  return { ok: true };
+};
+// нагадати тим, хто ще не виконав
+API.taskNudge = function (c, d) {
+  const t = S.tasks.filter((x) => x.id === str_(d.id))[0];
+  if (!t || !oversees_(c, t)) deny_();
+  const ids = S.taskPeople.filter((x) => x.taskId === t.id && x.status !== 'done').map((x) => x.tgId).filter((id) => wants_(id, 'tasks'));
+  ids.forEach((id) => sendApp_(id, '⏰ <b>Нагадування про задачу</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : ''), 'Відкрити задачу', 'tasks'));
+  return { sent: ids.length };
+};
+
+function pollOut_(c, p) {
+  const vs = S.votes.filter((v) => v.pollId === p.id);
+  const see = oversees_(c, p);
+  const voted = uniq_(vs.map((v) => v.tgId));
+  const mine = vs.filter((v) => v.tgId === c.id).map((v) => v.opt);
+  const o = { id: p.id, question: p.question, options: p.options, multi: p.multi, open: p.open, author: p.author, audience: p.audience, created: p.created, closed: p.closed,
+    canVote: p.people.indexOf(c.id) >= 0 && !p.closed, mine: mine, total: p.people.length, voted: voted.length, oversee: see, canEdit: p.authorId === c.id || isSuper_(c) };
+  if (see || ((p.open || p.closed) && (mine.length || p.people.indexOf(c.id) < 0 || p.closed))) o.counts = p.options.map((x, i) => vs.filter((v) => v.opt === i).length);
+  if (see) {
+    const nm = (id, n) => (getPerson_(id) || {}).name || n || '';
+    o.who = p.options.map((x, i) => vs.filter((v) => v.opt === i).map((v) => nm(v.tgId, v.name)).sort());
+    o.notVoted = p.people.filter((id) => voted.indexOf(id) < 0).map((id) => nm(id)).filter(Boolean).sort();
+  }
+  return o;
+}
+API.polls = function (c) {
+  const list = S.polls.filter((p) => oversees_(c, p) || p.people.indexOf(c.id) >= 0).map((p) => pollOut_(c, p));
+  return { list: list.sort((a, b) => (a.closed ? 1 : 0) - (b.closed ? 1 : 0) || (a.created < b.created ? 1 : -1)), canCreate: canBroadcast_(c) };
+};
+API.pollSave = function (c, d) {
+  if (!canBroadcast_(c)) deny_('Створювати опитування можуть Капітан і вищі ролі.');
+  const q = clip_(d.question).slice(0, 300);
+  if (q.length < 2) bad_('Напиши питання.');
+  const opts = uniq_((d.options || []).map((x) => clip_(x).slice(0, 120)).filter(Boolean));
+  if (opts.length < 2) bad_('Додай щонайменше два варіанти.');
+  if (opts.length > 12) bad_('Максимум 12 варіантів.');
+  const a = audience_(c, d);
+  if (!a.ids.length) bad_('За цим вибором ще нікого немає.');
+  if (a.ids.length > 1500) bad_('Забагато людей — звузь вибір.');
+  const p = { id: uid_(), question: q, options: opts, multi: !!d.multi, open: !!d.open, units: a.units, roles: a.roles, audience: a.label, people: a.ids, authorId: c.id, author: c.name, authorRank: topRank_(c), created: nowIso(), closed: '' };
+  S.run('INSERT INTO polls (id, question, options, multi, open_results, units, roles, audience, people, author_id, author, author_rank, created, closed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [p.id, p.question, JSON.stringify(p.options), p.multi ? 1 : 0, p.open ? 1 : 0, p.units.join(','), p.roles.join(','), p.audience, p.people.join(','), p.authorId, p.author, p.authorRank, p.created, '']);
+  S.polls.push(p);
+  const text = '📊 <b>Опитування</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(q) + '</b>\n' + opts.map((x) => '• ' + esc_(x)).join('\n');
+  a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Проголосувати', 'polls'));
+  return { id: p.id, count: a.ids.length };
+};
+API.pollVote = function (c, d) {
+  const p = S.polls.filter((x) => x.id === str_(d.id))[0];
+  if (!p || p.people.indexOf(c.id) < 0) deny_();
+  if (p.closed) bad_('Опитування вже завершено.');
+  let opts = (d.opts || []).map(Number).filter((i, k, arr) => i >= 0 && i < p.options.length && Math.floor(i) === i && arr.indexOf(i) === k);
+  if (!opts.length) bad_('Обери варіант.');
+  if (!p.multi) opts = opts.slice(0, 1);
+  S.run('DELETE FROM poll_votes WHERE poll_id = ? AND tg_id = ?', [p.id, c.id]);
+  S.votes = S.votes.filter((v) => !(v.pollId === p.id && v.tgId === c.id));
+  opts.forEach((i) => {
+    S.run('INSERT INTO poll_votes (poll_id, tg_id, opt, name, created) VALUES (?,?,?,?,?)', [p.id, c.id, i, c.name, nowIso()]);
+    S.votes.push({ pollId: p.id, tgId: c.id, opt: i, name: c.name });
+  });
+  return pollOut_(c, p);
+};
+API.pollClose = function (c, d) {
+  const p = myTP_(S.polls, c, d.id, 'Опитування');
+  p.closed = d.reopen ? '' : nowIso();
+  S.run('UPDATE polls SET closed = ? WHERE id = ?', [p.closed, p.id]);
+  return pollOut_(c, p);
+};
+API.pollDelete = function (c, d) {
+  const p = myTP_(S.polls, c, d.id, 'Опитування');
+  S.run('DELETE FROM poll_votes WHERE poll_id = ?', [p.id]);
+  S.run('DELETE FROM polls WHERE id = ?', [p.id]);
+  return { ok: true };
 };
 
 // ── вибір однієї або кількох одиниць ──
@@ -1944,7 +2185,7 @@ function eventReminder() {
   const today = kyivDay(new Date());
   days.forEach((n) => {
     const day = addDaysKey_(today, n);
-    loadEvents_().filter((e) => e.date === day).forEach((e) => {
+    [].concat.apply([], loadEvents_().map((s0) => repeatDates_(s0, day, day).map((dd) => occurrence_(s0, dd)))).forEach((e) => {
       S.rsvp.filter((r) => r.eventId === e.id && wants_(r.tgId, 'events')).forEach((r) => {
         sendApp_(r.tgId, '📅 ' + (n === 1 ? 'Завтра' : 'Через ' + n + ' дні') + ': <b>' + esc_(e.title) + '</b>\n' + esc_([e.time, e.place].filter(Boolean).join(' · ')), 'Деталі', 'calendar');
       });
@@ -2048,7 +2289,7 @@ function fullName_(f) { return [f.first_name, f.last_name].filter(Boolean).join(
 function nowIso() { return new Date().toISOString(); }
 function profileOf_(p) { return { main: p.main || '', name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
 // bc — розсилки від інших; remind — нагадування про звіти; events — про події; requests — нові заявки
-const NOTIF = ['bc', 'remind', 'events', 'requests'];
+const NOTIF = ['bc', 'remind', 'events', 'requests', 'tasks'];
 function notifOf_(tgId) {
   const p = getPerson_(tgId) || {};
   const sup = loadRoles_().some((r) => r.tgId === String(tgId) && r.status === ST.ACTIVE && r.key === 'SUPER');

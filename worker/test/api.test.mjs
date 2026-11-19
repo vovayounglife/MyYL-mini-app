@@ -558,6 +558,86 @@ ok(r.ok && r.data.label === 'Фінансист (офіс ерії)', 'назв�
 r = await api(CAP, 'roleTitle', { roleId: offReq.roles[0].id, title: 'Хак' });
 ok(!r.ok, 'капітан не змінює назву офісної ролі');
 
+
+// ── повторювані події ──
+const tday = T.kyivDay(new Date());
+const addD = (k, n) => { const q = k.split('-').map(Number); return new Date(Date.UTC(q[0], q[1] - 1, q[2] + n)).toISOString().slice(0, 10); };
+r = await api(AD, 'eventSave', { level: 'area', unitId: 'a1', title: 'Молитва щосереди', date: tday, time: '19:00', rep: 'week', until: addD(tday, 28) });
+ok(r.ok, 'повтор: подію створено');
+const serId = r.data.id;
+let evs = (await api(CAP, 'events')).data.filter((e) => e.seriesId === serId);
+ok(evs.length === 5 && evs[0].id === serId + '@' + tday && evs[1].date === addD(tday, 7) && evs[0].repLabel === 'щотижня', 'повтор: 5 дат щотижня до кінця');
+r = await api(CAP, 'rsvp', { id: evs[1].id, going: true });
+evs = (await api(CAP, 'events')).data.filter((e) => e.seriesId === serId);
+ok(r.ok && evs[1].isGoing && !evs[0].isGoing, 'повтор: «Йду» лише на одну дату');
+r = await api(CAP, 'rsvp', { id: serId + '@' + addD(tday, 3), going: true });
+ok(!r.ok, 'повтор: неіснуюча дата відхиляється');
+r = await api(AD, 'eventDelete', { id: evs[2].id, only: true });
+evs = (await api(CAP, 'events')).data.filter((e) => e.seriesId === serId);
+ok(r.ok && evs.length === 4 && !evs.some((e) => e.date === addD(tday, 14)), 'повтор: скасовано одну дату');
+r = await api(AD, 'eventSave', { id: evs[0].id, level: 'area', unitId: 'a1', title: 'Молитва', date: tday, time: '19:00', rep: 'month' });
+evs = (await api(CAP, 'events')).data.filter((e) => e.seriesId === serId);
+ok(r.ok && evs.length === 12 && evs[0].title === 'Молитва' && evs[0].repLabel === 'щомісяця', 'повтор: редагування серії → щомісяця, 12 найближчих');
+r = await api(AD, 'eventDelete', { id: evs[3].id });
+ok(r.ok && !(await api(CAP, 'events')).data.some((e) => e.seriesId === serId), 'повтор: видалено всю серію');
+
+// ── задачі ──
+r = await api(LEAD, 'taskSave', { title: 'X', units: ['a:a1'] });
+ok(!r.ok, 'задачі: лідер не створює');
+r = await api(AD, 'audCount', { units: ['a:a1'], roles: ['CAPTAIN', 'LEADER'] });
+ok(r.ok && r.data.count >= 2, 'задачі: лічильник аудиторії');
+sent.length = 0;
+r = await api(AD, 'taskSave', { title: 'Здати списки на табір', desc: 'До п’ятниці', due: addD(tday, 5), units: ['a:a1'], roles: ['CAPTAIN', 'LEADER'] });
+ok(r.ok && r.data.count >= 2 && sent.some((m) => m.chat_id === '4' && /Нова задача/.test(m.text)), 'задачі: створено і надіслано');
+const taskId = r.data.id;
+let tl = await api(CAP, 'tasks');
+let tk = tl.data.list.find((t) => t.id === taskId);
+ok(tk && tk.mine && tk.mine.status === 'todo' && !tk.oversee && !tk.people, 'задачі: капітан бачить свою, без чужих статусів');
+me = await api(CAP, 'me');
+ok(me.data.todo.tasks === 1, 'задачі: лічильник на головній');
+r = await api(CAP, 'taskStatus', { id: taskId, status: 'doing', note: 'Зібрав половину' });
+ok(r.ok && r.data.mine.status === 'doing', 'задачі: статус «в процесі» з нотаткою');
+tk = (await api(AD, 'tasks')).data.list.find((t) => t.id === taskId);
+ok(tk.oversee && tk.people.find((p) => p.tgId === '4').note === 'Зібрав половину' && tk.doing === 1, 'задачі: автор бачить стан і нотатки');
+tk = (await api(RD, 'tasks')).data.list.find((t) => t.id === taskId);
+ok(tk && tk.oversee, 'задачі: регіональний (вища роль) теж бачить хід');
+r = await api(SUG, 'taskStatus', { id: taskId, status: 'done' });
+ok(!r.ok, 'задачі: не виконавець не змінює статус');
+sent.length = 0;
+r = await api(AD, 'taskNudge', { id: taskId });
+ok(r.ok && r.data.sent >= 2, 'задачі: нагадати тим, хто не виконав');
+for (const u of [CAP, LEAD]) await api(u, 'taskStatus', { id: taskId, status: 'done' });
+tk = (await api(AD, 'tasks')).data.list.find((t) => t.id === taskId);
+const allDone = tk.done === tk.total;
+ok(!allDone || sent.some((m) => m.chat_id === '3' && /виконали задачу/.test(m.text)), 'задачі: автору — коли всі виконали');
+r = await api(CAP, 'taskClose', { id: taskId });
+ok(!r.ok, 'задачі: завершує лише автор');
+r = await api(AD, 'taskClose', { id: taskId });
+ok(r.ok && r.data.closed, 'задачі: автор завершив');
+r = await api(AD, 'taskDelete', { id: taskId });
+ok(r.ok && !(await api(AD, 'tasks')).data.list.some((t) => t.id === taskId), 'задачі: видалено');
+
+// ── опитування ──
+r = await api(AD, 'pollSave', { question: 'Коли збори?', options: ['Субота', 'Неділя', ''], units: ['a:a1'] });
+ok(r.ok && r.data.count >= 2, 'опитування: створено');
+const pollId = r.data.id;
+let pq = (await api(LEAD, 'polls')).data.list.find((p) => p.id === pollId);
+ok(pq && pq.canVote && pq.options.length === 2 && !pq.counts && !pq.who, 'опитування: учасник бачить варіанти, без результатів');
+r = await api(LEAD, 'pollVote', { id: pollId, opts: [1] });
+ok(r.ok && r.data.mine[0] === 1 && !r.data.who, 'опитування: голос прийнято');
+r = await api(CAP, 'pollVote', { id: pollId, opts: [0, 1] });
+ok(r.ok && r.data.mine.length === 1 && r.data.mine[0] === 0, 'опитування: один варіант, якщо не множинний');
+pq = (await api(AD, 'polls')).data.list.find((p) => p.id === pollId);
+ok(pq.counts[0] === 1 && pq.counts[1] === 1 && pq.who[1].includes('Лід Ер') && pq.voted === 2 && Array.isArray(pq.notVoted), 'опитування: автор бачить кількість і хто за що');
+pq = (await api(RD, 'polls')).data.list.find((p) => p.id === pollId);
+ok(pq && pq.who, 'опитування: вища роль бачить, хто за що');
+r = await api(AD, 'pollClose', { id: pollId });
+r = await api(LEAD, 'pollVote', { id: pollId, opts: [0] });
+ok(!r.ok, 'опитування: після завершення голосувати не можна');
+r = await api(AD, 'pollSave', { question: 'Відкрите?', options: ['Так', 'Ні'], units: ['a:a1'], open: true, multi: true });
+r = await api(LEAD, 'pollVote', { id: r.data.id, opts: [0, 1] });
+ok(r.ok && r.data.mine.length === 2 && r.data.counts && !r.data.who, 'опитування: відкриті результати — кількість без імен; кілька варіантів');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

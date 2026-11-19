@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS roles_tg ON roles (tg_id);
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '', title TEXT, date TEXT NOT NULL, end_date TEXT, time TEXT, place TEXT,
-  descr TEXT, author_id TEXT, author TEXT, created TEXT, roles TEXT, aud TEXT
+  descr TEXT, author_id TEXT, author TEXT, created TEXT, roles TEXT, aud TEXT, rep TEXT, rep_until TEXT, rep_skip TEXT
 );
 CREATE INDEX IF NOT EXISTS events_date ON events (date);
 CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT NOT NULL, tg_id TEXT NOT NULL, name TEXT, team TEXT, created TEXT, PRIMARY KEY (event_id, tg_id));
@@ -53,3 +53,10 @@ CREATE TABLE IF NOT EXISTS broadcasts (id TEXT PRIMARY KEY, text TEXT, audience 
 
 -- вхід в окремий застосунок через бота
 CREATE TABLE IF NOT EXISTS auth_login (nonce TEXT PRIMARY KEY, created INTEGER NOT NULL, user_json TEXT, used INTEGER NOT NULL DEFAULT 0);
+
+-- задачі й опитування
+CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT, descr TEXT, due TEXT, units TEXT, roles TEXT, audience TEXT, author_id TEXT, author TEXT, author_rank INTEGER, created TEXT, closed TEXT);
+CREATE TABLE IF NOT EXISTS task_people (task_id TEXT NOT NULL, tg_id TEXT NOT NULL, name TEXT, status TEXT, note TEXT, updated TEXT, PRIMARY KEY (task_id, tg_id));
+CREATE INDEX IF NOT EXISTS task_people_tg ON task_people (tg_id);
+CREATE TABLE IF NOT EXISTS polls (id TEXT PRIMARY KEY, question TEXT, options TEXT, multi INTEGER, open_results INTEGER, units TEXT, roles TEXT, audience TEXT, people TEXT, author_id TEXT, author TEXT, author_rank INTEGER, created TEXT, closed TEXT);
+CREATE TABLE IF NOT EXISTS poll_votes (poll_id TEXT NOT NULL, tg_id TEXT NOT NULL, opt INTEGER NOT NULL, name TEXT, created TEXT, PRIMARY KEY (poll_id, tg_id, opt));

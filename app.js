@@ -54,6 +54,8 @@
     bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
     tree: 'M12 3v6M12 9H5v5M12 9h7v5M3 14h4v4H3zM17 14h4v4h-4zM10 14h4v4h-4zM12 9v5',
     send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
+    task: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9',
+    poll: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
     phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   };
@@ -95,6 +97,8 @@
     roleReq: null, profile: null,
     myyl: { data: null, at: null, open: null },
     rep: { units: {}, items: {}, preset: 'month', from: '', to: '', split: false, data: null, busy: false },
+    tasks: { data: null, tab: 'mine', open: null, form: null, note: '' },
+    polls: { data: null, tab: 'open', form: null, sel: {}, showNot: {} },
     bc: { info: null, text: '', roles: [], pending: false, count: null, button: true, sending: false },
   };
   let toastTimer = null;
@@ -107,7 +111,7 @@
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -189,12 +193,14 @@
     if (S.screen === 'stats' && S.stats.find) { S.stats.find = false; return render(); }
     if (S.screen === 'myyl' && myylParent()) { S.myyl.at = myylParent(); S.myyl.open = null; render(); window.scrollTo(0, 0); return; }
     if (S.screen === 'onboarding' && S.reg.step > 1) { S.reg.step--; return render(); }
+    if (S.screen === 'tasks' && (S.tasks.form || S.tasks.open)) { if (S.tasks.form) S.tasks.form = null; else S.tasks.open = null; return render(); }
+    if (S.screen === 'polls' && S.polls.form) { S.polls.form = null; return render(); }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form);
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
   let histOn = false, histIgnore = false;
@@ -221,6 +227,8 @@
     if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
+    if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
+    if (screen === 'polls') { S.polls.form = null; loadPolls(); }
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
     if (screen === 'broadcast') loadBc();
     if (screen === 'report') initReport();
@@ -346,6 +354,26 @@
     try { const r = await api('broadcastInfo', bcParams()); if (JSON.stringify(bcParams()) === key) { S.bc.count = r.count; S.bc.info = r; } } catch (e) { toast(e.message); }
     if (S.screen === 'broadcast') { const tt = document.getElementById('bcText'); if (tt) S.bc.text = tt.value; render(); }
   }
+  async function loadAudCount(scr) {
+    const f = audState(scr); if (!f) return;
+    const prm = { units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [] }, key = JSON.stringify(prm);
+    f.count = null; render();
+    try { const r = await api('audCount', prm); if (audState(scr) === f && JSON.stringify({ units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [] }) === key) f.count = r.count; } catch (e) { toast(e.message); }
+    if (S.screen === (scr === 'task' ? 'tasks' : 'polls')) render();
+  }
+  function refreshTodo() {
+    const t = S.me.todo = S.me.todo || {};
+    if (S.tasks.data) t.tasks = S.tasks.data.list.filter((x) => x.mine && !x.closed && x.mine.status !== 'done').length;
+    if (S.polls.data) t.polls = S.polls.data.list.filter((x) => x.canVote && !x.mine.length).length;
+  }
+  async function loadTasks() {
+    try { S.tasks.data = await api('tasks'); refreshTodo(); } catch (e) { S.tasks.data = S.tasks.data || { list: [], canCreate: false }; toast(e.message); }
+    if (S.screen === 'tasks' && !S.tasks.form) render();
+  }
+  async function loadPolls() {
+    try { S.polls.data = await api('polls'); refreshTodo(); } catch (e) { S.polls.data = S.polls.data || { list: [], canCreate: false }; toast(e.message); }
+    if (S.screen === 'polls' && !S.polls.form) render();
+  }
   async function loadReqs() {
     S.reqs = null; render();
     try { S.reqs = await api('requests'); S.reqSel = {}; S.reqs.forEach((p) => p.roles.forEach((r) => { S.reqSel[r.id] = true; })); } catch (e) { S.reqs = []; toast(e.message); }
@@ -402,6 +430,11 @@
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
     }
+    const todo = m.todo || {};
+    if (todo.tasks) h += `<button type="button" class="banner" data-a="tabGo" data-s="tasks"><span class="badge" style="width:32px;height:32px;border-radius:16px">${todo.tasks}</span>
+        <span class="grow"><b>Задачі до виконання</b><br><span class="small muted">Тобі доручили — відміть, як просувається</span></span>${icon('chev')}</button>`;
+    if (todo.polls) h += `<button type="button" class="banner" data-a="tabGo" data-s="polls"><span class="badge" style="width:32px;height:32px;border-radius:16px;background:var(--blue)">${todo.polls}</span>
+        <span class="grow"><b>${todo.polls === 1 ? 'Нове опитування' : 'Нові опитування'}</b><br><span class="small muted">Твій голос ще не враховано</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     const quick = TYPES.filter((t) => canType(t.k));
     const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
@@ -514,7 +547,7 @@
     const p = evDateParts(e);
     const going = e.date < ymd(new Date());
     return `<button type="button" class="ev" data-a="openEv" data-id="${esc(e.id)}"><span class="ev-date tag lvl-${e.level}"><b>${p.day}</b><span>${p.wd}</span></span>
-      <span class="grow"><span class="b" style="display:block">${esc(e.title)}</span><span class="small muted">${going ? '<b style="color:var(--teal)">триває</b> · ' : ''}${e.end ? 'до ' + esc(fmtShortDay(e.end)) + ' · ' : ''}${esc(e.levelLabel)}${e.place ? ' · ' + esc(e.place) : ''}${e.time ? ' · ' + esc(e.time) : ''}</span></span>
+      <span class="grow"><span class="b" style="display:block">${esc(e.title)}</span><span class="small muted">${e.repLabel ? '🔁 ' : ''}${going ? '<b style="color:var(--teal)">триває</b> · ' : ''}${e.end ? 'до ' + esc(fmtShortDay(e.end)) + ' · ' : ''}${esc(e.levelLabel)}${e.place ? ' · ' + esc(e.place) : ''}${e.time ? ' · ' + esc(e.time) : ''}</span></span>
       ${e.isGoing ? '<span class="xs b" style="color:var(--teal)">Йду</span>' : ''}</button>`;
   }
   VIEWS.calendar = function () {
@@ -538,6 +571,7 @@
     let h = header(e.title, '', '');
     h += `<div><span class="tag lvl-${e.level}">${esc(e.levelLabel)}</span></div>`;
     h += `<div class="card rows"><div class="kv"><span>Коли</span><span>${esc(fmtRange(e))}${e.time ? ', ' + esc(e.time) : ''}</span></div>
+      ${e.repLabel ? `<div class="kv"><span>Повторюється</span><span>🔁 ${esc(e.repLabel)}${e.until ? ' до ' + esc(fmtShortDay(e.until)) : ''}</span></div>` : ''}
       ${e.place ? `<div class="kv"><span>Де</span><span>${esc(e.place)}</span></div>` : ''}<div class="kv"><span>Організатор</span><span>${esc(e.author || '—')}</span></div>
       ${e.rolesLabel || e.audLabel ? `<div class="kv"><span>Для кого</span><span>${esc([e.rolesLabel, e.audLabel].filter(Boolean).join(' · '))}</span></div>` : ''}</div>`;
     if (e.desc) h += `<div style="white-space:pre-line">${esc(e.desc)}</div>`;
@@ -548,7 +582,9 @@
     h += '<div class="small muted center">Бот нагадає в Telegram тим, хто записався</div>';
     if (e.manage) {
       h += `<div class="card col"><h2>Учасники (${e.people.length})</h2>${e.people.length ? e.people.map((x) => `<div class="row between small"><span>${esc(x.name)}</span><span class="muted">${esc(x.team)}</span></div>`).join('') : '<div class="small muted">Ще ніхто не записався</div>'}</div>`;
-      h += `<div class="grid2"><button type="button" class="btn sec2" data-a="evEdit" data-id="${esc(e.id)}">Редагувати</button><button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}">Видалити</button></div>`;
+      h += e.seriesId
+        ? `<button type="button" class="btn sec2" data-a="evEdit" data-id="${esc(e.id)}">Редагувати всю серію</button><div class="grid2"><button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}" data-only="1">Скасувати цю дату</button><button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}" data-series="1">Видалити серію</button></div>`
+        : `<div class="grid2"><button type="button" class="btn sec2" data-a="evEdit" data-id="${esc(e.id)}">Редагувати</button><button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}">Видалити</button></div>`;
     }
     return h;
   }
@@ -567,7 +603,7 @@
       ${pk ? `<div class="xs muted" style="font-weight:400">Де:</div>${pk}<div class="xs muted" style="font-weight:400;margin-top:4px">Ролі:</div>` : ''}
       ${rolesField('event', f, (sel) => (sel.length ? 'Бачать лише: ' + esc(sel.map((k) => roleDef(k).label).join(', ')) + (pk ? ' — у вибраних ' + esc(pickLabel('event').toLowerCase().indexOf('вибрано') === 0 ? 'місцях' : pickLabel('event')) : '') + '. Ти й керівники рівня бачать завжди.' : 'Бачать усі ролі у вибраних місцях і вище.'))}</div>`;
   }
-  const audState = (scr) => (scr === 'event' ? S.evForm : S.bc);
+  const audState = (scr) => (scr === 'event' ? S.evForm : scr === 'task' ? S.tasks.form : scr === 'poll' ? S.polls.form : S.bc);
   function evFormView() {
     const f = S.evForm, units = evUnits(f);
     let h = header(f.id ? 'Редагувати подію' : 'Нова подія');
@@ -580,6 +616,9 @@
       <label class="f"><span>Дата кінця</span><input class="in" type="date" data-bind="evForm.end" value="${esc(f.end || '')}" min="${esc(f.date)}"></label></div>
       <div class="xs muted" style="margin-top:-6px">Дата кінця — для подій на кілька днів (табір, конференція). Для одноденної залиш порожньою.</div>
       <label class="f"><span>Час початку</span><input class="in" type="time" data-bind="evForm.time" value="${esc(f.time)}"></label>
+      <div class="grid2"><label class="f"><span>Повторювати</span><select class="in" data-bind="evForm.rep" data-ch="evRep">${[['', 'Не повторювати'], ['week', 'Щотижня'], ['2week', 'Раз на 2 тижні'], ['month', 'Щомісяця']].map((o) => `<option value="${o[0]}"${(f.rep || '') === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
+      ${f.rep ? `<label class="f"><span>Повторювати до</span><input class="in" type="date" data-bind="evForm.until" value="${esc(f.until || '')}" min="${esc(f.date)}"></label>` : '<span></span>'}</div>
+      ${f.rep ? '<div class="xs muted" style="margin-top:-6px">«Повторювати до» можна залишити порожнім — тоді без кінця. Кожну дату можна скасувати окремо.</div>' : ''}
       <label class="f"><span>Місце</span><input class="in" type="text" data-bind="evForm.place" value="${esc(f.place)}" placeholder="Адреса або назва"></label>
       <label class="f"><span>Опис</span><textarea class="in" rows="3" data-bind="evForm.desc">${esc(f.desc)}</textarea></label>
       ${audienceField(f)}
@@ -813,6 +852,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (scr === 'finance') loadFin();
     if (scr === 'report') { S.rep.data = null; render(); }
     if (scr === 'broadcast') loadBcCount();
+    if (scr === 'task' || scr === 'poll') loadAudCount(scr);
     if (scr === 'event') render();
   }
 
@@ -910,6 +950,123 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
   const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 
+  // ───────────── ЗАДАЧІ ─────────────
+  const TASK_ST = [['todo', 'Не почато'], ['doing', 'В процесі'], ['done', 'Виконано']];
+  const taskStLabel = (k) => (TASK_ST.filter((x) => x[0] === k)[0] || TASK_ST[0])[1];
+  const taskStCls = (k) => (k === 'done' ? 'ok' : k === 'doing' ? '' : 'warn');
+  const plusBtn = (a, label) => `<button type="button" class="icon-btn accent" data-a="${a}" aria-label="${label}">${icon('plus', 22)}</button>`;
+  function audBlock(scr, f) {
+    return `<div class="f"><span>Кому</span>${picker(scr)}${rolesField(scr, f)}</div>
+      <div class="small">${f.count == null ? '<span class="muted">Рахую…</span>' : `Отримають: <b>${plural(f.count, 'людина', 'людини', 'людей')}</b>`}</div>`;
+  }
+  function dueTag(t) {
+    if (!t.due) return '';
+    const late = !t.closed && t.due < ymd(new Date()) && (t.mine ? t.mine.status !== 'done' : t.done < t.total);
+    return `<span class="tag${late ? ' warn' : ''}">до ${esc(fmtShortDay(t.due))}${late ? ' · прострочено' : ''}</span>`;
+  }
+  VIEWS.tasks = function () {
+    const T = S.tasks;
+    if (T.form) return taskFormView();
+    if (T.open) return taskDetailView();
+    let h = header('Задачі до виконання', '', T.data && T.data.canCreate ? plusBtn('taskNew', 'Нова задача') : '');
+    if (!T.data) return h + loading();
+    const L = T.data.list;
+    const groups = { mine: L.filter((t) => t.mine && !t.closed), from: L.filter((t) => t.oversee && !t.closed), closed: L.filter((t) => t.closed) };
+    const tabs = [['mine', 'Мені · ' + groups.mine.length]].concat(groups.from.length || T.data.canCreate ? [['from', 'Доручені · ' + groups.from.length]] : []).concat(groups.closed.length ? [['closed', 'Завершені']] : []);
+    const tab = tabs.some((x) => x[0] === T.tab) ? T.tab : 'mine';
+    if (tabs.length > 1) h += `<div class="seg" role="tablist">${tabs.map((x) => `<button type="button" role="tab" class="${tab === x[0] ? 'on' : ''}" data-a="taskTab" data-v="${x[0]}">${x[1]}</button>`).join('')}</div>`;
+    const list = groups[tab];
+    if (!list.length) return h + `<div class="empty">${tab === 'mine' ? 'Тобі зараз нічого не доручено' : tab === 'from' ? 'Тут будуть задачі, які ти доручиш іншим. Натисни «+».' : 'Завершених немає'}</div>`;
+    h += `<div class="card list">${list.map((t) => {
+      const pct = t.total ? Math.round(t.done / t.total * 100) : 0;
+      return `<button type="button" class="li" style="align-items:flex-start;padding-top:12px;padding-bottom:12px" data-a="taskOpen" data-id="${esc(t.id)}"><span class="ic ic-teal">${icon('task', 18)}</span>
+        <span class="grow"><span class="b" style="display:block">${esc(t.title)}</span>
+        <span class="row wrap" style="gap:6px;margin-top:4px">${tab === 'mine' && t.mine ? `<span class="tag ${taskStCls(t.mine.status)}">${taskStLabel(t.mine.status)}</span>` : ''}${dueTag(t)}<span class="xs muted">${tab === 'mine' ? 'від ' + esc(t.author) : esc(t.audience)}</span></span>
+        ${t.oversee && tab !== 'mine' ? `<span class="xs muted" style="display:block;margin-top:6px">Виконали ${t.done} з ${t.total}${t.doing ? ' · в процесі ' + t.doing : ''}</span><span class="track" style="height:4px;margin-top:4px"><i style="width:${pct}%;background:var(--turq)"></i></span>` : ''}</span>
+        <span class="muted">${icon('chev', 18)}</span></button>`;
+    }).join('')}</div>`;
+    return h;
+  };
+  function taskDetailView() {
+    const T = S.tasks, t = ((T.data && T.data.list) || []).filter((x) => x.id === T.open)[0];
+    if (!t) return header('Задача') + (T.data ? '<div class="empty">Задачу не знайдено</div>' : loading());
+    let h = header(t.title, t.closed ? 'Завершена' : '');
+    h += `<div class="card rows"><div class="kv"><span>Доручив(ла)</span><span>${esc(t.author)}</span></div><div class="kv"><span>Кому</span><span>${esc(t.audience)}</span></div>
+      ${t.due ? `<div class="kv"><span>Термін</span><span>${dueTag(t)}</span></div>` : ''}</div>`;
+    if (t.desc) h += `<div style="white-space:pre-line">${esc(t.desc)}</div>`;
+    if (t.mine) {
+      h += `<div class="card col"><h2>Мій стан</h2><div class="seg">${TASK_ST.map((x) => `<button type="button" class="${t.mine.status === x[0] ? 'on' : ''}" data-a="taskSt" data-v="${x[0]}"${t.closed ? ' disabled' : ''}>${x[1]}</button>`).join('')}</div>
+        <label class="f"><span>Нотатка про виконання</span><textarea class="in" rows="3" data-bind="tasks.note" placeholder="Що вже зроблено, що заважає…"${t.closed ? ' disabled' : ''}>${esc(T.note)}</textarea></label>
+        ${t.closed ? '' : '<button type="button" class="btn sec2" data-a="taskSt">Зберегти нотатку</button>'}</div>`;
+    }
+    if (t.oversee) {
+      const pct = t.total ? Math.round(t.done / t.total * 100) : 0;
+      h += `<div class="card col" style="gap:6px"><div class="row between"><h2>Хід виконання</h2><span class="b">${t.done} / ${t.total}</span></div>
+        <span class="track" style="height:6px"><i style="width:${pct}%;background:var(--turq)"></i></span>
+        ${(t.people || []).map((p) => `<div style="border-top:1px solid var(--line);padding:8px 0"><div class="row between" style="gap:8px"><span class="b small">${esc(p.name)}</span><span class="tag ${taskStCls(p.status)}">${taskStLabel(p.status)}</span></div>
+          ${p.note ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc(p.note)}</div>` : ''}${p.updated ? `<div class="xs muted">${esc(fmtWhen(p.updated))}</div>` : ''}</div>`).join('')}</div>`;
+      if (!t.closed && t.done < t.total) h += '<button type="button" class="btn sec2" data-a="taskNudge">⏰ Нагадати тим, хто ще не виконав</button>';
+    }
+    if (t.canEdit) h += `<div class="grid2"><button type="button" class="btn sec2" data-a="taskClose">${t.closed ? 'Відкрити знову' : 'Завершити задачу'}</button><button type="button" class="btn ghost" data-a="taskDelete">Видалити</button></div>`;
+    return h;
+  }
+  function taskFormView() {
+    const f = S.tasks.form;
+    return header('Нова задача', 'Отримають повідомлення в боті') + `<div class="card col">
+      <label class="f"><span>Що треба зробити</span><input class="in" type="text" maxlength="200" data-bind="tasks.form.title" value="${esc(f.title)}" placeholder="Наприклад: здати списки на табір"></label>
+      <label class="f"><span>Деталі</span><textarea class="in" rows="4" data-bind="tasks.form.desc" placeholder="Що саме, як, кому передати…">${esc(f.desc)}</textarea></label>
+      <label class="f"><span>Термін (необовʼязково)</span><input class="in" type="date" data-bind="tasks.form.due" value="${esc(f.due)}" min="${ymd(new Date())}"></label>
+      ${audBlock('task', f)}
+      <button type="button" class="btn" data-a="taskSave"${!f.count ? ' disabled' : ''}>${icon('send', 18)} Доручити</button>
+      <div class="xs muted">Кожен відмічає свій стан і пише нотатку. Ти бачиш хід виконання; вищі ролі над вибраними місцями — теж.</div></div>`;
+  }
+
+  // ───────────── ОПИТУВАННЯ ─────────────
+  VIEWS.polls = function () {
+    const P = S.polls;
+    if (P.form) return pollFormView();
+    let h = header('Опитування', '', P.data && P.data.canCreate ? plusBtn('pollNew', 'Нове опитування') : '');
+    if (!P.data) return h + loading();
+    const L = P.data.list, open = L.filter((x) => !x.closed), closed = L.filter((x) => x.closed);
+    if (closed.length) h += `<div class="seg" role="tablist"><button type="button" role="tab" class="${P.tab !== 'closed' ? 'on' : ''}" data-a="pollTab" data-v="open">Активні · ${open.length}</button><button type="button" role="tab" class="${P.tab === 'closed' ? 'on' : ''}" data-a="pollTab" data-v="closed">Завершені · ${closed.length}</button></div>`;
+    const list = P.tab === 'closed' ? closed : open;
+    if (!list.length) return h + `<div class="empty">${P.data.canCreate ? 'Опитувань поки немає. Натисни «+», щоб запитати своїх людей.' : 'Опитувань поки немає'}</div>`;
+    return h + list.map(pollCard).join('');
+  };
+  function pollCard(p) {
+    const P = S.polls, sel = P.sel[p.id] || p.mine;
+    let h = `<div class="card col" style="gap:8px"><div><div class="b" style="font-size:17px">${esc(p.question)}</div>
+      <div class="xs muted">${esc(p.author)} · ${esc(p.audience)}${p.multi ? ' · можна кілька варіантів' : ''}${p.closed ? ' · завершено' : ''}</div></div>`;
+    if (p.canVote) {
+      h += `<div class="col" style="gap:4px">${p.options.map((o, i) => `<label class="check" style="border:0;border-radius:12px;background:var(--soft);min-height:46px;padding:0 12px"><input type="${p.multi ? 'checkbox' : 'radio'}" name="pv${esc(p.id)}" data-ch="pollPick" data-id="${esc(p.id)}" data-i="${i}"${sel.indexOf(i) >= 0 ? ' checked' : ''}><span class="grow">${esc(o)}</span>${p.mine.indexOf(i) >= 0 ? '<span class="xs b" style="color:var(--teal)">твій голос</span>' : ''}</label>`).join('')}</div>
+        <button type="button" class="btn${p.mine.length ? ' sec2' : ''}" data-a="pollVote" data-id="${esc(p.id)}">${p.mine.length ? 'Змінити голос' : 'Проголосувати'}</button>`;
+    } else if (p.mine.length) h += `<div class="small">Твій голос: <b>${esc(p.mine.map((i) => p.options[i]).join(', '))}</b></div>`;
+    if (p.counts) {
+      const max = Math.max.apply(null, p.counts.concat([1]));
+      h += `<div class="col" style="gap:6px">${p.options.map((o, i) => `<div><div class="row between small" style="gap:8px"><span>${esc(o)}</span><span class="b">${p.counts[i]}</span></div>
+        <span class="track" style="height:6px;margin-top:3px"><i style="width:${Math.round(p.counts[i] / max * 100)}%;background:var(--purple)"></i></span>
+        ${p.who && p.who[i].length ? `<div class="xs muted" style="margin-top:3px">${esc(p.who[i].join(', '))}</div>` : ''}</div>`).join('')}</div>`;
+    }
+    h += `<div class="xs muted">Проголосували ${p.voted} з ${p.total}</div>`;
+    if (p.notVoted && p.notVoted.length) {
+      h += `<button type="button" class="link-btn xs" style="align-self:flex-start" data-a="pollNot" data-id="${esc(p.id)}">${P.showNot[p.id] ? 'Сховати' : 'Ще не проголосували (' + p.notVoted.length + ')'}</button>`;
+      if (P.showNot[p.id]) h += `<div class="xs muted">${esc(p.notVoted.join(', '))}</div>`;
+    }
+    if (p.canEdit) h += `<div class="grid2"><button type="button" class="btn sec2 sm" data-a="pollClose" data-id="${esc(p.id)}">${p.closed ? 'Відкрити знову' : 'Завершити'}</button><button type="button" class="btn ghost sm" data-a="pollDelete" data-id="${esc(p.id)}">Видалити</button></div>`;
+    return h + '</div>';
+  }
+  function pollFormView() {
+    const f = S.polls.form;
+    return header('Нове опитування', 'Прийде повідомленням у боті') + `<div class="card col">
+      <label class="f"><span>Питання</span><input class="in" type="text" maxlength="300" data-bind="polls.form.question" value="${esc(f.question)}" placeholder="Наприклад: Коли зручно зібратись?"></label>
+      <div class="f"><span>Варіанти</span>${f.options.map((o, i) => `<div class="row" style="gap:6px"><input class="in grow" type="text" maxlength="120" data-bind="polls.form.options.${i}" value="${esc(o)}" placeholder="Варіант ${i + 1}">${f.options.length > 2 ? `<button type="button" class="btn ghost sm" style="min-height:42px;padding:0 12px" data-a="pollOptDel" data-i="${i}" aria-label="Прибрати варіант">✕</button>` : ''}</div>`).join('')}
+        ${f.options.length < 12 ? '<button type="button" class="link-btn" style="align-self:flex-start" data-a="pollOptAdd">+ Додати варіант</button>' : ''}</div>
+      <label class="toggle-row" style="padding:0"><span class="small">Можна обрати кілька варіантів</span><input type="checkbox" data-bind="polls.form.multi"${f.multi ? ' checked' : ''}></label>
+      <label class="toggle-row" style="padding:0"><span><span class="small" style="display:block">Показувати кількість голосів усім</span><span class="xs muted">імена бачиш лише ти й вищі ролі</span></span><input type="checkbox" data-bind="polls.form.open"${f.open ? ' checked' : ''}></label>
+      ${audBlock('poll', f)}
+      <button type="button" class="btn" data-a="pollSave"${!f.count ? ' disabled' : ''}>${icon('send', 18)} Надіслати опитування</button></div>`;
+  }
+
   // ───────────── ПІДГОТУВАТИ ЗВІТ ─────────────
   const REP_ITEMS = { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота', known: 'Знані по імені', finance: 'Фінанси' };
   const REP_PRESETS = [['week', 'Цей тиждень'], ['lastweek', 'Минулий тиждень'], ['month', 'Цей місяць'], ['lastmonth', 'Минулий місяць'], ['q', '3 місяці'], ['year', 'З початку року'], ['custom', 'Свій період']];
@@ -1005,7 +1162,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const m = me();
     let h = header('Сповіщення', 'Що бот надсилає тобі в Telegram');
     const N = (m.profile && m.profile.notif) || {};
-    const NL = [['bc', 'Розсилки від інших', 'повідомлення «Написати» від керівників'], ['remind', 'Нагадування про звіти', 'якщо щось не внесено за тиждень'], ['events', 'Нагадування про події', 'на які ти записався']].concat(caps().approve ? [['requests', 'Нові заявки на ролі', 'коли хтось чекає твого підтвердження']] : []);
+    const NL = [['bc', 'Розсилки від інших', 'повідомлення «Написати» від керівників'], ['remind', 'Нагадування про звіти', 'якщо щось не внесено за тиждень'], ['events', 'Нагадування про події', 'на які ти записався'], ['tasks', 'Задачі й опитування', 'нові задачі, нагадування, опитування']].concat(caps().approve ? [['requests', 'Нові заявки на ролі', 'коли хтось чекає твого підтвердження']] : []);
     h += `<div class="card list">${NL.map((x) => `<label class="check" style="min-height:58px"><span class="grow"><span class="b" style="display:block">${x[1]}</span><span class="xs muted">${x[2]}</span></span><input type="checkbox" data-ch="notifToggle" data-k="${x[0]}"${N[x[0]] !== false ? ' checked' : ''}></label>`).join('')}</div>`;
     h += '<div class="xs muted">Вимкнене сповіщення не зникає з застосунку: заявки, події й звіти так само видно тут.</div>';
     return h;
@@ -1034,7 +1191,10 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   VIEWS.more = function () {
     const c = caps();
     const tiles = sectionTiles().filter((t) => t.k !== 'broadcast');
-    const team = [{ k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
+    const td = me().todo || {};
+    const team = [{ k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' },
+      { k: 'tasks', label: 'Задачі до виконання', sub: c.broadcast ? 'доручити й стежити за виконанням' : 'що тобі доручили', icon: 'task', ic: 'ic-teal', badge: td.tasks },
+      { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
@@ -1378,7 +1538,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (!u) return;
     if (String(f.title).trim().length < 2) return toast('Вкажи назву події');
     if (f.end && f.end < f.date) return toast('Дата кінця раніше за дату початку');
-    const res = await run(() => api('eventSave', { id: f.id || '', roles: f.roles || [], aud: (S.pick.event && S.pick.event.keys) || [], level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), f.id ? 'Зміни збережено' : 'Подію додано: ' + u.label);
+    if (f.rep && f.until && f.until < f.date) return toast('«Повторювати до» раніше за дату початку');
+    const res = await run(() => api('eventSave', { id: f.id || '', roles: f.roles || [], aud: (S.pick.event && S.pick.event.keys) || [], level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc, rep: f.rep || '', until: f.rep ? f.until || '' : '' }), f.id ? 'Зміни збережено' : 'Подію додано: ' + u.label);
     if (res) { const wasId = f.id; S.evForm = null; S.events = null; if (!wasId) S.ev = null; render(); loadEvents(); }
   };
   A.rsvp = async (d) => {
@@ -1395,24 +1556,88 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     else if (/^\d{1,2}:\d{2}$/.test(e.time || '')) { const t = e.time.split(':'); const st = day + 'T' + pad(Number(t[0])) + t[1] + '00'; const en = day + 'T' + pad(Math.min(23, Number(t[0]) + 2)) + t[1] + '00'; dates = st + '/' + en; }
     else { const nd = new Date(parseDay(e.date).getTime() + 864e5); dates = day + '/' + ymd(nd).replace(/-/g, ''); }
     const url = 'https://calendar.google.com/calendar/render?action=TEMPLATE&ctz=Europe/Kiev&text=' + encodeURIComponent(e.title) + '&dates=' + dates +
+      (e.rep ? '&recur=' + encodeURIComponent('RRULE:FREQ=' + (e.rep === 'month' ? 'MONTHLY' : 'WEEKLY') + (e.rep === '2week' ? ';INTERVAL=2' : '') + (e.until ? ';UNTIL=' + e.until.replace(/-/g, '') : '')) : '') +
       '&location=' + encodeURIComponent(e.place || '') + '&details=' + encodeURIComponent((e.desc || '') + '\n\nYoung Life Україна · ' + e.levelLabel);
     A.openUrl({ url: url });
   };
-  const audChanged = (scr) => { if (scr === 'broadcast') loadBcCount(); else render(); };
+  const audChanged = (scr) => { if (scr === 'broadcast') loadBcCount(); else if (scr === 'task' || scr === 'poll') loadAudCount(scr); else render(); };
   A.audGroup = (d) => { const f = audState(d.s); f.roles = audRoles(d.g); f.audOpen = false; audChanged(d.s); };
   A.audCustom = (d) => { audState(d.s).audOpen = true; render(); };
   A.audRole = (d) => { const f = audState(d.s); const r = f.roles = (f.roles || []).slice(); const i = r.indexOf(d.k); if (i >= 0) r.splice(i, 1); else r.push(d.k); audChanged(d.s); };
   A.evEdit = (d) => {
     const e = (S.events || []).filter((x) => x.id === d.id)[0]; if (!e) return;
-    const f = { id: e.id, title: e.title, date: e.date, end: e.end || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).slice(), audOpen: false };
+    const f = { id: e.seriesId || e.id, rep: e.rep || '', until: e.until || '', title: e.title, date: e.start0 || e.date, end: (e.seriesId ? e.end0 : e.end) || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).slice(), audOpen: false };
     let units = caps().eventUnits || [];
     let idx = units.findIndex((x) => x.level === e.level && x.unitId === e.unitId);
     if (idx < 0) { f.extraUnit = { level: e.level, unitId: e.unitId, label: e.levelLabel }; idx = units.length; }
     f.unit = idx; S.evForm = f; resetEvPick(e.aud || []); render(); window.scrollTo(0, 0);
   };
+  A.evRep = () => render();
   A.evDelete = (d) => {
-    const doIt = async () => { const res = await run(() => api('eventDelete', { id: d.id }), 'Подію видалено'); if (res) { S.ev = null; S.events = null; render(); loadEvents(); } };
-    if (tg && tg.showConfirm) tg.showConfirm('Видалити подію?', (ok) => { if (ok) doIt(); }); else if (confirm('Видалити подію?')) doIt();
+    const only = d.only === '1';
+    const doIt = async () => { const res = await run(() => api('eventDelete', { id: d.id, only: only }), only ? 'Цю дату скасовано' : 'Подію видалено'); if (res) { S.ev = null; S.events = null; render(); loadEvents(); } };
+    const msg = only ? 'Скасувати подію лише на ' + fmtShortDay(d.id.split('@')[1]) + '? Інші дати залишаться.' : d.series === '1' ? 'Видалити всю серію повторів? Зникнуть усі дати й записи «Йду».' : 'Видалити подію?';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
+
+  // задачі
+  const curTask = () => ((S.tasks.data && S.tasks.data.list) || []).filter((x) => x.id === S.tasks.open)[0];
+  const putTask = (t) => { const L = S.tasks.data.list; const i = L.findIndex((x) => x.id === t.id); if (i >= 0) L[i] = t; refreshTodo(); };
+  A.taskTab = (d) => { S.tasks.tab = d.v; render(); };
+  A.taskOpen = (d) => { S.tasks.open = d.id; const t = curTask(); S.tasks.note = t && t.mine ? t.mine.note : ''; render(); window.scrollTo(0, 0); };
+  A.taskNew = () => { S.tasks.form = { title: '', desc: '', due: '', roles: [], count: null }; ensurePick('task'); render(); loadAudCount('task'); };
+  A.taskSave = async () => {
+    const f = S.tasks.form;
+    if (String(f.title).trim().length < 2) return toast('Напиши, що треба зробити');
+    const res = await run(() => api('taskSave', { title: f.title, desc: f.desc, due: f.due, units: (S.pick.task || { keys: [] }).keys, roles: f.roles || [] }));
+    if (res) { toast('Доручено: ' + plural(res.count, 'людині', 'людям', 'людям'), 'success'); S.tasks.form = null; S.tasks.tab = 'from'; S.tasks.data = null; render(); loadTasks(); }
+  };
+  A.taskSt = async (d) => {
+    const t = curTask(); if (!t) return;
+    const res = await run(() => api('taskStatus', { id: t.id, status: d.v || t.mine.status, note: S.tasks.note }), d.v === 'done' ? 'Виконано — дякуємо!' : 'Збережено');
+    if (res) { putTask(res); render(); }
+  };
+  A.taskNudge = async () => { const t = curTask(); const res = await run(() => api('taskNudge', { id: t.id })); if (res) toast(res.sent ? 'Нагадали: ' + plural(res.sent, 'людині', 'людям', 'людям') : 'Нікому нагадувати', 'success'); };
+  A.taskClose = async () => { const t = curTask(); const res = await run(() => api('taskClose', { id: t.id, reopen: !!t.closed }), t.closed ? 'Задачу відкрито' : 'Задачу завершено'); if (res) { putTask(res); render(); } };
+  A.taskDelete = () => {
+    const t = curTask();
+    const doIt = async () => { const res = await run(() => api('taskDelete', { id: t.id }), 'Задачу видалено'); if (res) { S.tasks.open = null; S.tasks.data = null; render(); loadTasks(); } };
+    const msg = 'Видалити задачу «' + t.title + '»? Зникнуть і всі нотатки виконавців.';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
+  // опитування
+  const putPoll = (p) => { const L = S.polls.data.list; const i = L.findIndex((x) => x.id === p.id); if (i >= 0) L[i] = p; refreshTodo(); };
+  const pollById = (id) => S.polls.data.list.filter((x) => x.id === id)[0];
+  A.pollTab = (d) => { S.polls.tab = d.v; render(); };
+  A.pollNot = (d) => { S.polls.showNot[d.id] = !S.polls.showNot[d.id]; render(); };
+  A.pollPick = (d, el) => {
+    const p = pollById(d.id), i = Number(d.i);
+    let sel = (S.polls.sel[d.id] || p.mine).slice();
+    if (!p.multi) sel = [i]; else if (el.checked) { if (sel.indexOf(i) < 0) sel.push(i); } else sel = sel.filter((x) => x !== i);
+    S.polls.sel[d.id] = sel;
+  };
+  A.pollVote = async (d) => {
+    const sel = S.polls.sel[d.id] || pollById(d.id).mine;
+    if (!sel.length) return toast('Обери варіант');
+    const res = await run(() => api('pollVote', { id: d.id, opts: sel }), 'Голос враховано');
+    if (res) { delete S.polls.sel[d.id]; putPoll(res); render(); }
+  };
+  A.pollNew = () => { S.polls.form = { question: '', options: ['', ''], multi: false, open: false, roles: [], count: null }; ensurePick('poll'); render(); loadAudCount('poll'); };
+  A.pollOptAdd = () => { S.polls.form.options.push(''); render(); const ins = document.querySelectorAll('[data-bind^="polls.form.options."]'); if (ins.length) ins[ins.length - 1].focus(); };
+  A.pollOptDel = (d) => { S.polls.form.options.splice(Number(d.i), 1); render(); };
+  A.pollSave = async () => {
+    const f = S.polls.form, opts = f.options.map((x) => String(x).trim()).filter(Boolean);
+    if (String(f.question).trim().length < 2) return toast('Напиши питання');
+    if (opts.length < 2) return toast('Додай щонайменше два варіанти');
+    const res = await run(() => api('pollSave', { question: f.question, options: opts, multi: !!f.multi, open: !!f.open, units: (S.pick.poll || { keys: [] }).keys, roles: f.roles || [] }));
+    if (res) { toast('Надіслано: ' + plural(res.count, 'людині', 'людям', 'людям'), 'success'); S.polls.form = null; S.polls.tab = 'open'; S.polls.data = null; render(); loadPolls(); }
+  };
+  A.pollClose = async (d) => { const p = pollById(d.id); const res = await run(() => api('pollClose', { id: p.id, reopen: !!p.closed }), p.closed ? 'Опитування відкрито' : 'Опитування завершено'); if (res) { putPoll(res); render(); } };
+  A.pollDelete = (d) => {
+    const p = pollById(d.id);
+    const doIt = async () => { const res = await run(() => api('pollDelete', { id: p.id }), 'Опитування видалено'); if (res) { S.polls.data.list = S.polls.data.list.filter((x) => x.id !== p.id); refreshTodo(); render(); } };
+    const msg = 'Видалити опитування «' + p.question + '» разом з усіма голосами?';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
 
   // статистика
