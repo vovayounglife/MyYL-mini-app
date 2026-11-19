@@ -93,7 +93,7 @@
     roleReq: null, profile: null,
     myyl: { data: null, at: null, open: null },
     rep: { units: {}, items: {}, preset: 'month', from: '', to: '', split: false, data: null, busy: false },
-    bc: { info: null, text: '', audience: 'all', button: true, sending: false },
+    bc: { info: null, text: '', roles: [], pending: false, count: null, button: true, sending: false },
   };
   let toastTimer = null;
 
@@ -330,10 +330,19 @@
     } catch (e) { if (!S.myyl.data) S.myyl.data = { roots: [], units: {} }; toast(e.message); }
     if (S.screen === 'myyl') render();
   }
+  const bcParams = () => ({ units: (S.pick.broadcast || { keys: [] }).keys, roles: S.bc.roles || [], pending: !!S.bc.pending });
   async function loadBc() {
-    S.bc.info = null; render();
-    try { S.bc.info = await api('broadcastInfo'); } catch (e) { S.bc.info = { audiences: [], history: [], queued: 0 }; toast(e.message); }
+    ensurePick('broadcast');
+    S.bc.info = null; S.bc.count = null; render();
+    try { S.bc.info = await api('broadcastInfo', bcParams()); S.bc.count = S.bc.info.count; } catch (e) { S.bc.info = { history: [], queued: 0 }; toast(e.message); }
     if (S.screen === 'broadcast') { const t = document.getElementById('bcText'); if (t) S.bc.text = t.value; render(); }
+  }
+  async function loadBcCount() {
+    const t = document.getElementById('bcText'); if (t) S.bc.text = t.value;
+    S.bc.count = null; render();
+    const key = JSON.stringify(bcParams());
+    try { const r = await api('broadcastInfo', bcParams()); if (JSON.stringify(bcParams()) === key) { S.bc.count = r.count; S.bc.info = r; } } catch (e) { toast(e.message); }
+    if (S.screen === 'broadcast') { const tt = document.getElementById('bcText'); if (tt) S.bc.text = tt.value; render(); }
   }
   async function loadReqs() {
     S.reqs = null; render();
@@ -427,7 +436,7 @@
     const c = caps();
     const out = [];
     if (c.myyl) out.push({ k: 'myyl', label: 'Моя команда в MyYL', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-blue' });
-    if (c.broadcast) out.push({ k: 'broadcast', label: 'Написати всім', sub: 'повідомлення в боті', icon: 'send', ic: 'ic-coral' });
+    if (c.broadcast) out.push({ k: 'broadcast', label: 'Написати', sub: c.isSuper ? 'усім або вибраним у боті' : 'своїм людям у боті', icon: 'send', ic: 'ic-coral' });
     if ((c.knownTeams || []).length || c.knownNoTeam) out.push({ k: 'known', label: 'Знані по імені', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
     if ((c.viewTeams || []).length) out.push({ k: 'team', label: 'Склад команди', sub: 'ролі й анкети', icon: 'club', ic: 'ic-teal' });
     if ((c.financeTeams || []).length) out.push({ k: 'finance', label: 'Фінансовий звіт', sub: 'щомісяця', icon: 'finance', ic: 'ic-yellow' });
@@ -528,7 +537,7 @@
     h += `<div><span class="tag lvl-${e.level}">${esc(e.levelLabel)}</span></div>`;
     h += `<div class="card rows"><div class="kv"><span>Коли</span><span>${esc(fmtRange(e))}${e.time ? ', ' + esc(e.time) : ''}</span></div>
       ${e.place ? `<div class="kv"><span>Де</span><span>${esc(e.place)}</span></div>` : ''}<div class="kv"><span>Організатор</span><span>${esc(e.author || '—')}</span></div>
-      ${e.rolesLabel ? `<div class="kv"><span>Для кого</span><span>${esc(e.rolesLabel)}</span></div>` : ''}</div>`;
+      ${e.rolesLabel || e.audLabel ? `<div class="kv"><span>Для кого</span><span>${esc([e.rolesLabel, e.audLabel].filter(Boolean).join(' · '))}</span></div>` : ''}</div>`;
     if (e.desc) h += `<div style="white-space:pre-line">${esc(e.desc)}</div>`;
     h += `<div class="row small muted">${icon('club', 18)}${e.going} ${e.going % 10 === 1 && e.going % 100 !== 11 ? 'людина йде' : 'людей йдуть'}</div>`;
     h += e.isGoing ? `<button type="button" class="btn ghost" data-a="rsvp" data-id="${esc(e.id)}" data-g="0" style="border-color:var(--teal);color:var(--teal)">Ти йдеш ✓ — скасувати</button>`
@@ -543,20 +552,26 @@
   }
   const AUD_GROUPS = [['all', 'Усім'], ['leaders', 'Лідерам і вище'], ['captains', 'Капітанам і вище'], ['heads', 'Керівництву ерій і регіонів']];
   const audRoles = (g) => S.me.roleDefs.filter((r) => r.key !== 'OFFICE' && (g === 'leaders' ? r.rank <= 9 : g === 'captains' ? r.rank <= 6 : g === 'heads' ? r.rank <= 5 : false)).map((r) => r.key);
-  function audienceField(f) {
+  function rolesField(scr, f, hint) {
     const sel = f.roles || [];
     const grp = !sel.length ? 'all' : (AUD_GROUPS.filter((g) => g[0] !== 'all' && audRoles(g[0]).join() === sel.slice().sort((a, b) => roleDef(a).rank - roleDef(b).rank).join())[0] || [''])[0];
-    return `<div class="f"><span>Для кого (хто бачить подію)</span>
-      <div class="pills" style="flex-wrap:wrap">${AUD_GROUPS.map((g) => `<button type="button" class="pill${grp === g[0] ? ' on' : ''}" data-a="evAudGroup" data-g="${g[0]}">${g[1]}</button>`).join('')}<button type="button" class="pill${sel.length && !grp ? ' on' : ''}" data-a="evAudCustom">Вибрати ролі</button></div>
-      ${f.audOpen || (sel.length && !grp) ? `<div class="pills" style="flex-wrap:wrap;margin-top:8px">${S.me.roleDefs.map((r) => `<button type="button" class="pill${sel.indexOf(r.key) >= 0 ? ' on' : ''}" style="min-height:34px" data-a="evAudRole" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>` : ''}
-      <span class="xs muted" style="font-weight:400">${sel.length ? 'Бачать лише: ' + esc(sel.map((k) => roleDef(k).label).join(', ')) + '. Ти й керівники рівня бачать завжди.' : 'Подію бачать усі ролі на цьому рівні й нижче.'}</span></div>`;
+    return `<div class="pills" style="flex-wrap:wrap">${AUD_GROUPS.map((g) => `<button type="button" class="pill${grp === g[0] ? ' on' : ''}" data-a="audGroup" data-s="${scr}" data-g="${g[0]}">${g[1]}</button>`).join('')}<button type="button" class="pill${sel.length && !grp ? ' on' : ''}" data-a="audCustom" data-s="${scr}">Вибрати ролі</button></div>
+      ${f.audOpen || (sel.length && !grp) ? `<div class="pills" style="flex-wrap:wrap">${S.me.roleDefs.map((r) => `<button type="button" class="pill${sel.indexOf(r.key) >= 0 ? ' on' : ''}" style="min-height:34px" data-a="audRole" data-s="${scr}" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>` : ''}
+      ${hint ? `<span class="xs muted" style="font-weight:400">${hint(sel)}</span>` : ''}`;
   }
+  function audienceField(f) {
+    const pk = picker('event');
+    return `<div class="f"><span>Для кого (хто бачить подію і може піти)</span>
+      ${pk ? `<div class="xs muted" style="font-weight:400">Де:</div>${pk}<div class="xs muted" style="font-weight:400;margin-top:4px">Ролі:</div>` : ''}
+      ${rolesField('event', f, (sel) => (sel.length ? 'Бачать лише: ' + esc(sel.map((k) => roleDef(k).label).join(', ')) + (pk ? ' — у вибраних ' + esc(pickLabel('event').toLowerCase().indexOf('вибрано') === 0 ? 'місцях' : pickLabel('event')) : '') + '. Ти й керівники рівня бачать завжди.' : 'Бачать усі ролі у вибраних місцях і вище.'))}</div>`;
+  }
+  const audState = (scr) => (scr === 'event' ? S.evForm : S.bc);
   function evFormView() {
     const f = S.evForm, units = evUnits(f);
     let h = header(f.id ? 'Редагувати подію' : 'Нова подія');
     h += '<div class="card col">';
     h += units.length > 1
-      ? `<label class="f"><span>Календар</span><select class="in" data-bind="evForm.unit">${units.map((u, i) => `<option value="${i}"${String(i) === String(f.unit) ? ' selected' : ''}>${esc(u.label)}</option>`).join('')}</select></label>`
+      ? `<label class="f"><span>Календар</span><select class="in" data-bind="evForm.unit" data-ch="evOwner">${units.map((u, i) => `<option value="${i}"${String(i) === String(f.unit) ? ' selected' : ''}>${esc(u.label)}</option>`).join('')}</select></label>`
       : `<div class="small muted">Додається в календар: <b>${esc(units[0] ? units[0].label : '')}</b></div>`;
     h += `<label class="f"><span>Назва</span><input class="in" type="text" data-bind="evForm.title" value="${esc(f.title)}" placeholder="Наприклад: Різдвяний клуб"></label>
       <div class="grid2"><label class="f"><span>Дата початку</span><input class="in" type="date" data-bind="evForm.date" data-ch="evDate" value="${esc(f.date)}" min="${ymd(new Date())}"></label>
@@ -696,7 +711,14 @@
   const PICK_TEAMS = { known: 'knownTeams', team: 'viewTeams', finance: 'financeTeams' };
   function unitsFor(scr) {
     const sc = S.me.scopes || [];
-    if (scr === 'report') return caps().broadcast ? sc : sc.filter((x) => x.depth <= 1);
+    if (scr === 'report') return caps().isSuper ? sc : sc.filter((x) => x.depth <= 1);
+    if (scr === 'event') {
+      const f = S.evForm, u = f && evUnits(f)[Number(f.unit) || 0];
+      if (!u) return [];
+      const ok = u.level === 'nat' ? 'nat' : { region: 'r:', area: 'a:', team: 't:' }[u.level] + u.unitId;
+      const by = scopeBy();
+      return sc.filter((x) => { for (let k = x.key; k && by[k]; k = by[k].parent) if (k === ok) return true; return false; });
+    }
     const list = caps()[PICK_TEAMS[scr]];
     if (!list) return sc;
     const by = scopeBy(), ok = {}, keep = {};
@@ -769,6 +791,8 @@
     if (scr === 'team') { S.team.open = null; loadTeam(); }
     if (scr === 'finance') loadFin();
     if (scr === 'report') { S.rep.data = null; render(); }
+    if (scr === 'broadcast') loadBcCount();
+    if (scr === 'event') render();
   }
 
   // ───────────── МОЯ КОМАНДА В MyYL ─────────────
@@ -842,27 +866,25 @@
       <span class="grow"><span class="b" style="display:block">${esc(LV_NAME[x.level] + x.name)}</span><span class="small muted">${esc(unitCounts(x) + (lead ? ' · ' + lead : ''))}</span></span><span class="muted">${icon('chev', 18)}</span></button>`;
   }
 
-  // ───────────── НАПИСАТИ ВСІМ ─────────────
+  // ───────────── НАПИСАТИ ─────────────
   VIEWS.broadcast = function () {
     const b = S.bc, info = b.info;
-    let h = header('Написати всім', 'Повідомлення прийде від бота');
-    if (!info) return h + loading();
-    const aud = info.audiences.filter((a) => a.key === b.audience)[0] || info.audiences[0];
-    if (aud) b.audience = aud.key;
-    h += `<div class="card col">
-      <label class="f"><span>Кому</span><select class="in" data-bind="bc.audience" data-ch="bcAud">${info.audiences.map((a) => `<option value="${esc(a.key)}"${a.key === b.audience ? ' selected' : ''}>${esc(a.label)} · ${a.count}</option>`).join('')}</select></label>
+    let h = header('Написати', 'Повідомлення прийде від бота');
+    h += `<div class="card col"><div class="f"><span>Кому</span>${picker('broadcast')}${rolesField('broadcast', b)}</div>`;
+    if (info && info.isSuper && (S.pick.broadcast || { keys: [] }).keys.indexOf('nat') >= 0 && !(b.roles || []).length) h += `<label class="toggle-row" style="padding:0"><span class="small">Також тим, хто ще чекає підтвердження ролі</span><input type="checkbox" data-ch="bcPending"${b.pending ? ' checked' : ''}></label>`;
+    h += `<div class="small" id="bcWho">${b.count == null ? '<span class="muted">Рахую…</span>' : `Отримають: <b>${plural(b.count, 'людина', 'людини', 'людей')}</b>`}</div>
       <label class="f"><span>Текст</span><textarea id="bcText" class="in" rows="7" maxlength="3500" data-bind="bc.text" data-live="bcCount" placeholder="Наприклад: Друзі, цієї суботи молимось за табір о 19:00…">${esc(b.text)}</textarea></label>
       <div class="xs muted" id="bcCount" style="text-align:right;margin-top:-6px">${b.text.length} / 3500</div>
       <label class="toggle-row" style="padding:4px 0"><span><span class="b" style="display:block">Кнопка «Відкрити Young Life»</span><span class="small muted">під повідомленням</span></span><input type="checkbox" data-bind="bc.button"${b.button ? ' checked' : ''}></label>
-      <button type="button" class="btn" data-a="bcSend"${b.sending ? ' disabled' : ''}>${icon('send', 18)} Надіслати${aud ? ' · ' + plural(aud.count, 'людина', 'людини', 'людей') : ''}</button>
-    </div>`;
+      <button type="button" class="btn" data-a="bcSend"${b.sending || !b.count ? ' disabled' : ''}>${icon('send', 18)} Надіслати</button>
+      <div class="xs muted">Повідомлення буде з підписом: твоє імʼя й роль.</div></div>`;
+    if (!info) return h + loading();
     if (info.queued) h += `<div class="small muted">Ще доставляється: ${plural(info.queued, 'повідомлення', 'повідомлення', 'повідомлень')} (до 40 на хвилину).</div>`;
     if (info.history.length) {
-      h += `<div class="sec">Останні розсилки</div><div class="card list">${info.history.map((x) => `<div class="li" style="align-items:flex-start;padding-top:10px;padding-bottom:10px"><span class="grow">
+      h += `<div class="sec">${info.isSuper ? 'Останні розсилки' : 'Твої останні розсилки'}</div><div class="card list">${info.history.map((x) => `<div class="li" style="align-items:flex-start;padding-top:10px;padding-bottom:10px"><span class="grow">
         <span style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line">${esc(x.text)}</span>
-        <span class="xs muted" style="display:block;margin-top:4px">${esc(x.audience)} · ${plural(x.count, 'людина', 'людини', 'людей')} · ${esc(fmtWhen(x.created))}</span></span></div>`).join('')}</div>`;
+        <span class="xs muted" style="display:block;margin-top:4px">${info.isSuper && x.author ? esc(x.author) + ' · ' : ''}${esc(x.audience)} · ${plural(x.count, 'людина', 'людини', 'людей')} · ${esc(fmtWhen(x.created))}</span></span></div>`).join('')}</div>`;
     }
-    h += '<div class="xs muted">Великі розсилки доходять частинами: перші 25 — одразу, решта — протягом кількох хвилин.</div>';
     return h;
   };
   const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
@@ -890,7 +912,7 @@
   const fmtD = (k) => { const p = String(k).split('-'); return p.length === 3 ? Number(p[2]) + '.' + p[1] + '.' + p[0] : ''; };
   VIEWS.report = function () {
     const r = S.rep, units = unitsFor('report'), items = caps().reportItems || [];
-    let h = header('Підготувати звіт', caps().broadcast ? 'Будь-який регіон, ерія чи команда' : 'Свій рівень і рівень нижче');
+    let h = header('Підготувати звіт', caps().isSuper ? 'Будь-який регіон, ерія чи команда' : 'Свій рівень і рівень нижче');
     if (!units.length || !items.length) return h + '<div class="empty">Для твоєї ролі звіти недоступні</div>';
     const by = scopeBy();
     h += `<div class="sec">По кому · ${esc(pickLabel('report'))}</div>` + (units.length > 1 ? picker('report') : `<div class="small">${esc(pickLabel('report'))}</div>`);
@@ -1271,14 +1293,21 @@
   // календар
   A.openEv = (d) => { if (S.screen !== 'calendar') go('calendar', { ev: d.id }); else { S.ev = d.id; render(); window.scrollTo(0, 0); } };
   A.evFilter = (d) => { S.evFilter = d.l; render(); };
-  A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), end: '', time: '', place: '', desc: '' }; render(); };
+  const ownerKeyOf = (u) => (!u ? '' : u.level === 'nat' ? 'nat' : { region: 'r:', area: 'a:', team: 't:' }[u.level] + u.unitId);
+  function resetEvPick(keys) {
+    const f = S.evForm, u = evUnits(f)[Number(f.unit) || 0], by = scopeBy();
+    const ks = (keys && keys.length ? keys : [ownerKeyOf(u)]).filter((k) => by[k]);
+    S.pick.event = { keys: ks, level: ks[0] ? by[ks[0]].level : '', multi: ks.length > 1 };
+  }
+  A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), end: '', time: '', place: '', desc: '', roles: [] }; resetEvPick(); render(); };
+  A.evOwner = () => { resetEvPick(); render(); };
   A.evDate = () => { const f = S.evForm; if (f.end && f.end < f.date) f.end = ''; const e = document.querySelector('[data-bind="evForm.end"]'); if (e) { e.min = f.date; e.value = f.end; } };
   A.evSave = async () => {
     const f = S.evForm, u = evUnits(f)[Number(f.unit) || 0];
     if (!u) return;
     if (String(f.title).trim().length < 2) return toast('Вкажи назву події');
     if (f.end && f.end < f.date) return toast('Дата кінця раніше за дату початку');
-    const res = await run(() => api('eventSave', { id: f.id || '', roles: f.roles || [], level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), f.id ? 'Зміни збережено' : 'Подію додано: ' + u.label);
+    const res = await run(() => api('eventSave', { id: f.id || '', roles: f.roles || [], aud: (S.pick.event && S.pick.event.keys) || [], level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), f.id ? 'Зміни збережено' : 'Подію додано: ' + u.label);
     if (res) { const wasId = f.id; S.evForm = null; S.events = null; if (!wasId) S.ev = null; render(); loadEvents(); }
   };
   A.rsvp = async (d) => {
@@ -1298,16 +1327,17 @@
       '&location=' + encodeURIComponent(e.place || '') + '&details=' + encodeURIComponent((e.desc || '') + '\n\nYoung Life Україна · ' + e.levelLabel);
     A.openUrl({ url: url });
   };
-  A.evAudGroup = (d) => { S.evForm.roles = audRoles(d.g); S.evForm.audOpen = false; render(); };
-  A.evAudCustom = () => { S.evForm.audOpen = true; render(); };
-  A.evAudRole = (d) => { const r = S.evForm.roles = (S.evForm.roles || []).slice(); const i = r.indexOf(d.k); if (i >= 0) r.splice(i, 1); else r.push(d.k); render(); };
+  const audChanged = (scr) => { if (scr === 'broadcast') loadBcCount(); else render(); };
+  A.audGroup = (d) => { const f = audState(d.s); f.roles = audRoles(d.g); f.audOpen = false; audChanged(d.s); };
+  A.audCustom = (d) => { audState(d.s).audOpen = true; render(); };
+  A.audRole = (d) => { const f = audState(d.s); const r = f.roles = (f.roles || []).slice(); const i = r.indexOf(d.k); if (i >= 0) r.splice(i, 1); else r.push(d.k); audChanged(d.s); };
   A.evEdit = (d) => {
     const e = (S.events || []).filter((x) => x.id === d.id)[0]; if (!e) return;
     const f = { id: e.id, title: e.title, date: e.date, end: e.end || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).slice(), audOpen: false };
     let units = caps().eventUnits || [];
     let idx = units.findIndex((x) => x.level === e.level && x.unitId === e.unitId);
     if (idx < 0) { f.extraUnit = { level: e.level, unitId: e.unitId, label: e.levelLabel }; idx = units.length; }
-    f.unit = idx; S.evForm = f; render(); window.scrollTo(0, 0);
+    f.unit = idx; S.evForm = f; resetEvPick(e.aud || []); render(); window.scrollTo(0, 0);
   };
   A.evDelete = (d) => {
     const doIt = async () => { const res = await run(() => api('eventDelete', { id: d.id }), 'Подію видалено'); if (res) { S.ev = null; S.events = null; render(); loadEvents(); } };
@@ -1436,18 +1466,19 @@
     list.querySelectorAll('[data-q]').forEach((x) => { const hit = !!q && x.dataset.q.indexOf(q) >= 0; x.classList.toggle('hidden', !hit); if (hit) n++; });
     const e = list.querySelector('[data-empty]'); if (e) e.classList.toggle('hidden', n > 0);
   };
-  A.bcAud = () => render();
+  A.bcPending = (d, el) => { S.bc.pending = el.checked; loadBcCount(); };
   A.bcCount = (d, el) => { const c = document.getElementById('bcCount'); if (c) c.textContent = el.value.length + ' / 3500'; };
   A.bcSend = () => {
-    const b = S.bc, aud = (b.info.audiences.filter((a) => a.key === b.audience)[0] || {});
+    const b = S.bc;
     if (b.text.trim().length < 2) return toast('Напиши текст повідомлення', 'error');
+    if (!b.count) return toast('За цим вибором ще нікого немає', 'error');
     const doIt = async () => {
       b.sending = true; render();
-      const r = await run(() => api('broadcast', { audience: b.audience, text: b.text, button: b.button }));
+      const r = await run(() => api('broadcast', Object.assign(bcParams(), { text: b.text, button: b.button })));
       b.sending = false;
       if (r) { toast('Надіслано: ' + plural(r.sent, 'людина', 'людини', 'людей'), 'success'); b.text = ''; loadBc(); } else render();
     };
-    const msg = 'Надіслати повідомлення: ' + (aud.label || '') + ' (' + plural(aud.count || 0, 'людина', 'людини', 'людей') + ')?';
+    const msg = 'Надіслати повідомлення ' + plural(b.count, 'людині', 'людям', 'людям') + ' (' + pickLabel('broadcast') + ')?';
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
   A.teamTeam = (d, el) => { S.team.teamId = el.value; loadTeam(); };

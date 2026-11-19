@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS roles_tg ON roles (tg_id);
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '', title TEXT, date TEXT NOT NULL, end_date TEXT, time TEXT, place TEXT,
-  descr TEXT, author_id TEXT, author TEXT, created TEXT, roles TEXT
+  descr TEXT, author_id TEXT, author TEXT, created TEXT, roles TEXT, aud TEXT
 );
 CREATE INDEX IF NOT EXISTS events_date ON events (date);
 CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT NOT NULL, tg_id TEXT NOT NULL, name TEXT, team TEXT, created TEXT, PRIMARY KEY (event_id, tg_id));
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS finance_updated ON finance (updated);
 
 -- черга повідомлень у Telegram (великі розсилки йдуть частинами щохвилини)
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, text TEXT, extra TEXT, created TEXT, claimed INTEGER);
-CREATE TABLE IF NOT EXISTS broadcasts (id TEXT PRIMARY KEY, text TEXT, audience TEXT, count INTEGER, author TEXT, created TEXT);
+CREATE TABLE IF NOT EXISTS broadcasts (id TEXT PRIMARY KEY, text TEXT, audience TEXT, count INTEGER, author TEXT, created TEXT, author_id TEXT);
 
 -- вхід в окремий застосунок через бота
 CREATE TABLE IF NOT EXISTS auth_login (nonce TEXT PRIMARY KEY, created INTEGER NOT NULL, user_json TEXT, used INTEGER NOT NULL DEFAULT 0);

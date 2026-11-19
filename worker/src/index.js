@@ -240,7 +240,7 @@ class Store {
       this.db.prepare('SELECT * FROM events WHERE COALESCE(end_date, date) >= ?').bind(addDaysKey_(today, -1)),
       this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON e.id = r.event_id WHERE COALESCE(e.end_date, e.date) >= ?').bind(addDaysKey_(today, -1)),
     ]);
-    this.events = (ev.results || []).map((r) => ({ id: r.id, roles: String(r.roles || '').split(',').filter(Boolean), level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
+    this.events = (ev.results || []).map((r) => ({ id: r.id, roles: String(r.roles || '').split(',').filter(Boolean), aud: String(r.aud || '').split(',').filter(Boolean), level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
     this.rsvp = (rs.results || []).map((r) => ({ eventId: r.event_id, tgId: r.tg_id, name: r.name || '', team: r.team || '' }));
   }
   async loadKnownTeams(ids) {
@@ -269,7 +269,7 @@ class Store {
   }
   async loadBroadcasts() {
     const [h, q] = await this.db.batch([
-      this.db.prepare('SELECT * FROM broadcasts ORDER BY created DESC LIMIT 5'),
+      this.db.prepare('SELECT * FROM broadcasts ORDER BY created DESC LIMIT 200'),
       this.db.prepare('SELECT COUNT(*) AS n FROM outbox'),
     ]);
     this.broadcasts = h.results || [];
@@ -350,6 +350,16 @@ function unitTeams_(b, d) {
   return Object.keys(ids).slice(0, 400);
 }
 const isSingleTeam_ = (d) => (!Array.isArray(d.units) || !d.units.length) ? !!d.teamId : d.units.length === 1 && String(d.units[0]).indexOf('t:') === 0;
+
+const keyUnit_ = (k) => (k === 'nat' ? { level: 'nat', unitId: '' } : { level: { r: 'region', a: 'area', t: 'team' }[String(k).charAt(0)] || '', unitId: String(k).slice(2) });
+const unitKey_ = (level, id) => (level === 'nat' ? 'nat' : { region: 'r:', area: 'a:', team: 't:' }[level] + id);
+// роль r знаходиться всередині одиниці u (u — { level, unitId })
+const within_ = (u, r) => covers_(u, r.level, r.unitId) || (u.level === r.level && u.unitId === r.unitId);
+function unitLabel_(k) {
+  const u = keyUnit_(k);
+  if (u.level === 'nat') return 'Україна';
+  return ({ region: '', area: 'ерія ', team: '' }[u.level] || '') + unitName_(u.level, u.unitId);
+}
 
 // Доступ до даних для логіки (синхронно)
 const loadStruct_ = () => S.b;
@@ -528,7 +538,8 @@ API.me = function (c) {
     manage: c.roles.some((r) => MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0),
     myyl: allowedScopes_(c).length > 0,
     reportItems: reportItems_(c),
-    broadcast: isSuper_(c),
+    broadcast: canBroadcast_(c),
+    isSuper: isSuper_(c),
   };
   out.myTeams = Object.keys(myTeams).map(teamOut_);
   out.scopes = allowedScopes_(c);
@@ -865,7 +876,12 @@ function ancestors_(level, unitId) {
   return out;
 }
 function canSeeEvent_(c, ev) {
-  if (ev.roles && ev.roles.length && ev.authorId !== c.id && !canManageEvent_(c, ev) && !(c.active || c.roles).some((r) => ev.roles.indexOf(r.key) >= 0)) return false;
+  if (ev.authorId === c.id || canManageEvent_(c, ev)) return true;
+  const roles = ev.roles || [];
+  if ((ev.aud && ev.aud.length) || roles.length) {
+    const aud = (ev.aud && ev.aud.length ? ev.aud : [unitKey_(ev.level, ev.unitId)]).map(keyUnit_);
+    return (c.active || c.roles).some((r) => aud.some((u) => (!roles.length || roles.indexOf(r.key) >= 0) && (within_(u, r) || (!roles.length && covers_(r, u.level, u.unitId)))));
+  }
   return (c.active || c.roles).some((r) => covers_(r, ev.level, ev.unitId) || ancestors_(r.level, r.unitId).some((a) => a.level === ev.level && a.unitId === ev.unitId));
 }
 function canManageEvent_(c, ev) {
@@ -881,6 +897,7 @@ API.events = function (c) {
     return Object.assign({}, e, {
       levelLabel: levelLabel_(e.level, e.unitId), going: people.length,
       rolesLabel: (e.roles || []).map((k) => (roleDef_(k) || {}).label).filter(Boolean).join(', '),
+      audLabel: (e.aud || []).map(unitLabel_).join(', '),
       isGoing: people.some((r) => r.tgId === c.id),
       manage: manage,
       people: manage ? people.map((r) => ({ name: r.name, team: r.team })) : [],
@@ -899,18 +916,22 @@ API.eventSave = function (c, d) {
   if (d.end && /^\d{4}-\d{2}-\d{2}$/.test(d.end) && d.end < d.date) bad_('Дата кінця раніше за дату початку.');
   const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
   const rolesStr = roles.length ? ',' + roles.join(',') + ',' : '';
+  const ownerKey = unitKey_(u.level, u.unitId);
+  const aud = uniq_((d.aud || []).map(String)).filter((k) => { const x = keyUnit_(k); return x.level && (k === ownerKey || covers_({ level: u.level, unitId: u.unitId }, x.level, x.unitId)); }).slice(0, 60);
+  const audList = aud.length === 1 && aud[0] === ownerKey ? [] : aud;
+  const audStr = audList.length ? ',' + audList.join(',') + ',' : '';
   if (d.id) {
     const ex = loadEvents_().filter((x) => x.id === str_(d.id))[0];
     if (!ex) bad_('Подію не знайдено.');
     if (!canManageEvent_(c, ex)) deny_('Редагувати подію може автор або керівник цього рівня.');
-    Object.assign(ex, { level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), roles: roles });
-    S.run('UPDATE events SET level = ?, unit_id = ?, title = ?, date = ?, end_date = ?, time = ?, place = ?, descr = ?, roles = ? WHERE id = ?',
-      [ex.level, ex.unitId, ex.title, ex.date, ex.end || null, ex.time, ex.place, ex.desc, rolesStr, ex.id]);
+    Object.assign(ex, { level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), roles: roles, aud: audList });
+    S.run('UPDATE events SET level = ?, unit_id = ?, title = ?, date = ?, end_date = ?, time = ?, place = ?, descr = ?, roles = ?, aud = ? WHERE id = ?',
+      [ex.level, ex.unitId, ex.title, ex.date, ex.end || null, ex.time, ex.place, ex.desc, rolesStr, audStr, ex.id]);
     return { id: ex.id };
   }
-  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name, roles: roles };
-  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created, roles) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso(), rolesStr]);
+  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name, roles: roles, aud: audList };
+  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created, roles, aud) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso(), rolesStr, audStr]);
   S.events.push(e);
   rsvpSet_(c, e.id, true);
   return { id: e.id };
@@ -1200,44 +1221,48 @@ function reportHtml_(r) {
 }
 
 // ── розсилка від Раба Божого ──
-function audiences_() {
-  const st = loadStruct_();
-  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE);
-  const regionOf = (r) => (r.level === 'region' ? r.unitId : r.level === 'area' ? (st.area[r.unitId] || {}).regionId : r.level === 'team' ? st.teamRegion(r.unitId) : '');
-  const ids = (pred) => uniq_(act.filter(pred).map((r) => r.tgId));
-  const out = [
-    { key: 'all', label: 'Усім зареєстрованим', ids: uniq_(Object.keys(S.b.people).concat(act.map((r) => r.tgId))) },
-    { key: 'active', label: 'Усім з підтвердженою роллю', ids: ids(() => true) },
-    { key: 'leaders', label: 'Капітанам і вище', ids: ids((r) => r.rank <= RANK.APPROVE) },
-  ];
-  st.regions.forEach((rg) => out.push({ key: 'r:' + rg.id, label: 'Регіон ' + rg.name, ids: ids((r) => regionOf(r) === rg.id) }));
-  return out;
+const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE);
+function bcRecipients_(c, d) {
+  const p = pickScope_(c, Array.isArray(d.units) && d.units.length ? d.units : [allowedScopes_(c)[0] && allowedScopes_(c)[0].key]);
+  if (!p.scope) deny_();
+  const units = p.scope.level === 'multi' ? p.scope.members : [p.scope];
+  const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && (!roles.length || roles.indexOf(r.key) >= 0) && units.some((u) => within_(u, r)));
+  let ids = uniq_(act.map((r) => r.tgId));
+  // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
+  if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people)));
+  const LV = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
+  const where = units.map((u) => LV[u.level] + (u.level === 'nat' ? 'Україна' : u.name)).join(', ');
+  const who = roles.length ? roles.map((k) => roleDef_(k).label).join(', ') : 'усі';
+  return { ids: ids, label: where + ' · ' + who };
 }
 
-API.broadcastInfo = function (c) {
-  if (!isSuper_(c)) deny_();
+API.broadcastInfo = function (c, d) {
+  if (!canBroadcast_(c)) deny_();
+  const r = bcRecipients_(c, d || {});
   return {
-    audiences: audiences_().map((a) => ({ key: a.key, label: a.label, count: a.ids.length })),
-    history: (S.broadcasts || []).map((b) => ({ text: b.text, audience: b.audience, count: b.count, created: b.created })),
+    count: r.ids.length, label: r.label, isSuper: isSuper_(c),
+    history: (S.broadcasts || []).filter((b) => isSuper_(c) || b.author_id === c.id).slice(0, 5).map((b) => ({ text: b.text, audience: b.audience, count: b.count, created: b.created, author: b.author })),
     queued: S.queued || 0,
   };
 };
 
 API.broadcast = function (c, d) {
-  if (!isSuper_(c)) deny_('Писати всім може лише Раб Божий.');
+  if (!canBroadcast_(c)) deny_('Писати можуть Капітан і вищі ролі.');
   const text = String(d.text || '').trim();
   if (text.length < 2) bad_('Напиши текст повідомлення.');
   if (text.length > 3500) bad_('Задовге повідомлення: максимум 3500 символів.');
-  const a = audiences_().filter((x) => x.key === d.audience)[0];
-  if (!a) bad_('Обери, кому надіслати.');
-  if (!a.ids.length) bad_('У цій групі ще нікого немає.');
-  const body = esc_(text);
-  a.ids.forEach((id) => {
+  const r = bcRecipients_(c, d);
+  if (!r.ids.length) bad_('За цим вибором ще нікого немає.');
+  const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0];
+  const head = '📣 <b>' + esc_(c.name) + '</b>' + (top ? ' · ' + esc_(top.label + (top.level === 'nat' ? '' : ' · ' + unitName_(top.level, top.unitId))) : '') + '\n\n';
+  const body = head + esc_(text);
+  r.ids.forEach((id) => {
     if (d.button === false) S.send(id, body);
     else sendApp_(id, body, 'Відкрити Young Life');
   });
-  S.run('INSERT INTO broadcasts (id, text, audience, count, author, created) VALUES (?,?,?,?,?,?)', [uid_(), text, a.label, a.ids.length, c.name, nowIso()]);
-  return { sent: a.ids.length, audience: a.label };
+  S.run('INSERT INTO broadcasts (id, text, audience, count, author, created, author_id) VALUES (?,?,?,?,?,?,?)', [uid_(), text, r.label, r.ids.length, c.name, nowIso(), c.id]);
+  return { sent: r.ids.length, audience: r.label };
 };
 
 // ── вибір однієї або кількох одиниць ──
