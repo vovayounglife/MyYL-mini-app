@@ -309,6 +309,12 @@ ok(r.ok && r.data.mode === 'overview' && r.data.rows.length === 2 && r.data.tota
 r = await api(RD, 'financeGet', { units: ['t:' + capTeam.id] });
 ok(r.ok && !r.data.mode && r.data.current.balance === 350 && r.data.canEdit === false, 'фінанси: одна команда через units');
 
+
+// «Мої» знані: хто вніс
+r = await api(CAP, 'knownBulk', { teamId: capTeam.id, names: 'Капітанів Підліток' });
+r = await api(LEAD, 'knownList', { teamId: capTeam.id });
+ok(r.data.find((x) => x.name === 'Марко Іванюк').authorId === '5' && r.data.find((x) => x.name === 'Капітанів Підліток').authorId === '4', 'знані: видно, хто вніс');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

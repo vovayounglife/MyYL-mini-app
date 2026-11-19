@@ -680,9 +680,9 @@ API.knownBulk = function (c, d) {
   if (names.length > 300) bad_('За раз — до 300 імен.');
   const now = nowIso(), day = kyivDay(new Date());
   const rows = names.map((n) => ({ id: uid_(), n: n }));
-  S.run("INSERT INTO known (id, team_id, name, added, active, updated, stage, phone, ig, bday, school, grade, leader, note) SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.n'), ?, 1, ?, ?, '', '', '', '', '', '', '' FROM json_each(?)",
-    [teamId, day, now, stage, JSON.stringify(rows)]);
-  rows.forEach((r) => list.push({ id: r.id, team_id: teamId, name: r.n, added: day, active: 1, updated: now, stage: stage }));
+  S.run("INSERT INTO known (id, team_id, name, added, active, updated, stage, author_id, phone, ig, bday, school, grade, leader, note) SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.n'), ?, 1, ?, ?, ?, '', '', '', '', '', '', '' FROM json_each(?)",
+    [teamId, day, now, stage, c.id, JSON.stringify(rows)]);
+  rows.forEach((r) => list.push({ id: r.id, team_id: teamId, name: r.n, added: day, active: 1, updated: now, stage: stage, author_id: c.id }));
   refreshKnownCount_(teamId);
   return { added: names.length };
 };
@@ -716,7 +716,7 @@ API.knownSave = function (c, d) {
     return { id: id };
   }
   id = uid_();
-  const row = Object.assign({ id: id, team_id: teamId, added: kyivDay(new Date()), active: 1, updated: now, stage: 'meet' }, v);
+  const row = Object.assign({ id: id, team_id: teamId, added: kyivDay(new Date()), active: 1, updated: now, stage: 'meet', author_id: c.id }, v);
   const keys = Object.keys(row);
   S.run('INSERT INTO known (' + keys.join(', ') + ') VALUES (' + keys.map(() => '?').join(',') + ')', keys.map((k) => row[k]));
   list.push(row);
@@ -1653,7 +1653,7 @@ async function handleAdmin(req, env, ctx, url) {
       events: ['id', 'level', 'unit_id', 'title', 'date', 'end_date', 'time', 'place', 'descr', 'author_id', 'author', 'created'],
       rsvp: ['event_id', 'tg_id', 'name', 'team', 'created'],
       reports: ['id', 'created', 'date', 'week', 'type', 'mode', 'team_id', 'area_id', 'region_id', 'count', 'new_t', 'leaders', 'hours', 'topic', 'note', 'attendees', 'author_id', 'author'],
-      known: ['id', 'team_id', 'name', 'phone', 'ig', 'bday', 'school', 'grade', 'leader', 'note', 'added', 'active', 'updated'],
+      known: ['id', 'team_id', 'name', 'phone', 'ig', 'bday', 'school', 'grade', 'leader', 'note', 'added', 'active', 'updated', 'author_id'],
       finance: ['team_id', 'month', 'prev', 'office', 'church', 'team', 'spent', 'balance', 'author', 'updated'],
       settings: ['key', 'value'],
     };
@@ -1711,7 +1711,7 @@ function nowIso() { return new Date().toISOString(); }
 function profileOf_(p) { return { name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp }; }
 function roleOut_(r) { return { id: r.id, key: r.key, label: r.label, level: r.level, unitId: r.unitId, unitName: unitName_(r.level, r.unitId), status: r.status }; }
 function teamOut_(id) { const st = loadStruct_(); const t = st.team[id]; return { id: id, name: t.name, areaId: t.areaId, areaName: (st.area[t.areaId] || {}).name || '', regionId: st.teamRegion(id) }; }
-function knownOut_(r) { return { id: r.id, stage: stageOk_(r.stage) ? r.stage : 'meet', name: r.name || '', phone: r.phone || '', ig: r.ig || '', bday: r.bday || '', school: r.school || '', grade: r.grade || '', leader: r.leader || '', note: r.note || '' }; }
+function knownOut_(r) { return { id: r.id, stage: stageOk_(r.stage) ? r.stage : 'meet', authorId: r.author_id || '', name: r.name || '', phone: r.phone || '', ig: r.ig || '', bday: r.bday || '', school: r.school || '', grade: r.grade || '', leader: r.leader || '', note: r.note || '' }; }
 function finOut_(r) { return { month: r.month, prev: r.prev || 0, office: r.office || 0, church: r.church || 0, team: r.team || 0, spent: r.spent || 0, balance: r.balance || 0 }; }
 function levelLabel_(level, id) {
   if (level === 'nat') return 'Національна';

@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS reports_week ON reports (week);
 
 CREATE TABLE IF NOT EXISTS known (
   id TEXT PRIMARY KEY, team_id TEXT NOT NULL, name TEXT, phone TEXT, ig TEXT, bday TEXT, school TEXT, grade TEXT, leader TEXT, note TEXT,
-  added TEXT, active INTEGER NOT NULL DEFAULT 1, updated TEXT, stage TEXT
+  added TEXT, active INTEGER NOT NULL DEFAULT 1, updated TEXT, stage TEXT, author_id TEXT
 );
 CREATE INDEX IF NOT EXISTS known_team ON known (team_id);
 CREATE INDEX IF NOT EXISTS known_updated ON known (updated);

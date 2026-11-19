@@ -60,7 +60,7 @@
     events: null, ev: null, evForm: null, evFilter: 'all',
     add: null, knownCache: {},
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false },
-    known: { teamId: null, list: null, mine: false, detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
+    known: { teamId: null, list: null, mine: true, detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
     thanks: false, reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
@@ -895,20 +895,25 @@
     let h = header('Знані по імені', pickLabel('known'));
     h += picker('known');
     if (teams.length) h += `<div class="grid2"><button type="button" class="btn sm" data-a="knownNew">${icon('plus', 18)} Одного</button><button type="button" class="btn sec2 sm" data-a="knownBulkOpen">Додати списком</button></div>`;
-    h += `<div class="row" style="gap:8px"><label class="sr" for="kq">Пошук</label><input id="kq" class="in grow" type="search" placeholder="Пошук за іменем" data-live="knownSearch">
-      <div class="pills" style="flex:0 0 auto"><button type="button" class="pill${!k.mine ? ' on' : ''}" data-a="knownMine" data-v="0">Усі</button><button type="button" class="pill${k.mine ? ' on' : ''}" data-a="knownMine" data-v="1">Мої</button></div></div>`;
+    h += `<label class="sr" for="kq">Пошук</label><input id="kq" class="in" type="search" placeholder="Пошук за іменем" data-live="knownSearch">`;
     if (!k.list) return h + loading();
-    const f = first().toLowerCase();
-    const list = k.list.filter((p) => !k.mine || String(p.leader).toLowerCase().indexOf(f) >= 0);
+    const meId = String(S.me.user.id), f = first().toLowerCase();
+    const isMine = (p) => p.authorId === meId || (!p.authorId && f && String(p.leader).toLowerCase().indexOf(f) >= 0);
+    const mineN = k.list.filter(isMine).length;
+    const list = k.mine ? k.list.filter(isMine) : k.list;
     const multiTeam = new Set(k.list.map((p) => p.teamId)).size > 1;
-    h += `<div class="small muted">${list.length} ${list.length % 10 === 1 && list.length % 100 !== 11 ? 'підліток' : 'підлітків'} · за них молимось${list.length ? ' · гортай колонки вбік →' : ''}</div>`;
-    h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
+    const word = (n) => n % 10 === 1 && n % 100 !== 11 ? 'підліток' : 'підлітків';
+    h += `<div class="row between"><h2 style="font-size:17px">${k.mine ? 'Мій список' : 'Усі знані'}</h2><span class="small muted">${list.length} ${word(list.length)}</span></div>`;
+    if (k.mine && !mineN) h += `<div class="note small">${k.list.length ? 'У твоєму списку ще нікого немає. Додай тих, кого знаєш по імені, — або подивись усіх нижче.' : 'Додай підлітків, яких знаєш по імені, — по одному або одразу списком.'}</div>`;
+    if (list.length) h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
       const col = list.filter((p) => (p.stage || 'meet') === st[0]);
       return `<section class="col-st st-${st[0]}" aria-label="${esc(st[1])}"><div class="col-h"><span>${esc(st[1])}</span><span class="n">${col.length}</span></div>
         ${col.length ? col.map((p) => `<button type="button" class="kcard" data-a="knownOpen" data-id="${esc(p.id)}" data-name="${esc(p.name.toLowerCase())}"><span class="b" style="display:block">${esc(p.name)}</span>
           <span class="xs muted">${esc([multiTeam ? p.team : '', p.grade, p.leader ? 'веде ' + p.leader : ''].filter(Boolean).join(' · ') || (p.phone ? p.phone : 'додай контакти'))}</span></button>`).join('') : '<div class="xs muted" style="padding:6px 4px">Поки нікого</div>'}</section>`;
     }).join('')}</div>`;
-    if (!k.list.length) h += `<div class="empty small">${teams.length ? 'Список порожній. Додай підлітків — одного або одразу списком.' : 'Тут поки нікого'}</div>`;
+    if (k.mine) { if (k.list.length > mineN) h += `<button type="button" class="btn sec2" data-a="knownMine" data-v="0">Показати всіх знаних · ${k.list.length}</button>`; }
+    else h += `<button type="button" class="btn sec2" data-a="knownMine" data-v="1">Лише мій список · ${mineN}</button>`;
+    if (!k.mine && !k.list.length) h += `<div class="empty small">Тут поки нікого</div>`;
     return h;
   };
   const knownItem = () => (S.known.list || []).filter((x) => x.id === S.known.detail)[0];
@@ -1248,7 +1253,7 @@
 
   // знані
   A.knownTeam = (d, el) => { S.known.teamId = el.value; loadKnown(); };
-  A.knownMine = (d) => { S.known.mine = d.v === '1'; render(); };
+  A.knownMine = (d) => { S.known.mine = d.v === '1'; render(); window.scrollTo(0, 0); };
   A.knownSearch = (d, el) => {
     const q = el.value.trim().toLowerCase();
     document.querySelectorAll('#knownBoard .kcard').forEach((li) => { li.classList.toggle('hidden', !!q && li.dataset.name.indexOf(q) < 0); });
