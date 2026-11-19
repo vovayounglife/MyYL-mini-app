@@ -218,3 +218,8 @@ html.standalone .main { padding-top: calc(18px + env(safe-area-inset-top)); }
 .login-box .btn { width: 100%; }
 .login-box .card { width: 100%; }
 .login-logo { border-radius: 22px; box-shadow: 0 6px 24px rgba(232,105,46,.35); }
+
+/* без масштабування від подвійного дотику; поля ≥16px, щоб iPhone не збільшував сторінку при введенні */
+html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, a, label, input, select, textarea, .li, .pill, .kcard { touch-action: manipulation; }
+input, select, textarea, .in { font-size: 16px !important; }

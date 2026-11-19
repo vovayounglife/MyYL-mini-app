@@ -1755,6 +1755,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.screen === 'install') render(); });
 
   // ───────────── СТАРТ ─────────────
+  // iOS ігнорує user-scalable=no: жест масштабування блокуємо вручну, подвійний дотик — через touch-action у стилях
+  document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
   function start() {
     if (!IN_TG) {
       document.documentElement.classList.add('standalone');
