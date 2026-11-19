@@ -82,3 +82,13 @@ jobs:
             echo "Бот: @$(echo "$RES" | jq -r .bot)"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "$RES" | jq -e .ok > /dev/null
+
+      - name: Перенести склад з командних табличок (один раз)
+        if: hashFiles('worker/seed/members.enc') != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          jq -n --rawfile enc worker/seed/members.enc '{enc: ($enc | rtrimstr("\n"))}' > body.json
+          RES=$(curl -s -X POST "$URL/admin/members" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @body.json)
+          echo "$RES" | jq '{ok, skipped, totals, missingAreas, teams: [.teams[]? | {area, team, matched, created, added, linked, dup, bad}]}'
+          echo "$RES" | jq -e .ok > /dev/null

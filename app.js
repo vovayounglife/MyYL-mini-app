@@ -198,12 +198,13 @@
     if (S.screen === 'onboarding' && S.reg.step > 1) { S.reg.step--; return render(); }
     if (S.screen === 'tasks' && (S.tasks.form || S.tasks.open)) { if (S.tasks.form) S.tasks.form = null; else S.tasks.open = null; return render(); }
     if (S.screen === 'polls' && S.polls.form) { S.polls.form = null; return render(); }
+    if (S.screen === 'team' && S.team.add) { S.team.add = null; return render(); }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form);
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form) || (S.screen === 'team' && !!S.team.add);
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
   let histOn = false, histIgnore = false;
@@ -1394,24 +1395,45 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const fmtDay = (s) => { const d = parseDay(s); return isNaN(d) ? s : d.getDate() + ' ' + MGEN[d.getMonth()]; };
 
   // ───────────── СКЛАД КОМАНДИ ─────────────
+  const ylBadge = '<span class="yl-badge" title="Зареєстрований(-а) в MyYL" aria-label="є в MyYL">YL</span>';
+  function memberFormView() {
+    const a = S.team.add, list = caps().addTeams || [];
+    const cur = list.filter((x) => x.id === a.teamId)[0] || list[0];
+    if (!cur) return header('Додати людей') + '<div class="empty">Немає команд, куди ти можеш додавати</div>';
+    if (cur.roles.indexOf(a.role) < 0) a.role = cur.roles.indexOf('LEADER') >= 0 ? 'LEADER' : cur.roles[cur.roles.length - 1];
+    return header('Додати людей у склад') + `<div class="card col">
+      ${teamSelect(list.map((x) => x.id), cur.id, 'memTeam')}
+      <label class="f"><span>Роль</span><select class="in" data-bind="team.add.role">${cur.roles.map((k) => `<option value="${k}"${k === a.role ? ' selected' : ''}>${esc(roleDef(k).label)}</option>`).join('')}</select></label>
+      <label class="f"><span>Імʼя та прізвище</span><textarea class="in" rows="5" data-bind="team.add.names" placeholder="Кожна людина з нового рядка:
+Анна Попович
+Матвій Шаповалов">${esc(a.names)}</textarea></label>
+      <button type="button" class="btn" data-a="memberSave"${a.busy ? ' disabled' : ''}>${icon('plus', 18)} Додати</button>
+      <div class="xs muted">Роль діє одразу, підтверджувати не треба. Коли людина зареєструється в MyYL, вона обере себе зі списку команди — і біля імені з'явиться ${ylBadge}</div></div>`;
+  }
   VIEWS.team = function () {
     const t = S.team;
-    let h = header('Склад команди', pickLabel('team'));
+    if (t.add) return memberFormView();
+    const canAdd = (caps().addTeams || []).length > 0;
+    let h = header('Склад команди', pickLabel('team'), canAdd ? `<button type="button" class="icon-btn accent" data-a="memberNew" aria-label="Додати людей">${icon('plus', 22)}</button>` : '');
     h += picker('team');
     if (!t.list) return h + loading();
     if (!t.list.length) return h + '<div class="empty">Тут ще нікого немає</div>';
     const groups = [];
     t.list.forEach((p) => { const g = groups[groups.length - 1]; if (g && g.id === p.teamId) g.list.push(p); else groups.push({ id: p.teamId, name: p.team, list: [p] }); });
-    h += groups.map((g) => `${groups.length > 1 ? `<div class="sec">${esc(g.name)} · ${g.list.length}</div>` : ''}<div class="card list">${g.list.map((p) => {
+    const regN = (l) => l.filter((p) => p.registered !== false).length;
+    if (groups.length === 1) h += `<div class="small muted">${g0Line(groups[0], regN)}</div>`;
+    h += groups.map((g) => `${groups.length > 1 ? `<div class="sec">${esc(g.name)} · ${g0Line(g, regN)}</div>` : ''}<div class="card list">${g.list.map((p) => {
       const oid = p.tgId + '|' + p.teamId, open = t.open === oid, pr = p.profile || {};
       return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(oid)}"><span class="avatar">${esc(initials(p.name))}</span>
-        <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span><span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r.label)}</span>`).join('')}</span></span></button>
+        <span class="grow"><span class="b" style="display:block">${esc(p.name)}${p.registered !== false ? ylBadge : ''}</span><span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r.label)}</span>`).join('')}${p.registered === false ? '<span class="xs muted">ще не в MyYL</span>' : ''}</span></span></button>
         ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${[['Telegram', p.username ? '@' + p.username : ''], ['Телефон', pr.phone], ['Дата народження', pr.bday ? fmtDay(pr.bday) : ''], ['Рік покаяння', pr.repent], ['Рік хрещення', pr.baptism], ['Рік ЛПYL', pr.lpyl], ['Відповідальності', pr.resp]].filter((x) => x[1]).map((x) => `<div class="kv small"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="small muted">Анкету ще не заповнено</div>'}
           <div class="sec" style="margin:10px 0 4px">Ролі й команди</div>
           ${(p.all || p.roles.map((r) => ({ id: r.id, label: r.label, unit: p.team, canRemove: r.canRemove }))).map((r) => `<div class="row" style="padding:6px 0;border-top:1px solid var(--line);gap:8px"><span class="grow small"><b>${esc(r.label)}</b> · ${esc(r.unit)}</span>${r.canRemove && r.titled ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="roleRename" data-id="${esc(r.id)}">Назва</button>` : ''}${r.canRemove ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="roleRemove" data-id="${esc(r.id)}" data-label="${esc(r.label + ' · ' + r.unit)}" data-name="${esc(p.name)}">Зняти</button>` : ''}</div>${t.rename && t.rename.id === r.id ? `<div class="row" style="gap:6px;padding-bottom:8px"><input id="renameIn" class="in grow" type="text" maxlength="60" data-bind="team.rename.title" value="${esc(t.rename.title)}" placeholder="Назва ролі"><button type="button" class="btn sm" data-a="roleRenameSave">OK</button><button type="button" class="btn ghost sm" data-a="roleRenameCancel">✕</button></div>` : ''}`).join('')}</div>` : ''}`;
     }).join('')}</div>`).join('') + '<div class="xs muted">Анкету кожен заповнює у своєму профілі.</div>';
     return h;
   };
+
+  function g0Line(g, regN) { const n = regN(g.list); return g.list.length + ' ' + (g.list.length === 1 ? 'людина' : g.list.length < 5 && g.list.length > 1 ? 'людини' : 'людей') + (n < g.list.length ? ' · у MyYL ' + n : ''); }
 
   // ───────────── ФІНАНСИ ─────────────
   const FIN_FIELDS = [['office', 'Дав офіс'], ['church', 'Дала церква'], ['team', 'Зібрали командою'], ['spent', 'Витратили']];
@@ -1552,7 +1574,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (r.step === 2) h += `<div><h1>Де ти служиш?</h1><p class="muted" style="margin:6px 0 0">Обери регіон, ерію та команду.</p></div>
       <label class="toggle-row card" style="padding:12px 16px"><span><span class="b" style="display:block">Я працюю в національному офісі</span><span class="small muted">Регіон можна не обирати, якщо не служиш ще й у команді</span></span><input type="checkbox" data-ch="regOffice"${r.office ? ' checked' : ''}></label>
       ${whereFields(r, 'reg')}<button type="button" class="btn" data-a="regNext">Далі</button>`;
-    if (r.step === 3) h += `<div><h1>Яка твоя роль?</h1><p class="muted" style="margin:6px 0 0">Можна обрати кілька. Ролі підтверджує капітан команди або хтось вище.</p></div>${roleFields(r, 'reg')}<button type="button" class="btn" data-a="regSubmit">Надіслати заявку</button>`;
+    if (r.step === 3 && (r.claims || []).length) {
+      h += `<div class="card col" style="gap:6px"><h2>Ти вже є в складі «${esc(teamName(r.teamId))}»?</h2><div class="small muted">Капітан уже додав людей у команду. Обери себе — роль запрацює одразу, без підтвердження.</div>
+        ${r.claims.map((x) => `<label class="check" style="padding:0"><input type="radio" name="regClaim" data-ch="regClaim" data-id="${esc(x.id)}"${r.claim === x.id ? ' checked' : ''}><span class="grow"><b>${esc(x.name)}</b> <span class="small muted">· ${esc(x.roles.join(', '))}</span></span></label>`).join('')}
+        <label class="check" style="padding:0"><input type="radio" name="regClaim" data-ch="regClaim" data-id=""${!r.claim ? ' checked' : ''}><span class="grow">Ні, мене тут немає</span></label></div>`;
+    }
+    if (r.step === 3) h += `<div><h1>${r.claim ? 'Ще якась роль?' : 'Яка твоя роль?'}</h1><p class="muted" style="margin:6px 0 0">${r.claim ? 'Необовʼязково. Якщо служиш ще десь — обери, це піде на підтвердження.' : 'Можна обрати кілька. Ролі підтверджує капітан команди або хтось вище.'}</p></div>${roleFields(r, 'reg')}<button type="button" class="btn" data-a="regSubmit">Надіслати заявку</button>`;
     return h;
   };
 
@@ -1967,6 +1994,24 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const res = await run(() => api('roleTitle', { roleId: t.id, title: t.title }), 'Назву змінено');
     if (res) { S.team.rename = null; loadTeam(); }
   };
+  A.memberNew = () => {
+    const P = S.pick.team, list = caps().addTeams || [];
+    const curT = P && P.keys.length === 1 && P.keys[0].indexOf('t:') === 0 ? P.keys[0].slice(2) : '';
+    S.team.add = { teamId: list.some((x) => x.id === curT) ? curT : (list[0] || {}).id, names: '', role: '' };
+    render(); window.scrollTo(0, 0);
+  };
+  A.memTeam = (d, el) => { S.team.add.teamId = el.value; render(); };
+  A.memberSave = async () => {
+    const a = S.team.add;
+    if (!String(a.names).trim()) return toast('Впиши хоча б одне імʼя');
+    a.busy = true; render();
+    const res = await run(() => api('memberAdd', { teamId: a.teamId, role: a.role, names: a.names }));
+    a.busy = false;
+    if (!res) return render();
+    const parts = [res.added ? 'додано ' + res.added : '', res.linked ? res.linked + ' вже в MyYL — роль додано їм' : '', res.dup ? res.dup + ' вже були в складі' : ''].filter(Boolean);
+    toast(parts.join(', ') || 'Нікого не додано', 'success');
+    S.team.add = null; S.team.list = null; render(); loadTeam();
+  };
   A.roleRemove = (d) => {
     const doIt = async () => { const res = await run(() => api('removeRole', { roleId: d.id }), 'Роль знято'); if (res) loadTeam(); };
     const msg = 'Зняти роль «' + d.label + '» з ' + d.name + '?';
@@ -2049,10 +2094,16 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       if (r.teamId === '__new' && String(r.newTeam).trim().length < 2) return toast('Впиши назву нової команди');
     }
     r.step++; render(); window.scrollTo(0, 0);
+    if (r.step === 3) {
+      r.claims = []; r.claim = '';
+      if (r.teamId && r.teamId !== '__new') api('claimFind', { teamId: r.teamId, name: r.name }).then((list) => { r.claims = list || []; if (S.reg === r && r.step === 3) render(); }).catch(() => {});
+    }
   };
+  A.regClaim = (d) => { S.reg.claim = d.id || ''; render(); };
   A.regSubmit = async () => {
     const r = S.reg, p = rolePayload(r);
-    if (!p.roles.length) return toast('Обери хоча б одну роль');
+    if (!p.roles.length && !r.claim) return toast('Обери хоча б одну роль або себе в списку команди');
+    if (r.claim) p.claim = r.claim;
     const teamRole = p.roles.some((k) => roleDef(k).level === 'team');
     if (teamRole && !r.teamId) { r.step = 2; render(); return toast('Обери команду'); }
     if (p.roles.some((k) => roleDef(k).level === 'area') && !r.areaId) { r.step = 2; render(); return toast('Обери ерію'); }

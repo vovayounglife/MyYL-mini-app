@@ -721,6 +721,45 @@ r = await api(VOVA, 'decide', { roleIds: [noReq.roles[0].id], approve: true });
 r = await api(VOVA, 'teamMembers', { units: ['nat'] });
 ok(r.ok && r.data.some((p) => p.tgId === '230' && p.team === 'Національний офіс'), 'нац. офіс: у складі окремою групою');
 
+
+// ── люди в складі без MyYL ──
+const audBefore = (await api(AD, 'audCount', { units: ['a:a1'] })).data.count;
+r = await api(LEAD, 'memberAdd', { teamId: capTeam.id, names: 'Хтось Інший', role: 'HELPER' });
+ok(!r.ok, 'склад: лідер не додає людей');
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, names: 'Олег Тестовий\n2) Марія Нова', role: 'HELPER' });
+ok(r.ok && r.data.added === 2, 'склад: капітан додав двох');
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, names: 'Тестовий Олег', role: 'LEADER' });
+ok(r.ok && r.data.dup === 1, 'склад: дубль (інший порядок слів) пропущено');
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, names: 'Новий Капітан', role: 'CAPTAIN' });
+ok(!r.ok, 'склад: капітан не дає роль капітана');
+me = await api(CAP, 'me');
+const capAdd = me.data.caps.addTeams.find((x) => x.id === capTeam.id);
+ok(capAdd && capAdd.roles.includes('HELPER') && !capAdd.roles.includes('CAPTAIN'), 'склад: caps.addTeams');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+const olegRow = r.data.find((p) => p.name === 'Олег Тестовий');
+ok(olegRow && olegRow.registered === false && r.data.find((p) => p.tgId === '4').registered === true, 'склад: позначка «в MyYL»');
+ok((await api(AD, 'audCount', { units: ['a:a1'] })).data.count === audBefore, 'склад: люди без MyYL не отримують розсилок');
+const OLEG = { id: 240, first_name: 'Олег' };
+r = await api(OLEG, 'claimFind', { teamId: capTeam.id, name: 'Олег Тестовийй' });
+ok(r.ok && r.data.length >= 1 && r.data[0].name === 'Олег Тестовий' && r.data[0].roles[0] === 'Помічник', 'реєстрація: знайдено схоже імʼя в команді');
+sent.length = 0;
+r = await api(OLEG, 'register', { name: 'Олег Тестовийй', teamId: capTeam.id, areaId: 'a1', claim: r.data[0].id, roles: [] });
+me = await api(OLEG, 'me');
+ok(r.ok && me.data.status === 'active' && me.data.roles.some((x) => x.key === 'HELPER' && x.status === 'активна') && sent.some((m) => m.chat_id === '4' && /обрав\(ла\) себе/.test(m.text)), 'реєстрація: обрав себе — роль одразу, капітан отримав повідомлення');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+ok(!r.data.some((p) => p.name === 'Олег Тестовий' && !p.registered) && r.data.some((p) => p.tgId === '240' && p.registered), 'склад: запис без MyYL став зареєстрованим');
+// імпорт з табличок
+const seed = [{ area: ['Тернопіль'], team: 'Імпорт Тест', people: [['Лід Ер', 'HELPER'], ['Петро Новий', 'LEADER'], ['Хтось', 'BOSS']] }];
+r = await admin('members', { teams: seed });
+ok(r.ok && r.totals.teamsCreated === 1 && r.totals.linked === 1 && r.totals.added === 1 && r.totals.bad === 1, 'імпорт: команда створена, зареєстрований привʼязаний, новий доданий');
+r = await admin('members', { teams: seed });
+ok(r.ok && r.skipped, 'імпорт: повторно не виконується');
+const keyE = crypto.createHash('sha256').update('k3y').digest(), ivE = crypto.randomBytes(12);
+const ciph = crypto.createCipheriv('aes-256-gcm', keyE, ivE);
+const encB = Buffer.concat([ivE, ciph.update(JSON.stringify([{ area: ['Невідома'], team: 'X', people: [] }]), 'utf8'), ciph.final(), ciph.getAuthTag()]).toString('base64');
+r = await admin('members', { enc: encB });
+ok(r.ok && r.missingAreas[0] === 'Невідома', 'імпорт: зашифровані дані розшифровано');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

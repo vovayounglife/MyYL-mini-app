@@ -140,6 +140,7 @@ const NEEDS = {
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
+  memberAdd: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
@@ -352,7 +353,7 @@ class Store {
     this.q.push(this.db.prepare(sql).bind(...(params || [])));
     if (base) this.baseDirty = true;
   }
-  send(chatId, text, extra) { this.out.push({ chat_id: String(chatId), text: text, extra: extra }); }
+  send(chatId, text, extra) { if (!isReal_(chatId)) return; this.out.push({ chat_id: String(chatId), text: text, extra: extra }); }
   sendDoc(chatId, filename, content, caption) { this.docs.push({ chat_id: String(chatId), filename, content, caption }); }
   async flush() {
     if (this.baseDirty) this.q.push(this.db.prepare("UPDATE meta SET v = v + 1 WHERE k = 'ver'"));
@@ -625,7 +626,7 @@ function canDecide_(c, target) {
 }
 function primaryApprovers_(target) {
   const def = roleDef_(target.key);
-  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.tgId !== target.tgId);
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.tgId !== target.tgId && isReal_(r.tgId));
   const ids = (pred) => uniq_(act.filter(pred).map((r) => r.tgId));
   const supers = ids((r) => r.key === 'SUPER');
   let out = [];
@@ -736,6 +737,7 @@ API.me = function (c) {
     myyl: allowedScopes_(P_(c, 'see.myyl')).length > 0,
     stats: P_(c, 'see.stats').roles.length > 0,
     perms: permUnits_(c).length > 0,
+    addTeams: addTeams_(c),
     reportItems: reportItems_(c),
     broadcast: canBroadcast_(c),
     isSuper: isSuper_(c),
@@ -752,10 +754,112 @@ API.me = function (c) {
 API.register = function (c, d) {
   const name = str_(d.name);
   if (name.length < 2) bad_('Вкажи імʼя та прізвище.');
-  if (!d.roles || !d.roles.length) bad_('Обери хоча б одну роль.');
+  const claim = str_(d.claim);
+  if (!claim && (!d.roles || !d.roles.length)) bad_('Обери хоча б одну роль.');
   savePerson_(c, { name: name, phone: d.phone, email: d.email });
+  if (claim) {
+    claimMember_(c, claim, name, str_(d.teamId));
+    if (!d.roles || !d.roles.length) return { status: 'active', approvers: '' };
+  }
   return requestRoles_(c, d);
 };
+
+// ── люди в складі без MyYL (їх додає капітан / адмін команди або імпорт) ──
+// tg_id таких людей починається з «m:»; коли людина реєструється, вона обирає себе — і ролі переходять до неї
+const isReal_ = (id) => /^\d+$/.test(String(id || ''));
+function nameToks_(s) {
+  return String(s || '').toLowerCase().replace(/[ʼ’'`"]/g, '').replace(/ё/g, 'е').replace(/[^a-zа-яіїєґ\s-]/gi, ' ').split(/[\s-]+/).filter((x) => x.length >= 2);
+}
+function lev_(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  const m = [];
+  for (let i = 0; i <= a.length; i++) { m[i] = [i]; for (let j = 1; j <= b.length; j++) m[i][j] = i ? Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)) : j; }
+  return m[a.length][b.length];
+}
+const tokEq_ = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && lev_(a, b) <= 1);
+function nameScore_(a, b) {
+  const A = nameToks_(a), B = nameToks_(b);
+  const s = A.filter((x) => B.some((y) => tokEq_(x, y))).length;
+  return { s: s, exact: A.length > 0 && A.length === B.length && A.every((x) => B.indexOf(x) >= 0), same: A.length > 0 && s >= Math.min(A.length, B.length, 2) };
+}
+// чи може c дати роль key у команді teamId (капітан і вище — як підтвердження; адмін команди — ролі нижче себе)
+function canAssign_(c, teamId, key) {
+  const def = roleDef_(key);
+  if (!def || def.level !== 'team' || !loadStruct_().team[teamId]) return false;
+  if (isSuper_(c)) return true;
+  if (canDecide_(c, { key: key, level: 'team', unitId: teamId, tgId: '' })) return true;
+  return c.roles.some((r) => r.key === 'TEAM_ADMIN' && r.unitId === teamId && def.rank > r.rank);
+}
+function addTeams_(c) {
+  const st = loadStruct_();
+  const keys = ROLES.filter((x) => x.level === 'team').map((x) => x.key);
+  const out = [];
+  st.teams.forEach((t) => {
+    const roles = keys.filter((k) => canAssign_(c, t.id, k));
+    if (roles.length) out.push({ id: t.id, roles: roles });
+  });
+  return out;
+}
+// додати людину в команду: дубль — пропускаємо; зареєстрований з тим самим імʼям — одразу даємо роль йому; інакше — запис без MyYL
+function addMember_(by, teamId, rawName, key) {
+  const name = clip_(String(rawName || '').replace(/\s+/g, ' ').trim()).slice(0, 80);
+  if (nameToks_(name).length < 1 || name.length < 2) return 'bad';
+  const inTeam = loadRoles_().filter((r) => r.level === 'team' && r.unitId === teamId && (r.status === ST.ACTIVE || r.status === ST.PENDING));
+  if (inTeam.some((r) => nameScore_(name, (getPerson_(r.tgId) || {}).name || r.name).same)) return 'dup';
+  const twin = Object.keys(S.b.people).filter((id) => isReal_(id) && nameScore_(name, S.b.people[id].name).exact);
+  const def = roleDef_(key);
+  const row = { id: uid_(), tgId: '', name: name, key: key, level: 'team', unitId: teamId, status: ST.ACTIVE, decidedBy: by, decided: nowIso(), requested: nowIso() };
+  if (twin.length === 1) {
+    row.tgId = twin[0]; row.name = S.b.people[twin[0]].name || name;
+    insertRole_(row);
+    return 'linked';
+  }
+  row.tgId = 'm:' + uid_();
+  S.run('INSERT INTO people (tg_id, name, registered) VALUES (?,?,?)', [row.tgId, name, ''], true);
+  S.b.people[row.tgId] = personFromRow({ tg_id: row.tgId, name: name });
+  insertRole_(row);
+  if (def && def.rank <= RANK.APPROVE) activateTeam_(teamId);
+  return 'added';
+}
+API.memberAdd = function (c, d) {
+  const teamId = str_(d.teamId), key = str_(d.role);
+  if (!canAssign_(c, teamId, key)) deny_('Ти не можеш давати цю роль у цій команді.');
+  const names = (Array.isArray(d.names) ? d.names : String(d.names || d.name || '').split(/\n|;/)).map((x) => String(x).replace(/^\s*(\d+[.)]|[-•*–])\s*/, '').trim()).filter(Boolean).slice(0, 100);
+  if (!names.length) bad_('Впиши імʼя та прізвище.');
+  const res = { added: 0, linked: 0, dup: 0, bad: 0 };
+  names.forEach((n) => { res[addMember_(c.name, teamId, n, key)]++; });
+  return res;
+};
+// хто з цієї команди схожий на людину, яка реєструється
+API.claimFind = function (c, d) {
+  const teamId = str_(d.teamId), name = str_(d.name);
+  if (!teamId || name.length < 2) return [];
+  const by = {};
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId && !isReal_(r.tgId)).forEach((r) => {
+    const nm = (getPerson_(r.tgId) || {}).name || r.name;
+    const sc = nameScore_(name, nm);
+    if (!sc.s) return;
+    const p = by[r.tgId] = by[r.tgId] || { id: r.tgId, name: nm, roles: [], score: sc.s + (sc.exact ? 1 : 0) };
+    p.roles.push(r.label);
+  });
+  return Object.keys(by).map((k) => by[k]).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 6).map((p) => ({ id: p.id, name: p.name, roles: p.roles }));
+};
+function claimMember_(c, mid, name, teamId) {
+  if (isReal_(mid) || mid.indexOf('m:') !== 0) bad_('Невірний вибір.');
+  const rows = loadRoles_().filter((r) => r.tgId === mid && r.status === ST.ACTIVE);
+  if (!rows.length) bad_('Цього запису вже немає в складі — обери роль звичайним способом.');
+  if (teamId && !rows.some((r) => r.unitId === teamId)) bad_('Цей запис з іншої команди.');
+  const pname = (getPerson_(mid) || {}).name || rows[0].name;
+  if (!nameScore_(name, pname).s) bad_('Імʼя не схоже — обери роль звичайним способом.');
+  S.run('UPDATE roles SET tg_id = ?, name = ? WHERE tg_id = ?', [c.id, name, mid], true);
+  S.run('DELETE FROM people WHERE tg_id = ?', [mid], true);
+  delete S.b.people[mid];
+  rows.forEach((r) => { r.tgId = c.id; r.name = name; });
+  // повідомити тих, хто відповідає за ці ролі: раптом обрали не себе
+  const text = '🔗 <b>' + esc_(name) + '</b> зареєструвався(-лась) у MyYL і обрав(ла) себе в складі: ' + rows.map((r) => esc_(r.label + ' · ' + levelLabel_(r.level, r.unitId).replace(/^Команда /, ''))).join(', ') +
+    (nameScore_(name, pname).exact ? '' : '\n(у списку було: ' + esc_(pname) + ')') + '\n\nЯкщо це не та людина — зніми роль у «Склад команди».';
+  uniq_([].concat.apply([], rows.map((r) => primaryApprovers_(r)))).filter((id) => id !== c.id).forEach((id) => sendApp_(id, text, 'Склад команди', 'team'));
+}
 
 API.requestRoles = function (c, d) {
   if (!getPerson_(c.id)) bad_('Спершу зареєструйся.');
@@ -1031,6 +1135,7 @@ API.teamMembers = function (c, d) {
     const p = byPerson[k];
     const person = getPerson_(p.tgId);
     if (person) { p.name = person.name || p.name; p.username = person.username; p.profile = profileOf_(person); }
+    p.registered = isReal_(p.tgId);
     // усі ролі людини (у будь-яких командах і на будь-яких рівнях) — щоб бачити, хто де служить
     p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE).sort((a, b) => a.rank - b.rank)
       .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), titled: !!(roleDef_(r.key) || {}).titled, title: r.title || '', canRemove: r.tgId !== c.id && canDecide_(c, r) }));
@@ -1608,7 +1713,7 @@ function audience_(c, d, perm) {
   const LV = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
   const where = units.map((u) => LV[u.level] + (u.level === 'nat' ? 'Україна' : u.name)).join(', ');
   const who = roles.length ? roles.map((k) => roleDef_(k).label).join(', ') : 'усі';
-  return { ids: uniq_(act.map((r) => r.tgId)).filter((id) => id !== c.id), units: units.map((u) => u.key || unitKey_(u.level, u.unitId)), roles: roles, label: where + ' · ' + who };
+  return { ids: uniq_(act.map((r) => r.tgId)).filter((id) => id !== c.id && isReal_(id)), units: units.map((u) => u.key || unitKey_(u.level, u.unitId)), roles: roles, label: where + ' · ' + who };
 }
 function bcRecipients_(c, d) {
   const a = audience_(c, d);
@@ -2128,7 +2233,7 @@ function missingFor_(scope, type) {
 
 function eligiblePeople_(teamId, perm) {
   const by = {};
-  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId && okR_(r, perm))
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId && isReal_(r.tgId) && okR_(r, perm))
     .forEach((r) => { by[r.tgId] = { tgId: r.tgId, name: (getPerson_(r.tgId) || {}).name || r.name }; });
   return Object.keys(by).map((k) => by[k]);
 }
@@ -2388,12 +2493,66 @@ function eventReminder() {
 
 // ───────────────────────────── СЛУЖБОВЕ: БОТ, ІМПОРТ, СИНХРОНІЗАЦІЯ З ДИСКОМ ─────────────────────────────
 
+async function sha256hex_(text) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(h)).map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+async function decryptSeed_(b64, secret) {
+  const raw = Uint8Array.from(atob(b64.replace(/\s+/g, '')), (ch) => ch.charCodeAt(0));
+  const k = await crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret)), 'AES-GCM', false, ['decrypt']);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, k, raw.slice(12));
+  return new TextDecoder().decode(plain);
+}
+// [{ area: ['Чернівці У', …], team: 'Volt', people: [['Імʼя Прізвище', 'LEADER'], …] }]
+function importMembers_(list) {
+  const st = loadStruct_();
+  const na = (x) => String(x || '').toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi, '');
+  const totals = { added: 0, linked: 0, dup: 0, bad: 0, teamsCreated: 0 };
+  const missingAreas = [];
+  const teams = [];
+  list.forEach((t) => {
+    const aliases = [].concat(t.area || []).map(na);
+    const area = st.areas.filter((a) => aliases.indexOf(na(a.name)) >= 0)[0];
+    if (!area) { if (missingAreas.indexOf(String([].concat(t.area)[0])) < 0) missingAreas.push(String([].concat(t.area)[0])); return; }
+    // назви команд у табличках і в MyYL можуть трохи відрізнятись («Young Life HLYNA» / «HLYNA»)
+    const core = (x) => na(String(x).toLowerCase().replace(/\b(young|life|wyld|wild|yl|teens|new)\b/g, ' ')) || na(x);
+    const inArea = st.teams.filter((x) => x.areaId === area.id);
+    let team = inArea.filter((x) => na(x.name) === na(t.team))[0] || inArea.filter((x) => core(x.name) === core(t.team))[0] ||
+      inArea.filter((x) => core(x.name).length >= 4 && core(t.team).length >= 4 && (core(x.name).indexOf(core(t.team)) >= 0 || core(t.team).indexOf(core(x.name)) >= 0))[0];
+    const row = { area: area.name, team: t.team, matched: team ? team.name : '', created: false, added: 0, linked: 0, dup: 0, bad: 0 };
+    if (!team && !(t.people || []).length) return;
+    if (!team) { team = st.team[createTeam_(area.id, t.team, true)]; row.created = true; totals.teamsCreated++; }
+    else activateTeam_(team.id);
+    (t.people || []).forEach((p) => {
+      if (!roleDef_(p[1]) || roleDef_(p[1]).level !== 'team') { row.bad++; totals.bad++; return; }
+      const r = addMember_('Командна табличка', team.id, p[0], p[1]);
+      row[r]++; totals[r]++;
+    });
+    teams.push(row);
+  });
+  return { totals: totals, missingAreas: missingAreas, teams: teams };
+}
+
 async function handleAdmin(req, env, ctx, url) {
   const key = req.headers.get('x-sync-key') || url.searchParams.get('key');
   if (!env.SYNC_KEY || key !== env.SYNC_KEY) return json({ ok: false, error: 'forbidden' }, 403);
   const body = await req.json().catch(() => ({}));
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
+
+  if (action === 'members') {
+    // склад команд із командних табличок: дані зашифровані ключем SYNC_KEY (у публічному репозиторії лише шифр)
+    const list = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : body.teams;
+    if (!Array.isArray(list)) return json({ ok: false, error: 'bad_payload' }, 400);
+    const hash = await sha256hex_(JSON.stringify(list));
+    if (!body.force && await db.prepare('SELECT 1 AS x FROM meta WHERE k = ?').bind('seed:' + hash.slice(0, 16)).first('x')) return json({ ok: true, skipped: 'вже перенесено раніше' });
+    const S0 = new Store(env, ctx);
+    await S0.loadBase();
+    const report = use(S0, () => importMembers_(list));
+    S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', ['seed:' + hash.slice(0, 16)]);
+    await S0.flush();
+    return json(Object.assign({ ok: true }, report));
+  }
 
   if (action === 'setup') {
     const origin = url.origin;
