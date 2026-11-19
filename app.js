@@ -88,7 +88,8 @@
     me: null, screen: 'loading', stack: [], toast: '', busy: 0, fatal: '',
     events: null, ev: null, evForm: null, evFilter: 'all',
     add: null, knownCache: {},
-    stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false },
+    stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false, from: '', to: '' },
+    dirs: { data: null, period: 'month', from: '', to: '' },
     known: { teamId: null, list: null, mode: 'mine', detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
@@ -112,7 +113,7 @@
     get(k) { try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
   };
-  const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period].join('|');
+  const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
   const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
 
@@ -232,6 +233,7 @@
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
     if (screen === 'perms') loadPerms();
+    if (screen === 'dirs') { ensurePick('dirs'); loadDirs(); }
     if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
     if (screen === 'polls') { S.polls.form = null; loadPolls(); }
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
@@ -288,7 +290,7 @@
     if (hit) S.stats.data = hit;
     S.stats.loading = true; render();
     try {
-      const d = await api('stats', { units: S.pick.stats.keys, cat: S.stats.cat, period: S.stats.period });
+      const d = await api('stats', { units: S.pick.stats.keys, cat: S.stats.cat, period: S.stats.period, from: S.stats.from, to: S.stats.to });
       if (statsKey() !== key) return; // людина вже перейшла далі
       S.stats.data = d; S.stats.at = 'оновлено о ' + pad(new Date().getHours()) + ':' + pad(new Date().getMinutes());
       if (d.scope.level !== 'multi' && S.pick.stats.keys.join() !== d.scope.key) setPick('stats', d.scope.key);
@@ -416,7 +418,7 @@
     });
   }
   function renderFatal() {
-    $app.innerHTML = `<main class="main no-nav"><div class="row"><div class="logo">YL</div><h2>Young Life Україна</h2></div>
+    $app.innerHTML = `<main class="main no-nav"><div class="row"><div class="logo"><img src="icons/yl-mark.png" alt="Young Life"></div><h2>Young Life Україна</h2></div>
       <div class="card col"><h2>Не вдалося відкрити застосунок</h2><div class="muted">${esc(S.fatal)}</div>
       <button class="btn" type="button" data-a="reload">Спробувати ще раз</button></div></main>`;
   }
@@ -446,7 +448,7 @@
   // ───────────── ГОЛОВНА ─────────────
   VIEWS.home = function () {
     const m = me(), c = caps();
-    let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
+    let h = `<div class="row"><span class="avatar lg yl-logo"><img src="icons/yl-mark.png" alt="Young Life"></span><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
@@ -660,7 +662,7 @@
     h += picker('stats');
     if (!d) return h + loading();
     if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === (st.loading ? st.cat : d.cat) ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
-    h += `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік']].map((p) => `<button type="button" class="${p[0] === st.period ? 'on' : ''}" data-a="statsPeriod" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
+    h += periodBar(st, 'stats');
     h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
 
@@ -872,6 +874,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
   function onPick(scr) {
     if (scr === 'stats') { S.stats.showAll = false; S.stats.showMiss = false; loadStats(); }
+    if (scr === 'dirs') loadDirs();
     if (scr === 'known') { S.known.detail = null; loadKnown(); }
     if (scr === 'team') { S.team.open = null; loadTeam(); }
     if (scr === 'finance') loadFin();
@@ -1042,6 +1045,44 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       }).join('')}</div>`;
     });
     if (Object.keys(cells).some((k) => cells[k].custom)) h += `<button type="button" class="btn ghost" data-a="permReset">Скинути «${esc(role.label)}» до типових</button>`;
+    return h;
+  };
+
+  // ───────────── ПЕРІОД (спільний) ─────────────
+  function periodBar(o, scr) {
+    let h = `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік'], ['custom', 'Свій']].map((p) => `<button type="button" class="${p[0] === o.period ? 'on' : ''}" data-a="statsPeriod" data-s="${scr}" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
+    if (o.period === 'custom') h += `<div class="row" style="gap:8px;align-items:flex-end"><label class="f grow"><span>З</span><input class="in" type="date" data-bind="${scr}.from" value="${esc(o.from)}" max="${ymd(new Date())}"></label>
+      <label class="f grow"><span>По</span><input class="in" type="date" data-bind="${scr}.to" value="${esc(o.to)}" max="${ymd(new Date())}"></label>
+      <button type="button" class="btn sm" style="min-height:44px" data-a="periodApply" data-s="${scr}">Показати</button></div>`;
+    return h;
+  }
+
+  // ───────────── СТАТИСТИКА ЗА НАПРЯМКАМИ ─────────────
+  const DIR_COLORS = { YoungLife: 'var(--coral)', WyldLife: 'var(--teal)', College: 'var(--blue)', Capernaum: 'var(--purple)', YoungMoms: 'var(--yellow)', '': 'var(--muted)' };
+  async function loadDirs() {
+    const D = S.dirs;
+    D.loading = true; render();
+    try { D.data = await api('dirStats', { units: (S.pick.dirs || { keys: [] }).keys, period: D.period, from: D.from, to: D.to }); } catch (e) { toast(e.message); }
+    D.loading = false;
+    if (S.screen === 'dirs') render();
+  }
+  VIEWS.dirs = function () {
+    const D = S.dirs, d = D.data;
+    let h = header('Статистика за напрямками', pickLabel('dirs'));
+    h += picker('dirs');
+    h += periodBar(D, 'dirs');
+    if (!d) return h + loading();
+    if (D.loading) h += '<div class="xs muted">Оновлюю…</div>';
+    const rows = d.rows.filter((x) => x.dir);
+    const max = Math.max.apply(null, rows.map((x) => x.teens).concat([1]));
+    h += `<div class="card col" style="gap:8px"><h2>Підлітки на клубах</h2>${rows.map((x) => `<div><div class="row between small"><span class="b">${esc(x.label)}</span><span>${nf(x.teens)}${x.clubs ? ' · ' + nf(x.clubs) + ' клуб.' : ''}</span></div>
+      <span class="track" style="height:8px;margin-top:4px"><i style="width:${Math.round(x.teens / max * 100)}%;background:${DIR_COLORS[x.dir]}"></i></span></div>`).join('')}</div>`;
+    const M = [['teams', 'Команд'], ['people', 'Людей у командах'], ['clubs', 'Клубів'], ['teens', 'Підлітків на клубах'], ['avg', 'Середньо на клубі'], ['newT', 'Нових підлітків'], ['mg', 'Зустрічей МГ'], ['mgPeople', 'Учасників МГ'], ['kr', 'Годин КР'], ['known', 'Знаних по імені']];
+    const all = d.rows;
+    h += `<div class="card" style="padding:0"><div class="rtab-w"><table class="rtab"><thead><tr><th></th>${all.map((x) => `<th>${esc(x.label)}</th>`).join('')}</tr></thead><tbody>${M.map((m) => `<tr><td>${m[1]}</td>${all.map((x) => `<td>${m[0] === 'avg' || m[0] === 'kr' ? df(x[m[0]]) : nf(x[m[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+    const none = all.filter((x) => !x.dir)[0];
+    if (none && none.teams) h += `<div class="note small">Без напрямку: <b>${none.teams}</b> ${none.teams === 1 ? 'команда' : 'команд'} — ${esc(none.names.slice(0, 12).join(', '))}${none.names.length > 12 ? '…' : ''}. Напрямок вказується в «Ерії та команди» → команда.</div>`;
+    h += `<div class="xs muted">Командам з напрямком: ${d.total.withDir} з ${d.total.teams}. Малі групи й КР — за командою, до якої їх внесено.</div>`;
     return h;
   };
 
@@ -1293,6 +1334,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
     if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
+    if (c.stats !== false && (S.me.scopes || []).length) manage.splice((c.reportItems || []).length ? 1 : 0, 0, { k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-teal' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
     const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
     if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
@@ -1568,7 +1610,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   // ───────────── РЕЄСТРАЦІЯ ─────────────
   VIEWS.onboarding = function () {
     const r = S.reg;
-    let h = `<div class="row between"><div class="row">${canBack() ? `<button type="button" class="icon-btn" data-a="back" aria-label="Назад">${icon('back')}</button>` : '<div class="logo">YL</div>'}<b>Young Life Україна</b></div><span class="small muted">Крок ${r.step} з 3</span></div>
+    let h = `<div class="row between"><div class="row">${canBack() ? `<button type="button" class="icon-btn" data-a="back" aria-label="Назад">${icon('back')}</button>` : '<div class="logo"><img src="icons/yl-mark.png" alt="Young Life"></div>'}<b>Young Life Україна</b></div><span class="small muted">Крок ${r.step} з 3</span></div>
       <div class="track"><i style="width:${Math.round(r.step / 3 * 100)}%;background:var(--accent);border-radius:4px"></i></div>`;
     if (r.step === 1) {
       h += `<div><h1>Привіт! Давай познайомимось</h1><p class="muted" style="margin:6px 0 0">Тут звіти, знані по імені, календар і статистика твоєї команди. Паролі не потрібні — тебе впізнає Telegram.</p></div>
@@ -1591,7 +1633,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   VIEWS.pending = function () {
     const m = me();
-    return `<div class="row"><div class="logo">YL</div><b>Young Life Україна</b></div>
+    return `<div class="row"><div class="logo"><img src="icons/yl-mark.png" alt="Young Life"></div><b>Young Life Україна</b></div>
       <div style="width:72px;height:72px;border-radius:36px;background:rgba(20,184,166,.16);color:var(--teal);display:flex;align-items:center;justify-content:center;margin-top:16px">${icon('check', 36)}</div>
       <h1>Заявку надіслано</h1><p class="muted" style="margin:0">Її розгляне ${esc(m.approvers || 'керівництво')}. Щойно доступ відкриють — бот напише тобі в Telegram.</p>
       <div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span><span class="tag warn">очікує</span></div>`).join('')}</div>
@@ -1823,7 +1865,22 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.statsScope = (d, el) => { S.stats.scope = el.value; loadStats(); };
   A.statsCat = (d) => { S.stats.cat = d.c; loadStats(); };
   A.statsReload = () => { S.statsMem = {}; loadStats(); };
-  A.statsPeriod = (d) => { S.stats.period = d.p; loadStats(); };
+  A.statsPeriod = (d) => {
+    const o = d.s === 'dirs' ? S.dirs : S.stats;
+    o.period = d.p;
+    if (d.p === 'custom') {
+      // свій період: за замовчуванням — з 1 вересня (навчальний рік) до сьогодні
+      const t = new Date(); if (!o.to) o.to = ymd(t);
+      if (!o.from) o.from = (t.getMonth() >= 8 ? t.getFullYear() : t.getFullYear() - 1) + '-09-01';
+    }
+    if (d.s === 'dirs') loadDirs(); else loadStats();
+  };
+  A.periodApply = (d) => {
+    const o = d.s === 'dirs' ? S.dirs : S.stats;
+    if (!o.from || !o.to) return toast('Вкажи обидві дати');
+    if (o.from > o.to) { const x = o.from; o.from = o.to; o.to = x; }
+    if (d.s === 'dirs') loadDirs(); else loadStats();
+  };
   A.statsDrill = (d) => { setPick('stats', d.k); S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
   A.statsFindToggle = () => { S.stats.find = !S.stats.find; render(); const i = document.getElementById('statsFindIn'); if (i) i.focus(); };
   A.statsFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('#statsFindList [data-q]').forEach((x) => x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0)); };

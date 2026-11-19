@@ -794,6 +794,19 @@ ok(fz.ok && fz.data.balance === balZ, 'каса: скасування звірк
 r = await api(VOVA, 'nudge', { units: ['a:a1'], type: 'mg' });
 ok(!r.ok, 'нагадати можна лише про клуб');
 
+
+// ── свій період і напрямки ──
+r = await api(VOVA, 'stats', { units: [impTeam.key], cat: 'club', period: 'custom', from: '2025-10-01', to: '2025-10-31' });
+ok(r.ok && r.data.period === 'custom' && r.data.kpis[0].v === '1' && r.data.kpis[1].v === '12' && r.data.range.from === '2025-10-01', 'статистика: свій період');
+r = await api(VOVA, 'stats', { units: [impTeam.key], cat: 'club', period: 'custom', from: '2024-01-01', to: '2025-12-31' });
+ok(r.ok && r.data.chart.bars.length === 24, 'статистика: довгий період — по місяцях');
+r = await api(VOVA, 'teamSave', { id: impTeam.unitId, name: 'Імпорт Тест', areaId: 'a1', dir: 'WyldLife' });
+r = await api(VOVA, 'dirStats', { units: ['a:a1'], period: 'custom', from: '2025-10-01', to: '2025-10-31' });
+const wy = r.ok && r.data.rows.find((x) => x.dir === 'WyldLife');
+ok(wy && wy.clubs === 1 && wy.teens === 12 && wy.teams === 1 && r.data.rows.length >= 5, 'напрямки: статистика за напрямком ' + JSON.stringify(wy));
+r = await api(LEAD, 'dirStats', {});
+ok(r.ok, 'напрямки: доступно в межах своєї команди');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

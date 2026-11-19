@@ -142,6 +142,7 @@ const NEEDS = {
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   memberAdd: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
+  dirStats: { log: 'stats' },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
 };
@@ -159,7 +160,7 @@ async function handleApi(req, env, ctx) {
     const d = body.data || {};
     await S.loadBase();
     if (need.log === 'week') await S.loadLog(weekKey_(new Date()));
-    if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period), true);
+    if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
     if (need.events) await S.loadEvents();
     if (need.known) {
@@ -2029,7 +2030,7 @@ API.stats = function (c0, d) {
   if (!scope) deny_();
   const cats = statCats_(c, scope);
   const cat = cats.some((x) => x.key === d.cat) ? d.cat : cats[0].key;
-  return computeStats_(c, scope, cat, d.period || 'month', cats, scopes);
+  return computeStats_(c, scope, cat, d.period || 'month', cats, scopes, customRange_(d));
 };
 
 API.nudge = function (c, d) {
@@ -2043,7 +2044,20 @@ API.nudge = function (c, d) {
   return { sent: miss.people.length };
 };
 
-function statsFromWeek(period) {
+// свій період: from..to (YYYY-MM-DD), не довше 5 років
+function customRange_(d) {
+  const ok = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '');
+  if (!d || d.period !== 'custom' || !ok(d.from)) return null;
+  const today = kyivDay(new Date());
+  let to = ok(d.to) ? d.to : today;
+  if (to > today) to = today;
+  let from = d.from > to ? to : d.from;
+  if (from < addDaysKey_(to, -366 * 5)) from = addDaysKey_(to, -366 * 5);
+  return { from: from, to: to, days: dayDiff_(from, to) + 1 };
+}
+function statsFromWeek(period, d) {
+  const cr = customRange_(Object.assign({ period: period }, d || {}));
+  if (cr) return weekKey_(cr.from);
   const nowWk = weekKey_(new Date());
   const weeks = period === 'year' ? 53 : period === 'q' ? 13 : 8;
   return addDaysKey_(nowWk, -7 * weeks);
@@ -2092,21 +2106,63 @@ function statCats_(c, scope) {
   return cats;
 }
 
-function computeStats_(c, scope, cat, period, cats, scopes) {
+API.dirStats = function (c0, d) {
+  const c = P_(c0, 'see.stats');
+  if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
+  const p = pickScope_(c, keysOf_(d));
+  const scope = p.scope || p.scopes[0];
+  if (!scope) deny_();
+  const st = loadStruct_();
+  const cr = customRange_(d);
+  const P = cr ? Math.max(1, Math.ceil(cr.days / 7)) : { week: 1, month: 4, q: 13, year: 52 }[d.period] || 4;
+  const start = cr ? cr.from : addDaysKey_(weekKey_(new Date()), -7 * (P - 1));
+  const inPer = (r) => (cr ? String(r.date).slice(0, 10) >= cr.from && String(r.date).slice(0, 10) <= cr.to : r.week >= start);
+  const teamIds = scopeTeamIds_(scope);
+  const dirOf = (id) => (DIRS.indexOf((st.team[id] || {}).dir) >= 0 ? st.team[id].dir : '');
+  const rows = dd_(loadLog_().filter((r) => r.teamId && teamIds.indexOf(r.teamId) >= 0 && inPer(r) && r.mode !== MODE.none));
+  const tRoles = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && teamIds.indexOf(r.unitId) >= 0);
+  const one = (dir) => {
+    const ids = teamIds.filter((id) => dirOf(id) === dir);
+    const set = {};
+    ids.forEach((id) => { set[id] = 1; });
+    const rr = rows.filter((r) => set[r.teamId]);
+    const clubs = rr.filter((r) => r.type === 'club'), mgs = rr.filter((r) => r.type === 'mg'), krs = rr.filter((r) => r.type === 'kr');
+    const teens = clubs.reduce((a, r) => a + (Number(r.count) || 0), 0);
+    return {
+      dir: dir, label: dir || 'Без напрямку', teams: ids.length,
+      people: uniq_(tRoles.filter((r) => set[r.unitId]).map((r) => r.tgId)).length,
+      clubs: clubs.length, teens: teens, avg: clubs.length ? Math.round(teens / clubs.length * 10) / 10 : 0,
+      newT: clubs.reduce((a, r) => a + (Number(r.newT) || 0), 0),
+      mg: mgs.length, mgPeople: mgs.reduce((a, r) => a + (Number(r.count) || 0), 0),
+      kr: Math.round(krs.reduce((a, r) => a + (Number(r.hours) || 0), 0) * 10) / 10,
+      known: ids.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0),
+      names: dir ? [] : ids.map((id) => st.team[id].name).sort(),
+    };
+  };
+  const list = DIRS.map(one).concat([one('')]).filter((x) => x.dir || x.teams);
+  return { scope: scope, scopes: p.scopes, period: cr ? 'custom' : d.period || 'month', range: cr, rows: list,
+    total: { teams: teamIds.length, withDir: teamIds.filter(dirOf).length } };
+};
+
+function computeStats_(c, scope, cat, period, cats, scopes, cr) {
   const st = loadStruct_();
   const teamIds = scopeTeamIds_(scope);
   const inScope = {};
   teamIds.forEach((id) => { inScope[id] = true; });
-  const P = { week: 1, month: 4, q: 13, year: 52 }[period] || 4;
+  if (period === 'custom' && !cr) period = 'month';
+  const P = cr ? Math.max(1, Math.ceil(cr.days / 7)) : { week: 1, month: 4, q: 13, year: 52 }[period] || 4;
   const nowWk = weekKey_(new Date());
-  const periodStart = addDaysKey_(nowWk, -7 * (P - 1));
+  const periodStart = cr ? cr.from : addDaysKey_(nowWk, -7 * (P - 1));
   const chartWeeks = period === 'year' ? 52 : period === 'q' ? 13 : 8;
-  const chartStart = addDaysKey_(nowWk, -7 * (chartWeeks - 1));
+  const chartStart = cr ? weekKey_(cr.from) : addDaysKey_(nowWk, -7 * (chartWeeks - 1));
+  const chartEnd = cr ? weekKey_(cr.to) : nowWk;
+  const byMonth = period === 'year' || (cr && cr.days > 120);
   const from = periodStart < chartStart ? periodStart : chartStart;
-  const rowsAll = loadLog_().filter((r) => (inScope[r.teamId] || upperRowIn_(scope, r)) && r.week >= from);
+  const inPer = (r) => (cr ? String(r.date).slice(0, 10) >= cr.from && String(r.date).slice(0, 10) <= cr.to : r.week >= periodStart);
+  const rowsAll = loadLog_().filter((r) => (inScope[r.teamId] || upperRowIn_(scope, r)) && (cr ? inPer(r) : r.week >= from));
   const rows = dd_(rowsAll);
-  const inP = rows.filter((r) => r.week >= periodStart);
-  const inPAll = rowsAll.filter((r) => r.week >= periodStart);
+  const inP = rows.filter(inPer);
+  const inPAll = rowsAll.filter(inPer);
   const ok = (r) => r.mode !== MODE.none;
   const sum = (arr, f) => arr.reduce((a, r) => a + (Number(f(r)) || 0), 0);
   const of = (type, arr) => (arr || inP).filter((r) => r.type === type);
@@ -2115,7 +2171,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
 
   const clubs = of('club').filter(ok), mgs = of('mg').filter(ok), krs = of('kr').filter(ok);
   const knownTotal = teamIds.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + selfKnown_(scope);
-  const fin = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= periodStart.slice(0, 7));
+  const fin = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= periodStart.slice(0, 7) && (!cr || r.date.slice(0, 7) <= cr.to.slice(0, 7)));
   // люди в командах: активні командні ролі
   const tRoles = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && inScope[r.unitId]);
   const peopleIn = (ids) => { const set = {}; ids.forEach((id) => { set[id] = true; }); return uniq_(tRoles.filter((r) => set[r.unitId]).map((r) => r.tgId)).length; };
@@ -2123,7 +2179,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const officeIn = (key) => { const u = keyUnit_(key); return uniq_(uRoles.filter((r) => within_(u, r)).map((r) => r.tgId)); };
   const pplTotal = uniq_(tRoles.map((r) => r.tgId).concat(uRoles.map((r) => r.tgId))).length;
   const pplTeams = uniq_(tRoles.map((r) => r.tgId)).length;
-  const pplNew = uniq_(tRoles.filter((r) => String(r.requested).slice(0, 10) >= periodStart).map((r) => r.tgId)).length;
+  const pplNew = uniq_(tRoles.filter((r) => String(r.requested).slice(0, 10) >= periodStart && (!cr || String(r.requested).slice(0, 10) <= cr.to)).map((r) => r.tgId)).length;
   const pplRank = (max) => uniq_(tRoles.filter((r) => r.rank <= max).map((r) => r.tgId)).length;
   const K = {
     people: scope.level === 'team' ? [[nf(pplTeams), 'Людей у команді'], [nf(pplRank(RANK.MG)), 'Лідерів і вище'], [nf(pplNew), 'Нових за період']]
@@ -2143,16 +2199,22 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const titles = { people: 'Ролі в командах', overview: 'Підлітки на клубах', club: 'Підлітки на клубах', mg: 'Учасники малих груп', kr: 'Години контактної роботи', known: 'Нові знані по імені', finance: 'Надходження, ₴' };
   const buckets = [];
   const byKey = {};
-  if (period === 'year') {
+  if (byMonth) {
     const ML = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
-    const cur = kyivDay(new Date());
+    const cur = cr ? cr.to : kyivDay(new Date());
     let y = Number(cur.slice(0, 4)), m = Number(cur.slice(5, 7));
+    const firstM = cr ? cr.from.slice(0, 7) : '';
     const tmp = [];
-    for (let i = 0; i < 12; i++) { tmp.unshift({ key: y + '-' + String(m).padStart(2, '0'), label: ML[m - 1], v: 0 }); m--; if (!m) { m = 12; y--; } }
+    for (let i = 0; i < (cr ? 60 : 12); i++) {
+      const key = y + '-' + String(m).padStart(2, '0');
+      if (cr && key < firstM) break;
+      tmp.unshift({ key: key, label: ML[m - 1] + (cr && cr.days > 366 ? ' ' + String(y).slice(2) : ''), v: 0 });
+      m--; if (!m) { m = 12; y--; }
+    }
     tmp.forEach((b) => { buckets.push(b); byKey[b.key] = b; });
     rows.forEach((r) => { const b = byKey[String(r.date).slice(0, 7)]; if (b) b.v += Number(metric(r)) || 0; });
   } else {
-    for (let k = chartStart; k <= nowWk; k = addDaysKey_(k, 7)) { const b = { key: k, label: k.slice(8, 10) + '.' + k.slice(5, 7), v: 0 }; buckets.push(b); byKey[k] = b; }
+    for (let k = chartStart; k <= chartEnd; k = addDaysKey_(k, 7)) { const b = { key: k, label: k.slice(8, 10) + '.' + k.slice(5, 7), v: 0 }; buckets.push(b); byKey[k] = b; }
     rows.forEach((r) => { const b = byKey[r.week]; if (b) b.v += Number(metric(r)) || 0; });
   }
 
@@ -2204,10 +2266,10 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const roleBars = ROLES.filter((x) => x.level === 'team').map((x) => ({ label: { CAPTAIN: 'Кап', TEAM_ADMIN: 'Адм', DGL: 'DGL', LEADER: 'Лід', HELPER: 'Пом', SUGAR: 'Сах', VOLUNTEER: 'Вол' }[x.key] || x.label.slice(0, 3), v: uniq_(tRoles.filter((r) => r.key === x.key).map((r) => r.tgId)).length }));
   if (uRoles.length) roleBars.push({ label: 'Офіс', v: uniq_(uRoles.map((r) => r.tgId)).length });
   return {
-    scope, scopes, cats, cat, period,
+    scope, scopes, cats, cat, period, range: cr,
     kpis: K[cat].map((k) => ({ v: k[0], l: k[1] })),
     chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер' + (uRoles.length ? ' · Офіс (ролі ерій і регіонів)' : ''), bars: roleBars }
-      : { title: titles[cat], sub: period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
+      : { title: titles[cat], sub: cr ? (byMonth ? 'по місяцях' : 'по тижнях') + ' · ' + fmtDue_(cr.from) + ' ' + cr.from.slice(0, 4) + ' – ' + fmtDue_(cr.to) + ' ' + cr.to.slice(0, 4) : period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
     breakdown: { title: cat === 'people' && scope.level === 'team' ? 'Ролі' : ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
     path, report,
     weekLabel: weekLabel_(nowWk),
@@ -2555,11 +2617,11 @@ function importHistory_(team, t, ex) {
     const k = type + '|' + d + '|' + (type === 'club' ? '' : o.author_id || o.author || '');
     if (has[k]) return false;
     has[k] = 1;
-    reps.push(Object.assign({ id: uid_(), created: now, date: d, week: weekKey_(d), type: type, mode: 'event', team_id: team.id, area_id: areaId, region_id: regionId, count: 0, new_t: 0, leaders: 0, hours: 0, topic: '', note: '', author_id: '', author: 'Командна табличка', pid: type === 'club' ? null : uid_() }, o));
+    reps.push(Object.assign({ id: uid_(), created: now, date: d, week: weekKey_(d), type: type, mode: MODE.event, team_id: team.id, area_id: areaId, region_id: regionId, count: 0, new_t: 0, leaders: 0, hours: 0, topic: '', note: '', author_id: '', author: 'Командна табличка', pid: type === 'club' ? null : uid_() }, o));
     return true;
   };
   const res = { club: 0, mg: 0, kr: 0, known: 0, fin: 0, unknownAuthors: 0 };
-  (t.club || []).forEach((c) => { if (add('club', c[0], { mode: c[1] || c[2] ? 'event' : 'none', count: c[1] || 0, leaders: c[2] || 0, topic: clip_(c[3] || '').slice(0, 200), note: clip_(c[4] || '').slice(0, 300) })) res.club++; });
+  (t.club || []).forEach((c) => { if (add('club', c[0], { mode: c[1] || c[2] ? MODE.event : MODE.none, count: c[1] || 0, leaders: c[2] || 0, topic: clip_(c[3] || '').slice(0, 200), note: clip_(c[4] || '').slice(0, 300) })) res.club++; });
   (t.mg || []).forEach((m) => {
     const p = teamPerson_(team.id, m[2]);
     if (!p) res.unknownAuthors++;
