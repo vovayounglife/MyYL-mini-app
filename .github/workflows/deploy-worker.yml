@@ -1,0 +1,78 @@
+# Автоматичне викладання бекенду на Cloudflare після кожної зміни в папці worker/
+name: Сервер (Cloudflare)
+
+on:
+  push:
+    branches: [main]
+    paths: ['worker/**', '.github/workflows/deploy-worker.yml']
+  workflow_dispatch:
+
+concurrency: deploy-worker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      SYNC_KEY: ${{ secrets.SYNC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Тести
+        run: npm test
+
+      - name: Перевірка секретів
+        run: |
+          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BOT_TOKEN SYNC_KEY; do
+            if [ -z "${!s}" ]; then echo "::error::Не задано секрет $s (Settings → Secrets and variables → Actions)"; exit 1; fi
+          done
+
+      - name: Встановити wrangler
+        run: npm i -g wrangler@4
+
+      - name: База D1
+        run: |
+          ID=$(wrangler d1 list --json | jq -r '.[] | select(.name=="yl-db") | .uuid')
+          if [ -z "$ID" ]; then
+            wrangler d1 create yl-db
+            ID=$(wrangler d1 list --json | jq -r '.[] | select(.name=="yl-db") | .uuid')
+          fi
+          echo "D1: $ID"
+          sed -i "s/__D1_ID__/$ID/" wrangler.toml
+          wrangler d1 execute yl-db --remote --file=schema.sql
+
+      - name: Викласти
+        id: deploy
+        run: |
+          wrangler deploy 2>&1 | tee deploy.log
+          URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.workers\.dev' deploy.log | head -1)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Секрети
+        run: |
+          printf '%s' "$BOT_TOKEN" | wrangler secret put BOT_TOKEN
+          printf '%s' "$SYNC_KEY" | wrangler secret put SYNC_KEY
+
+      - name: Підключити бота
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          sleep 5
+          RES=$(curl -s -X POST "$URL/admin/setup" -H "x-sync-key: $SYNC_KEY")
+          echo "$RES" | jq '{ok, bot, api, webhook}'
+          {
+            echo "### ✅ Сервер працює"
+            echo ""
+            echo "Адреса сервера: **$URL**"
+            echo ""
+            echo "Бот: @$(echo "$RES" | jq -r .bot)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$RES" | jq -e .ok > /dev/null

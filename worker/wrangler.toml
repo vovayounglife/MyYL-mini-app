@@ -1,0 +1,20 @@
+# Young Life Україна · Mini App · бекенд на Cloudflare Workers
+name = "yl-mini-app"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+APP_URL = "https://vovayounglife.github.io/MyYL-mini-app/"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "yl-db"
+database_id = "__D1_ID__"
+
+# щогодини: нагадування про звіти (у налаштований день і годину) і про події (о 9:00 за Києвом)
+[triggers]
+crons = ["5 * * * *"]
+
+[observability]
+enabled = true
