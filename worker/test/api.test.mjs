@@ -6,7 +6,10 @@ const TOKEN = '123:ABC';
 const env = { DB: makeD1(new URL('../schema.sql', import.meta.url)), BOT_TOKEN: TOKEN, SYNC_KEY: 'k3y', APP_URL: 'https://vovayounglife.github.io/MyYL-mini-app/' };
 const sent = [];
 globalThis.fetch = async (url, opt) => {
-  const m = String(url).split('/').pop(); const b = JSON.parse(opt.body || '{}');
+  const m = String(url).split('/').pop();
+  let b;
+  if (opt.body instanceof FormData) { b = {}; for (const [k, v] of opt.body.entries()) b[k] = typeof v === 'string' ? v : { name: v.name, text: await v.text() }; }
+  else b = JSON.parse(opt.body || '{}');
   sent.push({ m, ...b });
   const result = m === 'getMe' ? { username: 'yl_bot' } : true;
   return new Response(JSON.stringify({ ok: true, result }));
@@ -221,6 +224,51 @@ left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
 ok(left === 0 && sent.filter((s) => s.text === 'Велика розсилка').length === 46, 'cron дослав решту, без дублів');
 r = await api(VOVA, 'broadcastInfo');
 ok(r.data.history.length === 2 && r.data.queued === 0, 'історія розсилок');
+
+
+// фінанси вносять лише капітан / адмін команди
+r = await api(RD, 'financeSave', { teamId: capTeam.id, month: T.kyivDay(new Date()).slice(0, 7), prev: 0, office: 1, church: 0, team: 0, spent: 0 });
+ok(!r.ok && /лише Капітан/.test(r.message), 'фінанси: РД не може вносити');
+r = await api(VOVA, 'financeGet', { teamId: capTeam.id });
+ok(r.ok && r.data.canEdit === false && r.data.current.balance === 350, 'фінанси: Раб Божий бачить, але не редагує');
+r = await api(CAP, 'financeGet', { teamId: capTeam.id });
+ok(r.ok && r.data.canEdit === true, 'фінанси: капітан редагує');
+
+// подія з датою кінця
+const d1 = T.kyivDay(new Date(Date.now() - 864e5)), d2 = T.kyivDay(new Date(Date.now() + 2 * 864e5));
+r = await api(VOVA, 'eventSave', { level: 'nat', unitId: '', title: 'Табір триває', date: d1, end: d2 });
+ok(r.ok, 'подія на кілька днів');
+r = await api(VOVA, 'eventSave', { level: 'nat', unitId: '', title: 'X', date: d2, end: d1 });
+ok(!r.ok, 'кінець раніше за початок — помилка');
+r = await api(LEAD, 'events');
+const camp = r.data.find((e) => e.title === 'Табір триває');
+ok(camp && camp.end === d2 && camp.date === d1, 'подія, що вже йде, видна з датою кінця');
+
+// рівні статистики: батьківські ключі
+r = await api(VOVA, 'stats', { scope: 't:' + capTeam.id });
+ok(r.data.scopes.find((x) => x.key === 't:' + capTeam.id).parent === 'a:a1' && r.data.scopes.find((x) => x.key === 'a:a1').parent === 'r:r0', 'статистика: є батьківські ключі');
+
+// звіт
+const today = T.kyivDay(new Date()), monthAgo = T.kyivDay(new Date(Date.now() - 30 * 864e5));
+me = await api(AD, 'me');
+ok(me.data.caps.reportItems.join() === 'club,mg,kr,known,finance', 'звіт: пункти для Еріа Директора');
+r = await api(AD, 'report', { units: ['r:r0'], items: ['club'], from: monthAgo, to: today });
+ok(!r.ok, 'звіт: ЕД не може замовити регіон (вище за свій рівень)');
+r = await api(AD, 'report', { units: ['a:a1', 't:' + capTeam.id], items: ['club', 'finance', 'known'], from: monthAgo, to: today, split: true });
+ok(r.ok && r.data.rows.length === 1 + 2 + 1 && r.data.total, 'звіт: ерія з розбивкою + команда + разом');
+const capRow = r.data.rows.find((x) => x.child && x.name === 'Нова команда');
+ok(capRow && capRow.values.club.v === '12' && capRow.values.finance.inc === '550' && capRow.values.known.total === '1', 'звіт: цифри команди вірні');
+ok(r.data.total.values.club.v === '12', 'звіт: «Разом» без подвійного рахунку');
+r = await api(VOVA, 'report', { units: ['nat', 'r:r0'], items: ['club', 'kr'], from: monthAgo, to: today });
+ok(r.ok, 'звіт: Раб Божий — Україна і регіон');
+r = await api(VOVA, 'report', { units: ['a:a1'], items: ['club'], from: monthAgo, to: today });
+ok(!r.ok, 'звіт: Раб Божий не замовляє ерію (два рівні нижче)');
+r = await api(SUG, 'report', { units: ['t:' + capTeam.id], items: ['club', 'finance'], from: monthAgo, to: today });
+ok(r.ok && r.data.sections.length === 1 && r.data.sections[0].key === 'club', 'звіт: сахарок — лише клуби');
+sent.length = 0;
+r = await api(AD, 'report', { units: ['a:a1'], items: ['club', 'mg'], from: monthAgo, to: today, send: true });
+const doc = sent.find((x) => x.m === 'sendDocument');
+ok(r.ok && doc && doc.chat_id === '3' && /<table>/.test(doc.document.text) && /Тернопіль/.test(doc.document.text), 'звіт: HTML-файл надіслано в Telegram');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

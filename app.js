@@ -24,6 +24,8 @@
     back: 'M15 18l-6-6 6-6',
     chev: 'M9 18l6-6-6-6',
     check: 'M20 6L9 17l-5-5',
+    doc: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5',
+    phoneApp: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2',
     tree: 'M12 3v6M12 9H5v5M12 9h7v5M3 14h4v4H3zM17 14h4v4h-4zM10 14h4v4h-4zM12 9v5',
     send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
@@ -65,6 +67,7 @@
     reg: { step: 1, name: '', phone: '', email: '', regionId: '', areaId: '', teamId: '', newTeam: '', roles: {}, upper: false },
     roleReq: null, profile: null,
     myyl: { data: null, at: null, open: null },
+    rep: { units: {}, items: {}, preset: 'month', from: '', to: '', split: false, data: null, busy: false },
     bc: { info: null, text: '', audience: 'all', button: true, sending: false },
   };
   let toastTimer = null;
@@ -77,7 +80,7 @@
   };
   const statsKey = () => [S.stats.scope || '', S.stats.cat, S.stats.period].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.known.edit && !S.structEdit && !S.thanks;
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -179,6 +182,7 @@
     if (screen === 'requests') loadReqs();
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
     if (screen === 'broadcast') loadBc();
+    if (screen === 'report') initReport();
     if (screen === 'structure') { S.structEdit = null; loadTree(); }
     if (screen === 'stats') { S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; }
     if (screen === 'profile') { S.roleReq = null; S.profile = Object.assign({}, S.me.profile || {}); }
@@ -297,6 +301,7 @@
       <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
     syncBack();
+    document.querySelectorAll('.pills.lvl').forEach((p) => { const on = p.querySelector('.pill.on'); if (on) p.scrollLeft = on.offsetLeft - p.offsetLeft - (p.clientWidth - on.clientWidth) / 2; });
   }
   function renderFatal() {
     $app.innerHTML = `<main class="main no-nav"><div class="row"><div class="logo">YL</div><h2>Young Life Україна</h2></div>
@@ -434,10 +439,18 @@
   // ───────────── КАЛЕНДАР ─────────────
   const LVL = { nat: 'Національні', region: 'Регіон', area: 'Ерія', team: 'Команда' };
   function evDateParts(e) { const d = parseDay(e.date); return { day: d.getDate(), wd: WD[d.getDay()], mon: MSHORT[d.getMonth()], month: MFULL[d.getMonth()] + ' ' + d.getFullYear(), d: d }; }
+  const fmtShortDay = (k) => { const d = parseDay(k); return d.getDate() + ' ' + MSHORT[d.getMonth()]; };
+  const fmtRange = (e) => {
+    const a = parseDay(e.date);
+    if (!e.end) return a.getDate() + ' ' + MGEN[a.getMonth()];
+    const b = parseDay(e.end);
+    return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear() ? a.getDate() + '–' + b.getDate() + ' ' + MGEN[b.getMonth()] : a.getDate() + ' ' + MGEN[a.getMonth()] + ' – ' + b.getDate() + ' ' + MGEN[b.getMonth()];
+  };
   function evCard(e) {
     const p = evDateParts(e);
+    const going = e.date < ymd(new Date());
     return `<button type="button" class="ev" data-a="openEv" data-id="${esc(e.id)}"><span class="ev-date tag lvl-${e.level}"><b>${p.day}</b><span>${p.wd}</span></span>
-      <span class="grow"><span class="b" style="display:block">${esc(e.title)}</span><span class="small muted">${esc(e.levelLabel)}${e.place ? ' · ' + esc(e.place) : ''}${e.time ? ' · ' + esc(e.time) : ''}</span></span>
+      <span class="grow"><span class="b" style="display:block">${esc(e.title)}</span><span class="small muted">${going ? '<b style="color:var(--teal)">триває</b> · ' : ''}${e.end ? 'до ' + esc(fmtShortDay(e.end)) + ' · ' : ''}${esc(e.levelLabel)}${e.place ? ' · ' + esc(e.place) : ''}${e.time ? ' · ' + esc(e.time) : ''}</span></span>
       ${e.isGoing ? '<span class="xs b" style="color:var(--teal)">Йду</span>' : ''}</button>`;
   }
   VIEWS.calendar = function () {
@@ -459,7 +472,7 @@
     const p = evDateParts(e);
     let h = header(e.title, '', '');
     h += `<div><span class="tag lvl-${e.level}">${esc(e.levelLabel)}</span></div>`;
-    h += `<div class="card rows"><div class="kv"><span>Коли</span><span>${p.day} ${MGEN[p.d.getMonth()]}${e.time ? ', ' + esc(e.time) : ''}</span></div>
+    h += `<div class="card rows"><div class="kv"><span>Коли</span><span>${esc(fmtRange(e))}${e.time ? ', ' + esc(e.time) : ''}</span></div>
       ${e.place ? `<div class="kv"><span>Де</span><span>${esc(e.place)}</span></div>` : ''}<div class="kv"><span>Організатор</span><span>${esc(e.author || '—')}</span></div></div>`;
     if (e.desc) h += `<div style="white-space:pre-line">${esc(e.desc)}</div>`;
     h += `<div class="row small muted">${icon('club', 18)}${e.going} ${e.going % 10 === 1 && e.going % 100 !== 11 ? 'людина йде' : 'людей йдуть'}</div>`;
@@ -481,8 +494,10 @@
       ? `<label class="f"><span>Календар</span><select class="in" data-bind="evForm.unit">${units.map((u, i) => `<option value="${i}"${String(i) === String(f.unit) ? ' selected' : ''}>${esc(u.label)}</option>`).join('')}</select></label>`
       : `<div class="small muted">Додається в календар: <b>${esc(units[0] ? units[0].label : '')}</b></div>`;
     h += `<label class="f"><span>Назва</span><input class="in" type="text" data-bind="evForm.title" value="${esc(f.title)}" placeholder="Наприклад: Різдвяний клуб"></label>
-      <div class="grid2"><label class="f"><span>Дата</span><input class="in" type="date" data-bind="evForm.date" value="${esc(f.date)}" min="${ymd(new Date())}"></label>
-      <label class="f"><span>Час</span><input class="in" type="time" data-bind="evForm.time" value="${esc(f.time)}"></label></div>
+      <div class="grid2"><label class="f"><span>Дата початку</span><input class="in" type="date" data-bind="evForm.date" data-ch="evDate" value="${esc(f.date)}" min="${ymd(new Date())}"></label>
+      <label class="f"><span>Дата кінця</span><input class="in" type="date" data-bind="evForm.end" value="${esc(f.end || '')}" min="${esc(f.date)}"></label></div>
+      <div class="xs muted" style="margin-top:-6px">Дата кінця — для подій на кілька днів (табір, конференція). Для одноденної залиш порожньою.</div>
+      <label class="f"><span>Час початку</span><input class="in" type="time" data-bind="evForm.time" value="${esc(f.time)}"></label>
       <label class="f"><span>Місце</span><input class="in" type="text" data-bind="evForm.place" value="${esc(f.place)}" placeholder="Адреса або назва"></label>
       <label class="f"><span>Опис</span><textarea class="in" rows="3" data-bind="evForm.desc">${esc(f.desc)}</textarea></label>
       <button type="button" class="btn" data-a="evSave">Додати подію</button></div>`;
@@ -492,14 +507,11 @@
   // ───────────── СТАТИСТИКА ─────────────
   VIEWS.stats = function () {
     const st = S.stats, d = st.data;
-    let h = header('Статистика', '', d && (d.scopes || []).length > 1 ? `<button type="button" class="icon-btn" data-a="statsFindToggle" aria-label="Знайти регіон, ерію чи команду"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg></button>` : '');
+    const pathSub = d && d.path && d.path.length > 1 ? d.path.slice(0, -1).map((p) => p.label).join(' › ') : '';
+    let h = header('Статистика', pathSub, d && (d.scopes || []).length > 1 ? `<button type="button" class="icon-btn" data-a="statsFindToggle" aria-label="Знайти регіон, ерію чи команду"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg></button>` : '');
     if (!d) return h + loading();
-    // хлібні крихти
-    if (d.path && d.path.length) {
-      h += `<nav aria-label="Рівень" class="row wrap" style="gap:4px">${d.path.map((p, i) => i === d.path.length - 1
-        ? `<span class="pill on" style="display:inline-flex;align-items:center">${esc(p.label)}</span>`
-        : `<button type="button" class="pill" data-a="statsDrill" data-k="${esc(p.key)}">${esc(p.label)}</button><span class="muted" aria-hidden="true">›</span>`).join('')}</nav>`;
-    }
+    // перемикач рівня й сусідніх одиниць — без гортання
+    h += statsLevelBar(d);
     // пошук рівня
     if (st.find) {
       const LV = { nat: 'Україна', region: 'Регіон', area: 'Ерія', team: 'Команда' };
@@ -609,6 +621,23 @@
     return h;
   };
 
+  const LEVELS = [['nat', 'Україна'], ['region', 'Регіон'], ['area', 'Ерія'], ['team', 'Команда']];
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  function statsLevelBar(d) {
+    const sc = d.scopes || [], by = {};
+    sc.forEach((x) => { by[x.key] = x; });
+    const cur = by[d.scope.key] || d.scope;
+    const lv = LEVELS.filter((l) => sc.some((x) => x.level === l[0]));
+    let sib = cur.level === 'nat' ? [] : sc.filter((x) => x.level === cur.level && x.parent === cur.parent).sort(byName);
+    // одна в своїй гілці — показуємо сусідів рівнем вище (напр., усі команди регіону)
+    const gp = by[cur.parent] && by[cur.parent].parent;
+    if (sib.length < 2 && gp) sib = sc.filter((x) => x.level === cur.level && by[x.parent] && by[x.parent].parent === gp).sort(byName);
+    let h = '';
+    if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === cur.level}" class="${l[0] === cur.level ? 'on' : ''}" data-a="statsLevel" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
+    if (sib.length > 1) h += `<div class="pills lvl">${sib.map((x) => `<button type="button" class="pill${x.key === cur.key ? ' on' : ''}" data-a="statsDrill" data-k="${esc(x.key)}">${esc(x.name)}</button>`).join('')}</div>`;
+    return h;
+  }
+
   // ───────────── МОЯ КОМАНДА В MyYL ─────────────
   const plural = (n, one, few, many) => { const a = n % 10, b = n % 100; return n + ' ' + (a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many); };
   const LV_PEOPLE = { nat: 'Національна команда', region: 'Команда регіону', area: 'Команда ерії', team: 'Склад команди' };
@@ -705,13 +734,82 @@
   };
   const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 
+  // ───────────── ПІДГОТУВАТИ ЗВІТ ─────────────
+  const REP_ITEMS = { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота', known: 'Знані по імені', finance: 'Фінанси' };
+  const REP_PRESETS = [['week', 'Цей тиждень'], ['lastweek', 'Минулий тиждень'], ['month', 'Цей місяць'], ['lastmonth', 'Минулий місяць'], ['q', '3 місяці'], ['year', 'З початку року'], ['custom', 'Свій період']];
+  const repUnits = () => (S.me.scopes || []).filter((x) => x.depth <= 1);
+  function presetRange(p) {
+    const t = new Date(); t.setHours(12, 0, 0, 0);
+    const dow = (t.getDay() + 6) % 7, D = 864e5;
+    if (p === 'week') return [ymd(new Date(t - dow * D)), ymd(t)];
+    if (p === 'lastweek') return [ymd(new Date(t - (dow + 7) * D)), ymd(new Date(t - (dow + 1) * D))];
+    if (p === 'month') return [ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(t)];
+    if (p === 'lastmonth') return [ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)), ymd(new Date(t.getFullYear(), t.getMonth(), 0))];
+    if (p === 'q') return [ymd(new Date(t.getFullYear(), t.getMonth() - 3, t.getDate())), ymd(t)];
+    if (p === 'year') return [ymd(new Date(t.getFullYear(), 0, 1)), ymd(t)];
+    return [S.rep.from, S.rep.to];
+  }
+  function initReport() {
+    const r = S.rep, items = caps().reportItems || [];
+    if (!Object.keys(r.items).length) items.forEach((k) => { r.items[k] = ['club', 'mg', 'kr'].indexOf(k) >= 0; });
+    const units = repUnits();
+    if (!units.some((u) => r.units[u.key])) { r.units = {}; if (units[0]) r.units[units[0].key] = true; }
+    if (r.preset !== 'custom') { const x = presetRange(r.preset); r.from = x[0]; r.to = x[1]; }
+  }
+  const fmtD = (k) => { const p = String(k).split('-'); return p.length === 3 ? Number(p[2]) + '.' + p[1] + '.' + p[0] : ''; };
+  VIEWS.report = function () {
+    const r = S.rep, units = repUnits(), items = caps().reportItems || [];
+    let h = header('Підготувати звіт', 'Свій рівень і рівень нижче');
+    if (!units.length || !items.length) return h + '<div class="empty">Для твоєї ролі звіти недоступні</div>';
+    const LVN = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
+    h += `<div class="sec">По кому</div><div class="card list">${units.map((u) => `<label class="check" style="${u.depth ? 'padding-left:36px' : ''}"><input type="checkbox" data-ch="repUnit" data-k="${esc(u.key)}"${r.units[u.key] ? ' checked' : ''}>
+      <span class="grow"><span class="${u.depth ? '' : 'b'}" style="display:block">${esc(LVN[u.level] + u.name)}</span>${u.depth ? '' : `<span class="xs muted">${esc(u.sub || 'увесь твій рівень')}</span>`}</span></label>`).join('')}</div>`;
+    const canSplit = units.some((u) => r.units[u.key] && u.level !== 'team');
+    if (canSplit) h += `<div class="card" style="padding:4px 16px"><label class="toggle-row"><span><span class="b" style="display:block">Розбити на рівень нижче</span><span class="small muted">окремий рядок для кожної ерії / команди</span></span><input type="checkbox" data-bind="rep.split"${r.split ? ' checked' : ''}></label></div>`;
+    h += `<div class="sec">Що включити</div><div class="card list">${items.map((k) => `<label class="check"><input type="checkbox" data-ch="repItem" data-k="${k}"${r.items[k] ? ' checked' : ''}><span class="grow">${REP_ITEMS[k]}</span></label>`).join('')}</div>`;
+    h += `<div class="sec">Період</div><div class="pills" style="flex-wrap:wrap">${REP_PRESETS.map((p) => `<button type="button" class="pill${r.preset === p[0] ? ' on' : ''}" data-a="repPreset" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
+    if (r.preset === 'custom') h += `<div class="grid2"><label class="f"><span>З</span><input class="in" type="date" data-bind="rep.from" value="${esc(r.from)}" max="${ymd(new Date())}"></label><label class="f"><span>По</span><input class="in" type="date" data-bind="rep.to" value="${esc(r.to)}" max="${ymd(new Date())}"></label></div>`;
+    else h += `<div class="small muted">${fmtD(r.from)} – ${fmtD(r.to)}</div>`;
+    h += `<div class="grid2"><button type="button" class="btn" data-a="repRun"${r.busy ? ' disabled' : ''}>Сформувати</button><button type="button" class="btn sec2" data-a="repSend"${r.busy ? ' disabled' : ''}>${icon('tg', 18)} Файлом у Telegram</button></div>`;
+    if (r.data) h += reportOut(r.data);
+    return h;
+  };
+  function reportOut(d) {
+    let h = `<div id="repOut" class="card col" style="gap:4px"><h2>${esc(d.title)}</h2><div class="small muted">${esc(d.period)}</div></div>`;
+    d.sections.forEach((sec) => {
+      h += `<div class="sec">${esc(sec.label)}</div><div class="card" style="padding:0"><div class="rtab-w"><table class="rtab"><thead><tr><th></th>${sec.cols.map((c) => `<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody>
+        ${d.rows.map((row) => `<tr class="${row.child ? 'ch' : 'top'}"><td>${row.child ? '↳ ' : ''}${esc(row.name)}</td>${sec.cols.map((c) => `<td>${esc(row.values[sec.key][c.key])}</td>`).join('')}</tr>`).join('')}
+        ${d.total ? `<tr class="tot"><td>${esc(d.total.name)}</td>${sec.cols.map((c) => `<td>${esc(d.total.values[sec.key][c.key])}</td>`).join('')}</tr>` : ''}</tbody></table></div></div>`;
+    });
+    return h + '<div class="xs muted">«—» — немає доступу до цих даних. Файл у Telegram можна переслати або роздрукувати.</div>';
+  }
+  function repParams() {
+    const r = S.rep;
+    return { units: Object.keys(r.units).filter((k) => r.units[k]), items: Object.keys(r.items).filter((k) => r.items[k]), from: r.from, to: r.to, split: !!r.split };
+  }
+  async function repCall(send) {
+    const r = S.rep, p = repParams();
+    if (!p.units.length) return toast('Обери, по кому звіт', 'error');
+    if (!p.items.length) return toast('Обери, що включити у звіт', 'error');
+    if (!p.from || !p.to || p.to < p.from) return toast('Перевір дати періоду', 'error');
+    p.send = !!send;
+    r.busy = true; render();
+    const res = await run(() => api('report', p));
+    r.busy = false;
+    if (res) { r.data = res; if (send) toast('Звіт надіслано в чат з ботом', 'success'); }
+    render();
+    if (res && !send) { const o = document.getElementById('repOut'); if (o && o.scrollIntoView) o.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
     const c = caps();
     const items = sectionTiles().map((t) => ({ k: t.k, label: t.label, sub: t.sub, icon: t.icon, ic: t.ic }));
     if (c.approve) items.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
+    if ((c.reportItems || []).length) items.push({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     items.push({ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' });
-    return header('Ще') + `<div class="card list">${items.map((m) => `<button type="button" class="li" data-a="tabGo" data-s="${m.k}"><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
+    items.push({ a: 'installHome', label: 'Встановити на головний екран', sub: S.homeSt === 'added' ? 'вже встановлено ✓' : S.homeSt === 'unsupported' ? 'потрібна новіша версія Telegram' : 'окрема іконка YL на телефоні', icon: 'phoneApp', ic: 'ic-teal' });
+    return header('Ще') + `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
   };
 
@@ -791,8 +889,10 @@
     h += `<label class="f"><span>Місяць</span><input class="in" type="month" value="${esc(f.month)}" max="${ym(new Date())}" data-ch="finMonth"></label>`;
     if (!f.data || !f.cur) return h + loading();
     const c = f.cur;
-    h += `<div class="card rows"><div class="kv"><span>Попередній залишок</span><span><input class="in" style="width:120px;min-height:40px;text-align:right" type="number" inputmode="decimal" value="${esc(c.prev)}" data-bind="fin.cur.prev" data-live="finCalc"> ₴</span></div>
-      ${FIN_FIELDS.map((x) => `<div class="kv"><label for="fin_${x[0]}" style="color:var(--text);font-weight:500">${x[1]}</label><span><input id="fin_${x[0]}" class="in" style="width:120px;min-height:40px;text-align:right" type="number" inputmode="decimal" value="${esc(c[x[0]])}" data-bind="fin.cur.${x[0]}" data-live="finCalc"> ₴</span></div>`).join('')}
+    const inSt = f.data.canEdit ? ' style="width:120px;min-height:40px;text-align:right"' : ' readonly tabindex="-1" style="width:120px;min-height:40px;text-align:right;background:transparent;border-color:transparent"';
+    if (!f.data.canEdit) h += '<div class="note small">Фінансовий звіт вносять лише Капітан і Адмін команди. Ти можеш його переглядати.</div>';
+    h += `<div class="card rows"><div class="kv"><span>Попередній залишок</span><span><input class="in"${inSt} type="number" inputmode="decimal" value="${esc(c.prev)}" data-bind="fin.cur.prev" data-live="finCalc"> ₴</span></div>
+      ${FIN_FIELDS.map((x) => `<div class="kv"><label for="fin_${x[0]}" style="color:var(--text);font-weight:500">${x[1]}</label><span><input id="fin_${x[0]}" class="in"${inSt} type="number" inputmode="decimal" value="${esc(c[x[0]])}" data-bind="fin.cur.${x[0]}" data-live="finCalc"> ₴</span></div>`).join('')}
       <div class="kv"><span style="color:var(--text);font-weight:700">Залишок</span><span style="font:800 22px Manrope,Inter,sans-serif"><span id="finBal">${nf(finBalance(c))}</span> ₴</span></div></div>`;
     if (f.data.canEdit) h += `<button type="button" class="btn" data-a="finSave">Зберегти ${esc(monthLabel(f.month).toLowerCase())}</button>`;
     if (f.data.history.length) {
@@ -961,12 +1061,14 @@
   // календар
   A.openEv = (d) => { if (S.screen !== 'calendar') go('calendar', { ev: d.id }); else { S.ev = d.id; render(); window.scrollTo(0, 0); } };
   A.evFilter = (d) => { S.evFilter = d.l; render(); };
-  A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), time: '', place: '', desc: '' }; render(); };
+  A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), end: '', time: '', place: '', desc: '' }; render(); };
+  A.evDate = () => { const f = S.evForm; if (f.end && f.end < f.date) f.end = ''; const e = document.querySelector('[data-bind="evForm.end"]'); if (e) { e.min = f.date; e.value = f.end; } };
   A.evSave = async () => {
     const f = S.evForm, u = (caps().eventUnits || [])[Number(f.unit) || 0];
     if (!u) return;
     if (String(f.title).trim().length < 2) return toast('Вкажи назву події');
-    const res = await run(() => api('eventSave', { level: u.level, unitId: u.unitId, title: f.title, date: f.date, time: f.time, place: f.place, desc: f.desc }), 'Подію додано: ' + u.label);
+    if (f.end && f.end < f.date) return toast('Дата кінця раніше за дату початку');
+    const res = await run(() => api('eventSave', { level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), 'Подію додано: ' + u.label);
     if (res) { S.evForm = null; S.events = null; render(); loadEvents(); }
   };
   A.rsvp = async (d) => {
@@ -979,7 +1081,8 @@
     if (!e) return;
     const day = e.date.replace(/-/g, '');
     let dates;
-    if (/^\d{1,2}:\d{2}$/.test(e.time || '')) { const t = e.time.split(':'); const st = day + 'T' + pad(Number(t[0])) + t[1] + '00'; const en = day + 'T' + pad(Math.min(23, Number(t[0]) + 2)) + t[1] + '00'; dates = st + '/' + en; }
+    if (e.end) dates = day + '/' + ymd(new Date(parseDay(e.end).getTime() + 864e5)).replace(/-/g, '');
+    else if (/^\d{1,2}:\d{2}$/.test(e.time || '')) { const t = e.time.split(':'); const st = day + 'T' + pad(Number(t[0])) + t[1] + '00'; const en = day + 'T' + pad(Math.min(23, Number(t[0]) + 2)) + t[1] + '00'; dates = st + '/' + en; }
     else { const nd = new Date(parseDay(e.date).getTime() + 864e5); dates = day + '/' + ymd(nd).replace(/-/g, ''); }
     const url = 'https://calendar.google.com/calendar/render?action=TEMPLATE&ctz=Europe/Kiev&text=' + encodeURIComponent(e.title) + '&dates=' + dates +
       '&location=' + encodeURIComponent(e.place || '') + '&details=' + encodeURIComponent((e.desc || '') + '\n\nYoung Life Україна · ' + e.levelLabel);
@@ -993,6 +1096,20 @@
   // статистика
   A.statsScope = (d, el) => { S.stats.scope = el.value; loadStats(); };
   A.statsCat = (d) => { S.stats.cat = d.c; loadStats(); };
+  A.statsLevel = (d) => {
+    const data = S.stats.data; if (!data) return;
+    const sc = data.scopes, by = {}; sc.forEach((x) => { by[x.key] = x; });
+    const cur = by[data.scope.key]; if (!cur || d.l === cur.level) return;
+    const ORD = LEVELS.map((l) => l[0]);
+    let target = '';
+    if (ORD.indexOf(d.l) < ORD.indexOf(cur.level)) { for (let k = cur.parent; k && by[k]; k = by[k].parent) if (by[k].level === d.l) { target = k; break; } }
+    else {
+      const under = (x) => { for (let k = x.parent; k && by[k]; k = by[k].parent) if (k === cur.key) return true; return false; };
+      const c = sc.filter((x) => x.level === d.l && under(x)).sort(byName); target = c[0] ? c[0].key : '';
+    }
+    if (!target) { const c = sc.filter((x) => x.level === d.l).sort(byName); target = c[0] ? c[0].key : ''; }
+    if (target) A.statsDrill({ k: target });
+  };
   A.statsPeriod = (d) => { S.stats.period = d.p; loadStats(); };
   A.statsDrill = (d) => { S.stats.scope = d.k; S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
   A.statsFindToggle = () => { S.stats.find = !S.stats.find; render(); const i = document.getElementById('statsFindIn'); if (i) i.focus(); };
@@ -1052,6 +1169,18 @@
   };
 
   // склад
+  const homeOk = () => !!(tg && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0'));
+  A.installHome = () => {
+    if (S.homeSt === 'added') return toast('Застосунок уже є на головному екрані');
+    if (homeOk()) { try { tg.addToHomeScreen(); } catch (e) { toast('Не вдалося. Спробуй ще раз.'); } return; }
+    const msg = 'Твоя версія Telegram ще не вміє додавати застосунки на головний екран. Онови Telegram в App Store / Google Play і спробуй знову.';
+    if (tg && tg.showAlert) tg.showAlert(msg); else toast(msg);
+  };
+  A.repUnit = (d, el) => { S.rep.units[d.k] = el.checked; S.rep.data = null; render(); };
+  A.repItem = (d, el) => { S.rep.items[d.k] = el.checked; S.rep.data = null; };
+  A.repPreset = (d) => { const r = S.rep; r.preset = d.p; if (d.p !== 'custom') { const x = presetRange(d.p); r.from = x[0]; r.to = x[1]; } r.data = null; render(); };
+  A.repRun = () => repCall(false);
+  A.repSend = () => repCall(true);
   A.myylGo = (d) => { const f = document.querySelector('[data-live="myylFind"]'); if (f) f.value = ''; S.myyl.at = d.k || null; S.myyl.open = null; render(); window.scrollTo(0, 0); };
   A.myylPerson = (d) => { S.myyl.open = S.myyl.open === d.id ? null : d.id; render(); };
   A.myylTeam = (d) => { S.team.teamId = d.id; go('team'); };
@@ -1189,6 +1318,11 @@
     tg.onEvent('themeChanged', () => document.documentElement.classList.toggle('dark', tg.colorScheme === 'dark'));
     try { tg.setHeaderColor('secondary_bg_color'); } catch (e) { /* старий Telegram */ }
     tg.BackButton.onClick(back);
+    S.homeSt = '';
+    if (tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
+      try { tg.checkHomeScreenStatus((st) => { S.homeSt = st; if (S.screen === 'more') render(); }); } catch (e) { /* ок */ }
+      tg.onEvent('homeScreenAdded', () => { S.homeSt = 'added'; toast('Готово! Іконка YL тепер на головному екрані', 'success'); if (S.screen === 'more') render(); });
+    } else S.homeSt = 'unsupported';
     if (!API_URL) {
       $app.innerHTML = '<main class="main no-nav"><div class="card col"><h2>Застосунок ще налаштовується</h2><div class="muted">Адресу сервера не вказано в config.js.</div></div></main>';
       return;

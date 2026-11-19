@@ -106,7 +106,7 @@ const NEEDS = {
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, areaSave: {}, teamSave: {}, stats: { log: 'stats' }, nudge: { log: 'week' },
-  myylTree: {}, broadcastInfo: { bc: true }, broadcast: {},
+  myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
 };
 
 async function handleApi(req, env, ctx) {
@@ -123,6 +123,7 @@ async function handleApi(req, env, ctx) {
     await S.loadBase();
     if (need.log === 'week') await S.loadLog(weekKey_(new Date()));
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period), true);
+    if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
     if (need.events) await S.loadEvents();
     if (need.known) await S.loadKnown(str_(d.teamId));
     if (need.finance) await S.loadFinance(str_(d.teamId));
@@ -175,7 +176,7 @@ function use(store, fn) { S = store; try { return fn(); } finally { S = null; } 
 class Store {
   constructor(env, ctx) {
     this.env = env; this.ctx = ctx; this.db = env.DB;
-    this.q = []; this.baseDirty = false; this.out = [];
+    this.q = []; this.baseDirty = false; this.out = []; this.docs = [];
     this.log = []; this.events = []; this.rsvp = []; this.known = {}; this.finance = {};
   }
   async loadBase() {
@@ -223,10 +224,10 @@ class Store {
   async loadEvents() {
     const today = kyivDay(new Date());
     const [ev, rs] = await this.db.batch([
-      this.db.prepare('SELECT * FROM events WHERE date >= ?').bind(addDaysKey_(today, -1)),
-      this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON e.id = r.event_id WHERE e.date >= ?').bind(addDaysKey_(today, -1)),
+      this.db.prepare('SELECT * FROM events WHERE COALESCE(end_date, date) >= ?').bind(addDaysKey_(today, -1)),
+      this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON e.id = r.event_id WHERE COALESCE(e.end_date, e.date) >= ?').bind(addDaysKey_(today, -1)),
     ]);
-    this.events = (ev.results || []).map((r) => ({ id: r.id, level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
+    this.events = (ev.results || []).map((r) => ({ id: r.id, level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
     this.rsvp = (rs.results || []).map((r) => ({ eventId: r.event_id, tgId: r.tg_id, name: r.name || '', team: r.team || '' }));
   }
   async loadKnown(teamId) {
@@ -253,6 +254,7 @@ class Store {
     if (base) this.baseDirty = true;
   }
   send(chatId, text, extra) { this.out.push({ chat_id: String(chatId), text: text, extra: extra }); }
+  sendDoc(chatId, filename, content, caption) { this.docs.push({ chat_id: String(chatId), filename, content, caption }); }
   async flush() {
     if (this.baseDirty) this.q.push(this.db.prepare("UPDATE meta SET v = v + 1 WHERE k = 'ver'"));
     if (this.q.length) {
@@ -260,6 +262,17 @@ class Store {
       if (this.baseDirty) BASE = null;
     }
     this.q = [];
+    if (this.docs.length) {
+      const docs = this.docs.splice(0);
+      const p = Promise.all(docs.map((x) => {
+        const form = new FormData();
+        form.append('chat_id', x.chat_id);
+        if (x.caption) { form.append('caption', x.caption); form.append('parse_mode', 'HTML'); }
+        form.append('document', new File([x.content], x.filename, { type: 'text/html' }));
+        return tgForm(this.env, 'sendDocument', form);
+      }));
+      if (this.ctx && this.ctx.waitUntil) this.ctx.waitUntil(p); else await p;
+    }
     if (this.out.length) {
       const msgs = this.out.splice(0);
       let p;
@@ -470,6 +483,7 @@ API.me = function (c) {
     surveys: false,
     manage: c.roles.some((r) => MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0),
     myyl: allowedScopes_(c).length > 0,
+    reportItems: reportItems_(c),
     broadcast: isSuper_(c),
   };
   out.myTeams = Object.keys(myTeams).map(teamOut_);
@@ -676,6 +690,9 @@ API.teamMembers = function (c, d) {
 };
 
 // ── фінанси ──
+// вносять лише Капітан і Адмін саме цієї команди; вищі рівні — тільки дивляться
+const canFinEdit_ = (c, teamId) => teamRoles_(c, teamId, RANK.FINANCE).length > 0;
+
 API.financeGet = function (c, d) {
   const teamId = str_(d.teamId);
   if (!canTeam_(c, teamId, RANK.FINANCE)) deny_();
@@ -687,13 +704,13 @@ API.financeGet = function (c, d) {
     month: month,
     current: cur || { month: month, prev: prevRow ? prevRow.balance : 0, office: 0, church: 0, team: 0, spent: 0, balance: prevRow ? prevRow.balance : 0 },
     history: rows.filter((r) => r.month !== month).slice(0, 6),
-    canEdit: canTeam_(c, teamId, RANK.FINANCE),
+    canEdit: canFinEdit_(c, teamId),
   };
 };
 
 API.financeSave = function (c, d) {
   const teamId = str_(d.teamId);
-  if (!canTeam_(c, teamId, RANK.FINANCE)) deny_();
+  if (!canFinEdit_(c, teamId)) deny_('Фінансовий звіт вносять лише Капітан і Адмін команди. Вищі рівні можуть його переглядати.');
   const month = str_(d.month);
   if (!/^\d{4}-\d{2}$/.test(month)) bad_('Невірний місяць.');
   const n = (v) => { const x = Number(v); return isFinite(x) ? x : 0; };
@@ -741,7 +758,7 @@ function canManageEvent_(c, ev) {
 
 API.events = function (c) {
   const today = kyivDay(new Date());
-  return loadEvents_().filter((e) => e.date >= today && canSeeEvent_(c, e)).map((e) => {
+  return loadEvents_().filter((e) => (e.end || e.date) >= today && canSeeEvent_(c, e)).map((e) => {
     const people = S.rsvp.filter((r) => r.eventId === e.id);
     const manage = canManageEvent_(c, e);
     return Object.assign({}, e, {
@@ -758,9 +775,11 @@ API.eventSave = function (c, d) {
   if (!u) deny_('Ти не можеш додавати події на цьому рівні.');
   if (str_(d.title).length < 2) bad_('Вкажи назву.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) bad_('Вкажи дату.');
-  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name };
-  S.run('INSERT INTO events (id, level, unit_id, title, date, time, place, descr, author_id, author, created) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-    [e.id, e.level, e.unitId, e.title, e.date, e.time, e.place, e.desc, e.authorId, e.author, nowIso()]);
+  const end = /^\d{4}-\d{2}-\d{2}$/.test(d.end || '') && d.end > d.date ? d.end : '';
+  if (d.end && /^\d{4}-\d{2}-\d{2}$/.test(d.end) && d.end < d.date) bad_('Дата кінця раніше за дату початку.');
+  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name };
+  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso()]);
   S.events.push(e);
   rsvpSet_(c, e.id, true);
   return { id: e.id };
@@ -925,6 +944,129 @@ API.myylTree = function (c) {
   return { roots: roots, units: units };
 };
 
+// ── Підготувати звіт: свій рівень і рівень нижче ──
+const REPORT_ITEMS = {
+  club: { label: 'Клуби', cols: [['n', 'Клубів'], ['v', 'Відвідувань'], ['avg', 'Середньо'], ['new', 'Нових'], ['rep', 'Звітували, тижнів']] },
+  mg: { label: 'Малі групи', cols: [['n', 'Зустрічей'], ['v', 'Відвідувань'], ['avg', 'Середньо'], ['new', 'Нових']] },
+  kr: { label: 'Контактна робота', cols: [['h', 'Годин'], ['p', 'Людей вносили'], ['none', 'Відміток «не було»']] },
+  known: { label: 'Знані по імені', cols: [['total', 'Знаних зараз'], ['new', 'Нових за період']] },
+  finance: { label: 'Фінанси', cols: [['inc', 'Надійшло, ₴'], ['out', 'Витрачено, ₴'], ['net', 'Різниця, ₴'], ['teams', 'Команд здали']] },
+};
+const reportScopes_ = (c) => allowedScopes_(c).filter((s) => s.depth <= 1);
+function reportItems_(c) {
+  const ok = {};
+  reportScopes_(c).forEach((s) => statCats_(c, s).forEach((x) => { if (REPORT_ITEMS[x.key]) ok[x.key] = true; }));
+  return Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
+}
+
+function reportRow_(teamIds, items, from, to, allowed) {
+  const st = loadStruct_();
+  const inT = {};
+  teamIds.forEach((id) => { inT[id] = true; });
+  const rows = loadLog_().filter((r) => inT[r.teamId]);
+  const inP = rows.filter((r) => r.date >= from && r.date <= to);
+  const ok = (r) => r.mode !== MODE.none;
+  const sum = (a, f) => a.reduce((x, r) => x + (Number(f(r)) || 0), 0);
+  const nf = (v) => Math.round(v).toLocaleString('uk-UA');
+  const df = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
+  const weeks = [];
+  for (let k = weekKey_(from); k <= weekKey_(to); k = addDaysKey_(k, 7)) weeks.push(k);
+  const out = {};
+  items.forEach((it) => {
+    if (!allowed[it]) { out[it] = {}; REPORT_ITEMS[it].cols.forEach((c) => { out[it][c[0]] = '—'; }); return; }
+    const of = (t) => inP.filter((r) => r.type === t);
+    if (it === 'club' || it === 'mg') {
+      const a = of(it).filter(ok);
+      const v = sum(a, (r) => r.count);
+      out[it] = { n: nf(a.length), v: nf(v), avg: a.length ? df(v / a.length) : '—', new: nf(sum(a, (r) => r.newT)) };
+      if (it === 'club') {
+        const done = {};
+        rows.filter((r) => r.type === 'club' && weeks.indexOf(r.week) >= 0).forEach((r) => { done[r.teamId + '|' + r.week] = true; });
+        out[it].rep = Object.keys(done).length + ' з ' + (weeks.length * teamIds.length);
+      }
+    }
+    if (it === 'kr') {
+      const a = of('kr');
+      out[it] = { h: df(sum(a.filter(ok), (r) => r.hours)), p: nf(uniq_(a.filter(ok).map((r) => r.authorId)).length), none: nf(a.filter((r) => !ok(r)).length) };
+    }
+    if (it === 'known') {
+      out[it] = { total: nf(teamIds.reduce((x, id) => x + (Number((st.team[id] || {}).known) || 0), 0)), new: nf(of('known').length) };
+    }
+    if (it === 'finance') {
+      const f = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= from.slice(0, 7) && r.date.slice(0, 7) <= to.slice(0, 7));
+      out[it] = { inc: nf(sum(f, (r) => r.inc)), out: nf(sum(f, (r) => r.spent)), net: nf(sum(f, (r) => r.inc - r.spent)), teams: uniq_(f.map((r) => r.teamId)).length + ' з ' + teamIds.length };
+    }
+  });
+  return out;
+}
+
+API.report = function (c, d) {
+  const scopes = reportScopes_(c);
+  const byKey = {};
+  allowedScopes_(c).forEach((s) => { byKey[s.key] = s; });
+  const keys = uniq_((d.units || []).map(String)).filter((k) => scopes.some((s) => s.key === k));
+  if (!keys.length) bad_('Обери хоча б один регіон, ерію чи команду.');
+  if (keys.length > 40) bad_('Забагато одиниць: максимум 40.');
+  const avail = reportItems_(c);
+  const items = Object.keys(REPORT_ITEMS).filter((k) => (d.items || []).indexOf(k) >= 0 && avail.indexOf(k) >= 0);
+  if (!items.length) bad_('Обери, що має бути у звіті.');
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(d.from || '') || !re.test(d.to || '') || d.to < d.from) bad_('Перевір період: дата кінця має бути не раніше за дату початку.');
+  if (d.from < addDaysKey_(d.to, -400)) bad_('Період — не довше року.');
+  const from = d.from, to = d.to;
+  const allowedFor = (s) => { const a = {}; statCats_(c, s).forEach((x) => { a[x.key] = true; }); return a; };
+  const LVL = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
+  const rows = [];
+  const union = {};
+  keys.forEach((k) => {
+    const s = byKey[k];
+    const ids = scopeTeamIds_(s);
+    ids.forEach((id) => { union[id] = true; });
+    rows.push({ name: LVL[s.level] + s.name, sub: s.sub, level: s.level, child: false, values: reportRow_(ids, items, from, to, allowedFor(s)) });
+    if (d.split && s.level !== 'team') {
+      Object.keys(byKey).map((x) => byKey[x]).filter((x) => x.parent === k).sort((a, b) => a.name.localeCompare(b.name)).forEach((ch) => {
+        rows.push({ name: LVL[ch.level] + ch.name, sub: '', level: ch.level, child: true, values: reportRow_(scopeTeamIds_(ch), items, from, to, allowedFor(ch)) });
+      });
+    }
+  });
+  let total = null;
+  if (keys.length > 1) {
+    const allow = {};
+    items.forEach((it) => { allow[it] = keys.every((k) => allowedFor(byKey[k])[it]); });
+    total = { name: 'Разом', values: reportRow_(Object.keys(union), items, from, to, allow) };
+  }
+  const fmt = (k) => { const p = k.split('-'); return Number(p[2]) + '.' + p[1] + '.' + p[0]; };
+  const out = {
+    title: 'Звіт Young Life', period: fmt(from) + ' – ' + fmt(to), from, to, author: c.name, created: kyivDay(new Date()),
+    sections: items.map((it) => ({ key: it, label: REPORT_ITEMS[it].label, cols: REPORT_ITEMS[it].cols.map((x) => ({ key: x[0], label: x[1] })) })),
+    rows, total,
+  };
+  if (d.send) {
+    const names = keys.map((k) => byKey[k].name).slice(0, 3).join(', ') + (keys.length > 3 ? ' та ін.' : '');
+    S.sendDoc(c.id, 'YL-zvit-' + from + '_' + to + '.html', reportHtml_(out), '📊 <b>Звіт Young Life</b>\n' + esc_(names) + '\n' + esc_(out.period));
+    out.sent = true;
+  }
+  return out;
+};
+
+function reportHtml_(r) {
+  const e = esc_;
+  const table = (sec) => '<h2>' + e(sec.label) + '</h2><div class="w"><table><thead><tr><th></th>' + sec.cols.map((c) => '<th>' + e(c.label) + '</th>').join('') + '</tr></thead><tbody>' +
+    r.rows.map((row) => '<tr class="' + (row.child ? 'ch' : 'top') + '"><td>' + (row.child ? '↳ ' : '') + e(row.name) + '</td>' + sec.cols.map((c) => '<td>' + e(row.values[sec.key][c.key]) + '</td>').join('') + '</tr>').join('') +
+    (r.total ? '<tr class="tot"><td>' + e(r.total.name) + '</td>' + sec.cols.map((c) => '<td>' + e(r.total.values[sec.key][c.key]) + '</td>').join('') + '</tr>' : '') +
+    '</tbody></table></div>';
+  return '<!DOCTYPE html><html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + e(r.title + ' · ' + r.period) + '</title><style>' +
+    'body{font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:#1d1d1f;margin:0;padding:24px;max-width:960px;margin:auto}' +
+    '.hd{border-left:6px solid #ff7a59;padding:4px 0 4px 14px;margin-bottom:20px}h1{font-size:24px;margin:0}.m{color:#6b6b70;font-size:13px}' +
+    'h2{font-size:17px;margin:26px 0 8px}.w{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:420px}' +
+    'th,td{padding:8px 10px;border-bottom:1px solid #e6e6ea;text-align:right;white-space:nowrap}th{font-size:12px;color:#6b6b70;font-weight:600}' +
+    'td:first-child,th:first-child{text-align:left;white-space:normal}tr.top td{font-weight:600}tr.ch td{color:#444}tr.ch td:first-child{padding-left:22px}' +
+    'tr.tot td{font-weight:700;border-top:2px solid #1d1d1f;background:#fff4ef}@media print{body{padding:0}}</style></head><body>' +
+    '<div class="hd"><h1>' + e(r.title) + '</h1><div class="m">Період: ' + e(r.period) + ' · сформував(ла): ' + e(r.author) + ' · ' + e(r.created) + '</div></div>' +
+    r.sections.map(table).join('') +
+    '<p class="m" style="margin-top:28px">«Звітували, тижнів» — скільки тижнів команди внесли звіт про клуб (разом з «не було») з усіх можливих. «—» — немає доступу до цих даних.</p></body></html>';
+}
+
 // ── розсилка від Раба Божого ──
 function audiences_() {
   const st = loadStruct_();
@@ -997,10 +1139,10 @@ function allowedScopes_(c) {
   const st = loadStruct_();
   const seen = {};
   const out = [];
-  const add = (key, label, depth, level, unitId, sub, name) => { if (seen[key]) return; seen[key] = true; out.push({ key, label, depth, level, unitId, sub: sub || '', name: name || label }); };
-  const addTeam = (t, depth) => { if (t.active) { const a = st.area[t.areaId] || {}; add('t:' + t.id, t.name, depth, 'team', t.id, (a.name || '') + ' · ' + ((st.region[a.regionId] || {}).name || ''), t.name); } };
-  const addArea = (a, depth) => { add('a:' + a.id, 'Ерія ' + a.name, depth, 'area', a.id, 'регіон ' + ((st.region[a.regionId] || {}).name || ''), a.name); st.teams.filter((t) => t.areaId === a.id).forEach((t) => addTeam(t, depth + 1)); };
-  const addRegion = (r, depth) => { add('r:' + r.id, 'Регіон ' + r.name, depth, 'region', r.id, '', r.name); st.areas.filter((a) => a.regionId === r.id).forEach((a) => addArea(a, depth + 1)); };
+  const add = (key, label, depth, level, unitId, sub, name, parent) => { if (seen[key]) return; seen[key] = true; out.push({ key, label, depth, level, unitId, sub: sub || '', name: name || label, parent: parent || '' }); };
+  const addTeam = (t, depth) => { if (t.active) { const a = st.area[t.areaId] || {}; add('t:' + t.id, t.name, depth, 'team', t.id, (a.name || '') + ' · ' + ((st.region[a.regionId] || {}).name || ''), t.name, 'a:' + t.areaId); } };
+  const addArea = (a, depth) => { add('a:' + a.id, 'Ерія ' + a.name, depth, 'area', a.id, 'регіон ' + ((st.region[a.regionId] || {}).name || ''), a.name, 'r:' + a.regionId); st.teams.filter((t) => t.areaId === a.id).forEach((t) => addTeam(t, depth + 1)); };
+  const addRegion = (r, depth) => { add('r:' + r.id, 'Регіон ' + r.name, depth, 'region', r.id, '', r.name, 'nat'); st.areas.filter((a) => a.regionId === r.id).forEach((a) => addArea(a, depth + 1)); };
   c.roles.slice().sort((a, b) => a.rank - b.rank).forEach((r) => {
     if (r.level === 'nat') { add('nat', 'Уся Україна', 0, 'nat', '', '', 'Україна'); st.regions.forEach((x) => addRegion(x, 1)); }
     if (r.level === 'region' && st.region[r.unitId]) addRegion(st.region[r.unitId], 0);
@@ -1284,6 +1426,15 @@ async function tg(env, method, params) {
   if (!data.ok) console.warn('Telegram ' + method + ': ' + data.description);
   return data;
 }
+async function tgForm(env, method, form) {
+  try {
+    const res = await fetch('https://api.telegram.org/bot' + env.BOT_TOKEN + '/' + method, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({ ok: false }));
+    if (!data.ok) console.warn('Telegram ' + method + ': ' + data.description);
+    return data;
+  } catch (e) { console.warn('Telegram ' + method + ': ' + e.message); return { ok: false }; }
+}
+
 async function sendAll(env, msgs) {
   const out = [];
   for (const m of msgs) {
@@ -1375,7 +1526,7 @@ async function handleAdmin(req, env, ctx, url) {
       regions: ['id', 'name'], areas: ['id', 'region_id', 'name'], teams: ['id', 'area_id', 'name', 'state', 'known'],
       people: ['tg_id', 'username', 'name', 'phone', 'email', 'bday', 'repent', 'baptism', 'lpyl', 'resp', 'title', 'registered'],
       roles: ['id', 'tg_id', 'name', 'role_key', 'level', 'unit_id', 'status', 'decided_by', 'requested', 'decided'],
-      events: ['id', 'level', 'unit_id', 'title', 'date', 'time', 'place', 'descr', 'author_id', 'author', 'created'],
+      events: ['id', 'level', 'unit_id', 'title', 'date', 'end_date', 'time', 'place', 'descr', 'author_id', 'author', 'created'],
       rsvp: ['event_id', 'tg_id', 'name', 'team', 'created'],
       reports: ['id', 'created', 'date', 'week', 'type', 'mode', 'team_id', 'area_id', 'region_id', 'count', 'new_t', 'leaders', 'hours', 'topic', 'note', 'attendees', 'author_id', 'author'],
       known: ['id', 'team_id', 'name', 'phone', 'ig', 'bday', 'school', 'grade', 'leader', 'note', 'added', 'active', 'updated'],

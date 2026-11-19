@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS roles (
 CREATE INDEX IF NOT EXISTS roles_tg ON roles (tg_id);
 
 CREATE TABLE IF NOT EXISTS events (
-  id TEXT PRIMARY KEY, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '', title TEXT, date TEXT NOT NULL, time TEXT, place TEXT,
+  id TEXT PRIMARY KEY, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '', title TEXT, date TEXT NOT NULL, end_date TEXT, time TEXT, place TEXT,
   descr TEXT, author_id TEXT, author TEXT, created TEXT
 );
 CREATE INDEX IF NOT EXISTS events_date ON events (date);

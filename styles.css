@@ -175,3 +175,14 @@ nav.tabs .dot { position: absolute; top: 4px; left: 50%; margin-left: 8px; width
 .thx-btn:active { transform: scale(.92); }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* звіт */
+.rtab-w { overflow-x: auto; }
+.rtab { border-collapse: collapse; width: 100%; font-size: 13px; }
+.rtab th, .rtab td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.rtab th { font-size: 11px; color: var(--muted); font-weight: 600; white-space: normal; min-width: 64px; }
+.rtab td:first-child, .rtab th:first-child { text-align: left; white-space: normal; min-width: 120px; position: sticky; left: 0; background: var(--card); }
+.rtab tr.top td { font-weight: 600; }
+.rtab tr.ch td:first-child { padding-left: 18px; color: var(--muted); }
+.rtab tr.tot td { font-weight: 800; border-top: 2px solid var(--text); border-bottom: 0; }
+.pills.lvl { scroll-behavior: smooth; }

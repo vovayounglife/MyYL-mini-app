@@ -48,6 +48,12 @@ jobs:
           echo "D1: $ID"
           sed -i "s/__D1_ID__/$ID/" wrangler.toml
           wrangler d1 execute yl-db --remote --file=schema.sql
+          # зміни до наявних таблиць; повторний запуск (колонка вже є) — не помилка
+          for f in migrations/*.sql; do
+            [ -e "$f" ] || continue
+            wrangler d1 execute yl-db --remote --file="$f" 2>&1 | tee mig.log || true
+            if grep -qiE "error" mig.log && ! grep -qiE "duplicate column" mig.log; then echo "::warning::Міграція $f: перевір лог"; fi
+          done
 
       - name: Викласти
         id: deploy
