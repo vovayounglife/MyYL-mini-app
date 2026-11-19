@@ -1500,24 +1500,35 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   function roleFields(o, prefix) {
     const defs = me().roleDefs.filter((r) => r.key !== 'SUPER');
     const team = defs.filter((r) => r.level === 'team');
-    const upper = defs.filter((r) => r.level !== 'team');
-    const HINT = { OFFICE: 'назвеш свою роль сам', AREA_OFFICE: 'назвеш свою роль сам' };
+    const upper = defs.filter((r) => r.level !== 'team' && r.key !== 'OFFICE');
+    const office = defs.filter((r) => r.key === 'OFFICE');
+    const HINT = { OFFICE: 'обереш посаду', AREA_OFFICE: 'назвеш свою роль сам' };
     const obj = prefix === 'reg' ? 'reg' : 'roleReq';
     const box = (r) => `<label class="check"><input type="checkbox" data-ch="${prefix}Role" data-k="${r.key}"${o.roles[r.key] ? ' checked' : ''}><span class="grow b" style="font-weight:500">${esc(r.label)}</span>${HINT[r.key] ? `<span class="xs muted">${HINT[r.key]}</span>` : ''}</label>`
-      + (r.titled && o.roles[r.key] ? `<div style="padding:4px 16px 12px"><label class="f"><span>Як називається твоя роль? (${esc(r.label.toLowerCase())})</span><input class="in" type="text" maxlength="60" data-bind="${obj}.titles.${r.key}" value="${esc((o.titles || {})[r.key] || '')}" placeholder="напр., Бухгалтер, Координатор подій"></label></div>` : '');
+      + (r.titles && o.roles[r.key] ? officeTitles(o, prefix, obj, r) : '')
+      + (r.titled && !r.titles && o.roles[r.key] ? `<div style="padding:4px 16px 12px"><label class="f"><span>Як називається твоя роль? (${esc(r.label.toLowerCase())})</span><input class="in" type="text" maxlength="60" data-bind="${obj}.titles.${r.key}" value="${esc((o.titles || {})[r.key] || '')}" placeholder="напр., Бухгалтер, Координатор подій"></label></div>` : '');
     let h = `<div class="card list">${team.map(box).join('')}</div>`;
+    if (office.length) h += `<div class="card list">${office.map(box).join('')}</div>`;
     h += `<label class="toggle-row"><span class="b" style="font-weight:500">Я служу на рівні ерії, регіону чи країни</span><input type="checkbox" data-ch="${prefix}Upper"${o.upper ? ' checked' : ''}></label>`;
     if (o.upper) h += `<div class="card list">${upper.map(box).join('')}</div>`;
     const needMail = Object.keys(o.roles).some((k) => o.roles[k] && roleDef(k) && roleDef(k).rank <= 6);
     if (needMail) h += `<label class="f"><span>Gmail — на нього відкриється доступ до таблиць на Диску</span><input class="in" type="email" data-bind="${prefix === 'reg' ? 'reg' : 'roleReq'}.email" value="${esc(o.email)}" placeholder="name@gmail.com"></label>`;
     return h;
   }
+  // посади нацофісу: можна кілька + своя
+  function officeTitles(o, prefix, obj, r) {
+    const sel = o.offSel || {};
+    return `<div class="col" style="gap:8px;padding:4px 16px 14px"><div class="small">Яка твоя посада? <span class="muted">Можна кілька</span></div>
+      ${r.titles.map((g) => `<div class="xs muted b">${esc(g.group)}</div><div class="pills" style="flex-wrap:wrap">${g.items.map((t) => `<button type="button" class="pill${sel[t] ? ' on' : ''}" data-a="${prefix}OffT" data-t="${esc(t)}" aria-pressed="${!!sel[t]}">${esc(t)}</button>`).join('')}</div>`).join('')}
+      <label class="f"><span>Інша посада (якщо немає в списку)</span><input class="in" type="text" maxlength="60" data-bind="${obj}.offOther" value="${esc(o.offOther || '')}" placeholder="Напиши свою"></label></div>`;
+  }
+  const officeTitle = (o) => Object.keys(o.offSel || {}).filter((k) => o.offSel[k]).concat(String(o.offOther || '').trim() ? [String(o.offOther).trim()] : []).join(', ');
   function rolePayload(o) {
     return {
       name: o.name, phone: o.phone, email: o.email, regionId: o.regionId, areaId: o.areaId,
       teamId: o.teamId === '__new' ? '' : o.teamId, newTeamName: o.teamId === '__new' ? o.newTeam : '',
       roles: Object.keys(o.roles).filter((k) => o.roles[k]),
-      titles: o.titles || {},
+      titles: Object.assign({}, o.titles || {}, o.roles.OFFICE ? { OFFICE: officeTitle(o) } : {}),
     };
   }
   function roleReqView() {
@@ -1538,7 +1549,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
         ${tg && tg.requestContact ? `<button type="button" class="btn ghost" data-a="regContact">${icon('phone', 18)} Взяти номер з Telegram</button>` : ''}
         <button type="button" class="btn" data-a="regNext">Далі</button>`;
     }
-    if (r.step === 2) h += `<div><h1>Де ти служиш?</h1><p class="muted" style="margin:6px 0 0">Обери регіон, ерію та команду.</p></div>${whereFields(r, 'reg')}<button type="button" class="btn" data-a="regNext">Далі</button>`;
+    if (r.step === 2) h += `<div><h1>Де ти служиш?</h1><p class="muted" style="margin:6px 0 0">Обери регіон, ерію та команду.</p></div>
+      <label class="toggle-row card" style="padding:12px 16px"><span><span class="b" style="display:block">Я працюю в національному офісі</span><span class="small muted">Регіон можна не обирати, якщо не служиш ще й у команді</span></span><input type="checkbox" data-ch="regOffice"${r.office ? ' checked' : ''}></label>
+      ${whereFields(r, 'reg')}<button type="button" class="btn" data-a="regNext">Далі</button>`;
     if (r.step === 3) h += `<div><h1>Яка твоя роль?</h1><p class="muted" style="margin:6px 0 0">Можна обрати кілька. Ролі підтверджує капітан команди або хтось вище.</p></div>${roleFields(r, 'reg')}<button type="button" class="btn" data-a="regSubmit">Надіслати заявку</button>`;
     return h;
   };
@@ -2014,6 +2027,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     A[pre + 'Team'] = (d, el) => { obj().teamId = el.value; render(); };
     A[pre + 'Role'] = (d, el) => { obj().roles[d.k] = el.checked; render(); };
     A[pre + 'Upper'] = (d, el) => { obj().upper = el.checked; render(); };
+    A[pre + 'OffT'] = (d) => { const o = obj(); o.offSel = o.offSel || {}; o.offSel[d.t] = !o.offSel[d.t]; render(); };
+    A[pre + 'Office'] = (d, el) => { const o = obj(); o.office = el.checked; o.roles.OFFICE = el.checked; render(); };
   });
 
   // реєстрація
@@ -2029,8 +2044,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const r = S.reg;
     if (r.step === 1 && String(r.name).trim().length < 2) return toast('Вкажи імʼя та прізвище');
     if (r.step === 2) {
-      if (!r.regionId) return toast('Обери регіон');
-      if (!r.areaId && struct().areas.some((a) => a.regionId === r.regionId)) return toast('Обери ерію');
+      if (!r.regionId && !r.office) return toast('Обери регіон або відміть «Я працюю в національному офісі»');
+      if (r.regionId && !r.areaId && struct().areas.some((a) => a.regionId === r.regionId)) return toast('Обери ерію');
       if (r.teamId === '__new' && String(r.newTeam).trim().length < 2) return toast('Впиши назву нової команди');
     }
     r.step++; render(); window.scrollTo(0, 0);
@@ -2041,6 +2056,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const teamRole = p.roles.some((k) => roleDef(k).level === 'team');
     if (teamRole && !r.teamId) { r.step = 2; render(); return toast('Обери команду'); }
     if (p.roles.some((k) => roleDef(k).level === 'area') && !r.areaId) { r.step = 2; render(); return toast('Обери ерію'); }
+    if (p.roles.indexOf('OFFICE') >= 0 && !p.titles.OFFICE) return toast('Обери свою посаду в національному офісі');
     if (p.roles.some((k) => roleDef(k).titled && !String(p.titles[k] || '').trim())) return toast('Напиши, як називається твоя роль в офісі');
     const res = await run(() => api('register', p));
     if (res) { S.me = await api('me'); S.screen = S.me.status === 'active' ? 'home' : 'pending'; haptic('success'); render(); }

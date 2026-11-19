@@ -700,6 +700,27 @@ fx = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'in', src: 'church',
 fg = await api(CAP, 'financeGet', { teamId: capTeam.id, month: curM });
 ok(fx.ok && fg.data.current.prev === 50 && fx.data.balance === 50 + curNoPrev, 'каса: запис минулим місяцем переносить залишок');
 
+
+// ── національний офіс ──
+const NO = { id: 230, first_name: 'Нац' };
+sent.length = 0;
+r = await api(NO, 'register', { name: 'Наталія Офіс', roles: ['OFFICE'], titles: { OFFICE: 'Фандрейзер, HR' } });
+ok(r.ok && sent.some((m) => m.chat_id === '1' && /Нова заявка/.test(m.text)), 'нац. офіс: заявка без регіону, Раб Божий отримав');
+me = await api(VOVA, 'me');
+const defOff = me.data.roleDefs.find((x) => x.key === 'OFFICE');
+ok(defOff.level === 'nat' && defOff.titles[0].items.includes('Операційний директор') && defOff.titles[1].group === 'Експерти', 'нац. офіс: список посад');
+reqs = await api(RD, 'requests');
+const noReqRd = [].concat(reqs.data || []).find((p) => p.tgId === '230');
+ok(!noReqRd || !noReqRd.primary, 'нац. офіс: регіональний не основний підтверджувач');
+reqs = await api(VOVA, 'requests');
+const noReq = reqs.data.find((p) => p.tgId === '230');
+ok(noReq && noReq.roles[0].label === 'Фандрейзер, HR (національний офіс)', 'нац. офіс: Раб Божий бачить заявку з посадою');
+r = await api(RD, 'decide', { roleIds: [noReq.roles[0].id], approve: true });
+ok(!r.ok, 'нац. офіс: регіональний не підтверджує');
+r = await api(VOVA, 'decide', { roleIds: [noReq.roles[0].id], approve: true });
+r = await api(VOVA, 'teamMembers', { units: ['nat'] });
+ok(r.ok && r.data.some((p) => p.tgId === '230' && p.team === 'Національний офіс'), 'нац. офіс: у складі окремою групою');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

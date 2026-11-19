@@ -30,9 +30,17 @@ const ROLES = [
   { key: 'HELPER', label: 'Помічник', rank: 10, level: 'team' },
   { key: 'SUGAR', label: 'Сахарок', rank: 11, level: 'team' },
   { key: 'VOLUNTEER', label: 'Волонтер', rank: 12, level: 'team' },
-  // Офіс регіону / ерії: людина сама називає свою роль (напр., «Бухгалтер»), підтверджувач може змінити
-  { key: 'OFFICE', label: 'Офіс регіону', rank: 13, level: 'region', viewOnly: true, titled: true },
+  // Національний офіс України: людина обирає посаду зі списку (або пише свою), підтверджує Національний Адмін / Раб Божий
+  { key: 'OFFICE', label: 'Національний офіс', rank: 13, level: 'nat', viewOnly: true, titled: true },
+  // Офіс ерії: людина сама називає свою роль, підтверджувач може змінити
   { key: 'AREA_OFFICE', label: 'Офіс ерії', rank: 14, level: 'area', viewOnly: true, titled: true },
+];
+// посади в національному офісі (як в альбомі «Офіс» / «Експерти»)
+const OFFICE_TITLES = [
+  { group: 'Офіс', items: ['Операційний директор', 'Фінансовий директор', 'Голова навчального відділу', 'Голова медіа відділу', 'Керівник Young Life продукції',
+    'Регіональний директор Young Life Україна', 'Регіональний адміністратор', 'HR', 'Фандрейзер', 'Координатор EP/DGL', 'Перекладач', 'MEA DGL адміністратор',
+    'Фінансовий асистент', 'Діловод', 'Офісний працівник'] },
+  { group: 'Експерти', items: ['Експерт Young Moms', 'Експерт Capernaum', 'Експерт College', 'Експерт WyldLife'] },
 ];
 const RANK = { CLUB: 7, MG: 9, KR: 10, KNOWN: 10, FINANCE: 7, APPROVE: 6, EVENT: 9, GMAIL: 6 };
 // ── дозволи: типові значення = як було до налаштувань; вища ланка задає рамки, нижча може лише звузити ──
@@ -66,10 +74,10 @@ const APPROVAL = {
   AREA_DIRECTOR: [['REGIONAL_DIRECTOR', 'cover']],
   AREA_ADMIN: [['AREA_DIRECTOR', 'same'], ['REGIONAL_DIRECTOR', 'cover'], ['REGIONAL_ADMIN', 'cover']],
   CAPTAIN: [['AREA_DIRECTOR', 'cover'], ['AREA_ADMIN', 'cover'], ['REGIONAL_ADMIN', 'cover']],
-  OFFICE: [['REGIONAL_DIRECTOR', 'same'], ['REGIONAL_ADMIN', 'same']],
+  OFFICE: [['NATIONAL_ADMIN', 'same']],
   AREA_OFFICE: [['AREA_DIRECTOR', 'same'], ['AREA_ADMIN', 'same'], ['REGIONAL_DIRECTOR', 'cover'], ['REGIONAL_ADMIN', 'cover']],
 };
-const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
+const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR', 'OFFICE'];
 const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
 const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 // клуб за команду вносять Капітан, Адмін команди і ці вищі ролі (у своїх межах); МГ і КР — кожен лише за себе
@@ -698,7 +706,7 @@ API.me = function (c) {
       teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name, dir: t.dir })),
       dirs: DIRS,
     },
-    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, titled: !!r.titled })),
+    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, titled: !!r.titled, titles: r.key === 'OFFICE' ? OFFICE_TITLES : undefined })),
     roles: c.allRoles.filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING).map(roleOut_),
   };
   if (!c.active.length) {
@@ -783,7 +791,7 @@ function requestRoles_(c, d) {
     if (existing.some((r) => r.key === k && r.unitId === unitId)) return;
     // Раб Божий не чекає на підтвердження власних ролей
     if (sup && def.level === 'team') activateTeam_(unitId);
-    const row = { id: uid_(), tgId: c.id, name: c.name, key: k, level: def.level, unitId: unitId, status: sup ? ST.ACTIVE : ST.PENDING, decidedBy: sup ? c.name : '', decided: sup ? nowIso() : '', title: def.titled ? clip_(((d.titles || {})[k] || '')).slice(0, 60) : '' };
+    const row = { id: uid_(), tgId: c.id, name: c.name, key: k, level: def.level, unitId: unitId, status: sup ? ST.ACTIVE : ST.PENDING, decidedBy: sup ? c.name : '', decided: sup ? nowIso() : '', title: def.titled ? clip_(((d.titles || {})[k] || '')).slice(0, 120) : '' };
     insertRole_(row);
     created.push(row.id);
   });
@@ -808,7 +816,7 @@ API.requests = function (c) {
 };
 
 function setRoleTitle_(r, title) {
-  const t = clip_(title).slice(0, 60);
+  const t = clip_(title).slice(0, 120);
   S.run('UPDATE roles SET title = ? WHERE id = ?', [t, r.id], true);
   const def = roleDef_(r.key);
   r.title = t; r.label = t ? t + ' (' + def.label.toLowerCase() + ')' : def.label;
@@ -1002,7 +1010,7 @@ API.teamMembers = function (c, d) {
   const ups = !sel ? [] : sel.level === 'multi' ? sel.members.filter((m) => m.level !== 'team') : sel.level !== 'team' ? [sel] : [];
   if (!teams.length && !ups.length) deny_();
   const st = loadStruct_();
-  const OFFICE_NAME = { nat: 'Національний рівень', region: 'Офіс регіону ', area: 'Офіс ерії ' };
+  const OFFICE_NAME = { nat: 'Національний офіс', region: 'Офіс регіону ', area: 'Офіс ерії ' };
   const ORDER = { nat: '0', region: '1', area: '2' };
   const set = {};
   teams.forEach((id) => { set[id] = true; });
