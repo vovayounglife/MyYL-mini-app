@@ -482,7 +482,11 @@
     h += `<div class="row between" style="margin:8px 4px -4px"><span class="sec" style="margin:0">Найближчі події</span><button type="button" class="link-btn" data-a="tab" data-s="calendar">Усі</button></div>`;
     if (!S.events) h += loading();
     else if (!S.events.length) h += '<div class="empty small">Подій поки немає</div>';
-    else h += S.events.slice(0, 2).map(evCard).join('');
+    else {
+      const soon = S.events.filter(inMonth);
+      h += soon.length ? soon.map(evCard).join('') : '<div class="empty small">У найближчий місяць подій немає</div>';
+      if (S.events.length > soon.length) h += `<button type="button" class="link-btn" style="align-self:center" data-a="tab" data-s="calendar">Усі події · ще ${S.events.length - soon.length}</button>`;
+    }
     if (m.scopeCard) {
       const sc = m.scopeCard; const pct = sc.total ? Math.round(sc.done / sc.total * 100) : 0;
       h += `<button type="button" class="mini-stat" data-a="goStats" data-scope="${esc(sc.scope)}" data-cat="club"><span class="grow"><span class="xs muted" style="display:block">${esc(sc.title)} · клуби цього тижня</span>
@@ -593,12 +597,17 @@
     let h = header('Календар Young Life', '', (c.eventUnits || []).length ? `<button type="button" class="icon-btn accent" data-a="evNew" aria-label="Додати подію">${icon('plus', 22)}</button>` : '');
     h += `<div class="pills">${[['all', 'Усі']].concat(Object.keys(LVL).map((k) => [k, LVL[k]])).map((l) => `<button type="button" class="pill${S.evFilter === l[0] ? ' on' : ''}" data-a="evFilter" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
     if (!S.events) return h + loading();
-    const list = S.events.filter((e) => S.evFilter === 'all' || e.level === S.evFilter);
-    if (!list.length) return h + '<div class="empty">Подій немає</div>';
+    const all = S.events.filter((e) => S.evFilter === 'all' || e.level === S.evFilter);
+    if (!all.length) return h + '<div class="empty">Подій немає</div>';
+    // найближчий місяць; решта — за кнопкою «Усі»
+    const soon = all.filter(inMonth), list = S.evAll ? all : soon;
+    if (!list.length) h += '<div class="empty small">У найближчий місяць подій немає</div>';
     let cur = '';
     list.forEach((e) => { const m = evDateParts(e).month; if (m !== cur) { cur = m; h += `<div class="sec">${esc(m)}</div>`; } h += evCard(e); });
+    if (all.length > soon.length) h += `<button type="button" class="btn sec2" data-a="evAll">${S.evAll ? 'Лише найближчий місяць' : 'Усі події · ще ' + (all.length - soon.length)}</button>`;
     return h;
   }
+  const inMonth = (e) => e.date <= ymd(new Date(Date.now() + 31 * 864e5));
   const evUnits = (f) => { const u = (caps().eventUnits || []).slice(); if (f && f.extraUnit && !u.some((x) => x.level === f.extraUnit.level && x.unitId === f.extraUnit.unitId)) u.push(f.extraUnit); return u; };
   function evDetailView() {
     const e = (S.events || []).filter((x) => x.id === S.ev)[0];
@@ -1784,6 +1793,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   // календар
   A.openEv = (d) => { if (S.screen !== 'calendar') go('calendar', { ev: d.id }); else { S.ev = d.id; render(); window.scrollTo(0, 0); } };
   A.evFilter = (d) => { S.evFilter = d.l; render(); };
+  A.evAll = () => { S.evAll = !S.evAll; render(); };
   const ownerKeyOf = (u) => (!u ? '' : u.level === 'nat' ? 'nat' : { region: 'r:', area: 'a:', team: 't:' }[u.level] + u.unitId);
   function resetEvPick(keys) {
     const f = S.evForm, u = evUnits(f)[Number(f.unit) || 0], by = scopeBy();
