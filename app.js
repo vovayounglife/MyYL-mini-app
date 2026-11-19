@@ -171,7 +171,7 @@
   const myTeamFirst = (ids) => { const mine = (S.me.myTeams || []).map((t) => t.id).filter((id) => ids.indexOf(id) >= 0); return mine[0] || ids[0] || null; };
 
   // ───────────── навігація ─────────────
-  const TOP = ['home', 'add', 'calendar', 'stats', 'more'];
+  const TOP = ['home', 'add', 'known', 'stats', 'more'];
   function go(screen, opts) {
     if (TOP.indexOf(screen) >= 0) S.stack = []; else if (S.screen !== screen) S.stack.push(S.screen);
     S.screen = screen;
@@ -375,9 +375,10 @@
   const canKnownAdd = () => (caps().knownEditTeams || []).length > 0 || !!caps().knownNoTeam;
   function navHtml() {
     const c = caps();
-    const canReport = ['club', 'mg', 'kr'].some(canType) || canKnownAdd();
-    const tabs = [['home', 'Головна'], ['add', 'Внести'], ['calendar', 'Календар'], ['stats', 'Статистика'], ['more', 'Ще']]
-      .filter((t) => (t[0] !== 'add' || canReport) && (t[0] !== 'stats' || (S.me.scopes || []).length));
+    const canKnown = (c.knownTeams || []).length > 0 || !!c.knownNoTeam;
+    // «Внести» — завжди; «Знані» — якщо є доступ; «Календар» — у «Ще»
+    const tabs = [['home', 'Головна'], ['add', 'Внести'], ['known', 'Знані'], ['stats', 'Статистика'], ['more', 'Ще']]
+      .filter((t) => (t[0] !== 'known' || canKnown) && (t[0] !== 'stats' || (S.me.scopes || []).length));
     const active = TOP.indexOf(S.screen) >= 0 ? S.screen : 'more';
     return `<nav class="tabs" aria-label="Розділи"><div class="in-nav">${tabs.map((t) =>
       `<button type="button" class="${t[0] === active ? 'on' : ''}" data-a="tab" data-s="${t[0]}">${icon(t[0], 24)}${t[1]}${t[0] === 'more' && S.me.pendingCount ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></nav>`;
@@ -1018,7 +1019,7 @@
   VIEWS.more = function () {
     const c = caps();
     const tiles = sectionTiles().filter((t) => t.k !== 'broadcast');
-    const team = tiles.filter((t) => ['myyl', 'known', 'team', 'finance'].indexOf(t.k) >= 0);
+    const team = [{ k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
