@@ -455,7 +455,7 @@
   // ───────────── ГОЛОВНА ─────────────
   VIEWS.home = function () {
     const m = me(), c = caps();
-    let h = `<div class="row"><span class="avatar lg yl-logo"><img src="icons/yl-mark.png" alt="Young Life"></span><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
+    let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png?v=6" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
