@@ -411,10 +411,6 @@
       h += `<div class="sec">Швидко внести</div><div class="grid3">${quick.map((t) =>
         `<button type="button" class="tile" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}</button>`).join('')}</div>`;
     }
-    if (IN_TG && !LS.get('hideInstall')) {
-      h += `<div class="banner" style="cursor:default"><span class="ic ic-teal">${icon('phoneApp', 18)}</span><span class="grow"><b>MyYL на телефон</b><br><span class="small muted">Окрема іконка — відкривай без Telegram</span></span>
-        <button type="button" class="btn sm" data-a="tabGo" data-s="install">Як?</button><button type="button" class="icon-btn" style="width:34px;height:34px" data-a="hideInstall" aria-label="Сховати">✕</button></div>`;
-    }
     const tiles = sectionTiles();
     if (tiles.length) {
       h += `<div class="sec">Розділи</div><div class="grid2">${tiles.map((t) =>
@@ -764,12 +760,17 @@
     const lv = LEVELS.filter((l) => units.some((x) => x.level === l[0]));
     const level = P.level || (by[P.keys[0]] || {}).level;
     const pn = (x) => (by[x.parent] || {}).name || '';
-    const list = units.filter((x) => x.level === level).sort((a, b) => pn(a).localeCompare(pn(b)) || byName(a, b));
-    const manyParents = new Set(list.map(pn)).size > 1;
+    const cur = by[P.keys[0]];
+    const parentKey = cur && cur.level === level && by[cur.parent] ? cur.parent : '';
+    // у межах батьківської одиниці: регіони — в Україні, ерії — в регіоні, команди — в ерії
+    const list = units.filter((x) => x.level === level && (parentKey ? x.parent === parentKey : !by[x.parent])).sort((a, b) => pn(a).localeCompare(pn(b)) || byName(a, b));
+    const manyParents = !parentKey && new Set(list.map(pn)).size > 1;
+    const pLbl = parentKey ? ({ nat: '', region: 'регіону ', area: 'ерії ' }[by[parentKey].level] || '') + (by[parentKey].level === 'nat' ? 'України' : by[parentKey].name) : '';
     let h = `<div class="col pick" id="pk-${scr}" style="gap:8px">`;
     if (lv.length > 1) h += `<div class="seg" role="tablist" aria-label="Рівень">${lv.map((l) => `<button type="button" role="tab" aria-selected="${l[0] === level}" class="${l[0] === level ? 'on' : ''}" data-a="pkLevel" data-s="${scr}" data-l="${l[0]}">${l[1]}</button>`).join('')}</div>`;
     if (list.length > 1) {
       if (list.length > 10) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти: ${esc(((LEVELS.filter((l) => l[0] === level)[0] || [])[1] || '').toLowerCase())}…" data-live="pkFind" data-s="${scr}" aria-label="Пошук">`;
+      if (pLbl && level !== 'region') h += `<div class="xs muted" style="margin:-2px 0 -4px">${esc(((LEVELS.filter((l) => l[0] === level)[0] || [])[1] || '').replace('Ерія', 'Ерії').replace('Команда', 'Команди'))} ${esc(pLbl)} · щоб змінити, обери вище «${level === 'team' ? 'Ерія' : 'Регіон'}»</div>`;
       h += `<div class="pills lvl"><button type="button" class="pill multi${P.multi ? ' on' : ''}" data-a="pkMulti" data-s="${scr}" aria-pressed="${P.multi}">${P.multi ? '☑' : '☐'} Кілька</button>${list.map((x) => {
         const on = P.keys.indexOf(x.key) >= 0;
         return `<button type="button" class="pill${on ? ' on' : ''}" data-a="pkUnit" data-s="${scr}" data-k="${esc(x.key)}" data-q="${esc((x.name + ' ' + pn(x)).toLowerCase())}" aria-pressed="${on}">${esc(x.name)}${manyParents && level !== 'region' ? `<span class="hint"> · ${esc(pn(x))}</span>` : ''}</button>`;
@@ -1164,6 +1165,9 @@
     const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
+    const N = (m.profile && m.profile.notif) || {};
+    const NL = [['bc', 'Розсилки від інших', 'повідомлення «Написати» від керівників'], ['remind', 'Нагадування про звіти', 'якщо щось не внесено за тиждень'], ['events', 'Нагадування про події', 'на які ти записався']].concat(caps().approve ? [['requests', 'Нові заявки на ролі', 'коли хтось чекає твого підтвердження']] : []);
+    h += `<div class="sec">Сповіщення в боті</div><div class="card list">${NL.map((x) => `<label class="check" style="min-height:58px"><span class="grow"><span class="b" style="display:block">${x[1]}</span><span class="xs muted">${x[2]}</span></span><input type="checkbox" data-ch="notifToggle" data-k="${x[0]}"${N[x[0]] !== false ? ' checked' : ''}></label>`).join('')}</div>`;
     return h;
   };
 
@@ -1512,7 +1516,12 @@
   };
 
   // профіль
-  A.profileSave = async () => { const res = await run(() => api('saveProfile', S.profile), 'Анкету збережено'); if (res) { S.me.profile = res; S.me.user.name = res.name || S.me.user.name; S.me.user.title = res.title || ''; render(); } };
+  A.notifToggle = async (d, el) => {
+    const n = Object.assign({}, (S.me.profile && S.me.profile.notif) || {}); n[d.k] = el.checked;
+    const res = await run(() => api('saveProfile', { notif: n }), el.checked ? 'Сповіщення увімкнено' : 'Сповіщення вимкнено');
+    if (res) { S.me.profile = res; LS.set('me', S.me); } else el.checked = !el.checked;
+  };
+  A.profileSave = async () => { const res = await run(() => api('saveProfile', Object.assign({}, S.profile, { notif: undefined })), 'Анкету збережено'); if (res) { S.me.profile = res; S.me.user.name = res.name || S.me.user.name; S.me.user.title = res.title || ''; render(); } };
   A.roleReqOpen = () => {
     const t = (S.me.myTeams || [])[0];
     S.roleReq = { regionId: t ? t.regionId : '', areaId: t ? t.areaId : '', teamId: t ? t.id : '', newTeam: '', roles: {}, upper: false, email: (S.me.profile || {}).email || '' };

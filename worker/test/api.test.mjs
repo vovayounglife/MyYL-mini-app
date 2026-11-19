@@ -204,21 +204,21 @@ ok(tr.ok && tr.data.roots[0] === capKey && Object.keys(tr.data.units).length ===
 r = await api(LEAD, 'broadcastInfo', {});
 ok(!r.ok, 'розсилка: лідер не може');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'] });
-ok(r.ok && r.data.count === 6, 'розсилка: Україна — усі з роллю (' + (r.data && r.data.count) + ')');
+ok(r.ok && r.data.count === 5, 'розсилка: Україна — усі з роллю, крім себе (' + (r.data && r.data.count) + ')');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'], pending: true });
-ok(r.ok && r.data.count === 6, 'розсилка: + ті, хто чекає');
+ok(r.ok && r.data.count === 5, 'розсилка: + ті, хто чекає');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'], roles: ['CAPTAIN', 'AREA_DIRECTOR', 'REGIONAL_DIRECTOR'] });
-ok(r.ok && r.data.count === 4, 'розсилка: лише керівні ролі (' + (r.data && r.data.count) + ')');
+ok(r.ok && r.data.count === 3, 'розсилка: лише керівні ролі (' + (r.data && r.data.count) + ')');
 r = await api(CAP, 'broadcastInfo', { units: ['r:r0'] });
 ok(!r.ok, 'розсилка: капітан не може писати регіону');
 r = await api(CAP, 'broadcastInfo', {});
-ok(r.ok && r.data.count === 3, 'розсилка: капітан — своя команда');
+ok(r.ok && r.data.count === 2, 'розсилка: капітан — своя команда (без себе)');
 r = await api(AD, 'broadcastInfo', { units: ['a:a1'], roles: ['LEADER'] });
 ok(r.ok && r.data.count === 1, 'розсилка: ЕД — лідерам своєї ерії');
 sent.length = 0;
 r = await api(CAP, 'broadcast', { units: ['t:' + capTeam.id], text: 'Молимось за табір <3' });
 const bmsg = sent.filter((s) => /Молимось за табір &lt;3/.test(s.text || ''));
-ok(r.ok && r.data.sent === 3 && bmsg.length === 3 && /📣 <b>Кап Тан<\/b> · Капітан · Нова команда/.test(bmsg[0].text) && bmsg[0].reply_markup, 'розсилка: капітан своїй команді, з підписом');
+ok(r.ok && r.data.sent === 2 && bmsg.length === 2 && /📣 <b>Кап Тан<\/b> · Капітан · Нова команда/.test(bmsg[0].text) && bmsg[0].reply_markup, 'розсилка: капітан своїй команді, з підписом');
 // велика розсилка — через чергу
 for (let i = 100; i < 140; i++) await api({ id: i, first_name: 'Т' + i }, 'register', { name: 'Тест ' + i, roles: ['VOLUNTEER'], teamId: capTeam.id, areaId: 'a1' });
 for (let i = 100; i < 140; i++) { const q = await api(CAP, 'requests'); if (!q.data.length) break; await api(CAP, 'decide', { roleIds: q.data[0].roles.map((x) => x.id), approve: true }); }
@@ -226,11 +226,11 @@ sent.length = 0;
 r = await api(VOVA, 'broadcast', { units: ['nat'], text: 'Велика розсилка', button: false });
 const first = sent.filter((s) => /Велика розсилка/.test(s.text || '')).length;
 let left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
-ok(r.ok && r.data.sent === 46 && first === 25 && left === 21, 'велика розсилка: 25 одразу, 21 у черзі (' + (r.data && r.data.sent) + '/' + first + '/' + left + ')');
+ok(r.ok && r.data.sent === 45 && first === 25 && left === 20, 'велика розсилка: 25 одразу, 21 у черзі (' + (r.data && r.data.sent) + '/' + first + '/' + left + ')');
 const notFive = new Date(); notFive.setUTCMinutes(7);
 await W.scheduled({ scheduledTime: notFive.getTime() }, env, ectx);
 left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
-ok(left === 0 && sent.filter((s) => /Велика розсилка/.test(s.text || '')).length === 46, 'cron дослав решту, без дублів');
+ok(left === 0 && sent.filter((s) => /Велика розсилка/.test(s.text || '')).length === 45, 'cron дослав решту, без дублів');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'] });
 ok(r.data.history.length === 2 && r.data.queued === 0, 'історія розсилок (Раб Божий бачить усі)');
 r = await api(CAP, 'broadcastInfo', {});
@@ -405,6 +405,25 @@ r = await api(VOVA, 'eventSave', { level: 'nat', unitId: '', title: 'Kyiv', date
 ok(!(await api(AD, 'events')).data.some((e) => e.title === 'Kyiv'), 'подія Kyiv: ЕД з West не бачить');
 r = await api(AD, 'eventSave', { level: 'area', unitId: 'a1', title: 'Чужа', date: evDay, aud: ['r:r1'] });
 ok(r.ok && (await api(VOVA, 'events')).data.some((e) => e.title === 'Чужа' && !e.audLabel), 'подія: одиниця поза своєю ерією ігнорується');
+
+
+// сповіщення
+me = await api(VOVA, 'me');
+ok(me.data.profile.notif.bc === false && me.data.profile.notif.requests === true, 'сповіщення: Раб Божий за замовчуванням без чужих розсилок');
+sent.length = 0;
+await api(AD, 'broadcast', { units: ['a:a1'], text: 'Від ЕД' });
+ok(!sent.some((x) => x.chat_id === '1' && /Від ЕД/.test(x.text || '')) && !sent.some((x) => x.chat_id === '3' && /Від ЕД/.test(x.text || '')), 'сповіщення: Раб Божий і автор не отримують');
+await api(LEAD, 'saveProfile', { notif: { bc: false } });
+sent.length = 0;
+r = await api(AD, 'broadcast', { units: ['a:a1'], text: 'Ще раз' });
+ok(!sent.some((x) => x.chat_id === '5'), 'сповіщення: лідер вимкнув розсилки');
+me = await api(LEAD, 'me');
+ok(me.data.profile.notif.bc === false && me.data.profile.notif.remind === true, 'сповіщення: збережено');
+// статистика «Команда»
+r = await api(AD, 'stats', { units: ['a:a1'], cat: 'people' });
+ok(r.ok && r.data.cats.some((x) => x.key === 'people' && x.label === 'Команда') && r.data.kpis[0].l === 'Людей у командах' && r.data.breakdown.rows.length === 2 && r.data.chart.bars.length === 7, 'статистика «Команда» по ерії');
+r = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'people' });
+ok(r.ok && r.data.breakdown.title === 'Ролі' && r.data.breakdown.rows.some((x) => x.name === 'Волонтер'), 'статистика «Команда» по команді — ролі');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

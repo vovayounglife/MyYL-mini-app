@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, area_id TEXT NOT NULL, na
 
 CREATE TABLE IF NOT EXISTS people (
   tg_id TEXT PRIMARY KEY, username TEXT, name TEXT, phone TEXT, email TEXT, bday TEXT, repent TEXT, baptism TEXT,
-  lpyl TEXT, resp TEXT, title TEXT, registered TEXT
+  lpyl TEXT, resp TEXT, title TEXT, registered TEXT, notif TEXT
 );
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, name TEXT, role_key TEXT NOT NULL, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '',

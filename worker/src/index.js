@@ -325,7 +325,9 @@ function indexBase(b) {
   b.teamRegion = (teamId) => { const t = b.team[teamId]; return t && b.area[t.areaId] ? b.area[t.areaId].regionId : ''; };
 }
 function personFromRow(r) {
-  return { tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '' };
+  let notif = {};
+  try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
+  return { tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -392,6 +394,11 @@ function savePerson_(c, d) {
   Object.keys(F).forEach((k) => { if (d[k] != null) v[F[k]] = clip_(d[k]); });
   if (d.email != null) v.email = clip_(String(d.email).trim().toLowerCase());
   if (d.title != null) v.title = clip_(String(d.title).slice(0, 60));
+  if (d.notif && typeof d.notif === 'object') {
+    const n = {};
+    NOTIF.forEach((k) => { if (d.notif[k] != null) n[k] = d.notif[k] ? 1 : 0; });
+    v.notif = JSON.stringify(n);
+  }
   v.username = (c.tg && c.tg.username) || (p && p.username) || '';
   if (p) {
     const keys = Object.keys(v);
@@ -1229,8 +1236,9 @@ function bcRecipients_(c, d) {
   const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
   const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && (!roles.length || roles.indexOf(r.key) >= 0) && units.some((u) => within_(u, r)));
   let ids = uniq_(act.map((r) => r.tgId));
+  ids = ids.filter((id) => id !== c.id && wants_(id, 'bc'));
   // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
-  if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people)));
+  if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people).filter((id) => id !== c.id && wants_(id, 'bc'))));
   const LV = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
   const where = units.map((u) => LV[u.level] + (u.level === 'nat' ? 'Україна' : u.name)).join(', ');
   const who = roles.length ? roles.map((k) => roleDef_(k).label).join(', ') : 'усі';
@@ -1302,7 +1310,7 @@ API.nudge = function (c, d) {
   const type = d.type;
   if (!TYPE_LABEL[type]) bad_('Невідомий тип.');
   const miss = missingFor_(scope, type);
-  miss.people.forEach((tgId) => sendApp_(tgId, '🔔 Нагадування: заповни, будь ласка, «' + TYPE_LABEL[type] + '» за цей тиждень. Якщо не було — так і відміть.', 'Відкрити'));
+  miss.people.filter((tgId) => wants_(tgId, 'remind')).forEach((tgId) => sendApp_(tgId, '🔔 Нагадування: заповни, будь ласка, «' + TYPE_LABEL[type] + '» за цей тиждень. Якщо не було — так і відміть.', 'Відкрити'));
   return { sent: miss.people.length };
 };
 
@@ -1347,7 +1355,7 @@ function statCats_(c, scope) {
     const lists = scope.members.map((m) => statCats_(c, m).map((x) => x.key));
     return statCats_(c, scope.members[0]).filter((x) => lists.every((l) => l.indexOf(x.key) >= 0));
   }
-  const cats = [{ key: 'overview', label: 'Огляд' }, { key: 'club', label: 'Клуби' }, { key: 'mg', label: 'Малі групи' }, { key: 'kr', label: 'Контактна робота' }];
+  const cats = [{ key: 'overview', label: 'Огляд' }, { key: 'people', label: 'Команда' }, { key: 'club', label: 'Клуби' }, { key: 'mg', label: 'Малі групи' }, { key: 'kr', label: 'Контактна робота' }];
   const upperCovers = upperRoles_(c).some((r) => covers_(r, scope.level, scope.unitId));
   const teamOk = (rank) => scope.level === 'team' && teamRoles_(c, scope.unitId, rank).length > 0;
   if (upperCovers || teamOk(RANK.KNOWN)) cats.push({ key: 'known', label: 'Знані' });
@@ -1377,7 +1385,14 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const clubs = of('club').filter(ok), mgs = of('mg').filter(ok), krs = of('kr').filter(ok);
   const knownTotal = teamIds.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0);
   const fin = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= periodStart.slice(0, 7));
+  // люди в командах: активні командні ролі
+  const tRoles = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && inScope[r.unitId]);
+  const peopleIn = (ids) => { const set = {}; ids.forEach((id) => { set[id] = true; }); return uniq_(tRoles.filter((r) => set[r.unitId]).map((r) => r.tgId)).length; };
+  const pplTotal = uniq_(tRoles.map((r) => r.tgId)).length;
+  const pplNew = uniq_(tRoles.filter((r) => String(r.requested).slice(0, 10) >= periodStart).map((r) => r.tgId)).length;
+  const pplRank = (max) => uniq_(tRoles.filter((r) => r.rank <= max).map((r) => r.tgId)).length;
   const K = {
+    people: [[nf(pplTotal), 'Людей у командах'], [nf(teamIds.length), teamIds.length === 1 ? 'Команда' : 'Команд'], [teamIds.length ? df(pplTotal / teamIds.length) : '—', 'Середньо в команді'], [nf(pplRank(RANK.MG)), 'Лідерів і вище'], [nf(pplNew), 'Нових за період']],
     overview: [[nf(clubs.length), 'Клубів'], [nf(sum(clubs, (r) => r.count)), 'Підлітків на клубах'], [nf(mgs.length), 'Зустрічей малих груп'], [df(sum(krs, (r) => r.hours)), 'Годин контактної роботи']],
     club: [[nf(clubs.length), 'Клубів проведено'], [nf(sum(clubs, (r) => r.count)), 'Відвідувань підлітків'], [clubs.length ? df(sum(clubs, (r) => r.count) / clubs.length) : '—', 'Середньо на клубі'], [nf(sum(clubs, (r) => r.newT)), 'Нових підлітків']],
     mg: [[nf(mgs.length), 'Зустрічей малих груп'], [nf(sum(mgs, (r) => r.count)), 'Відвідувань'], [mgs.length ? df(sum(mgs, (r) => r.count) / mgs.length) : '—', 'Середньо на зустрічі'], [nf(sum(mgs, (r) => r.newT)), 'Нових учасників']],
@@ -1388,9 +1403,9 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const metric = {
     overview: (r) => (r.type === 'club' && ok(r) ? r.count : 0), club: (r) => (r.type === 'club' && ok(r) ? r.count : 0),
     mg: (r) => (r.type === 'mg' && ok(r) ? r.count : 0), kr: (r) => (r.type === 'kr' ? r.hours : 0),
-    known: (r) => (r.type === 'known' ? 1 : 0), finance: (r) => (r.type === 'fin' ? r.inc : 0),
+    known: (r) => (r.type === 'known' ? 1 : 0), finance: (r) => (r.type === 'fin' ? r.inc : 0), people: () => 0,
   }[cat];
-  const titles = { overview: 'Підлітки на клубах', club: 'Підлітки на клубах', mg: 'Учасники малих груп', kr: 'Години контактної роботи', known: 'Нові знані по імені', finance: 'Надходження, ₴' };
+  const titles = { people: 'Ролі в командах', overview: 'Підлітки на клубах', club: 'Підлітки на клубах', mg: 'Учасники малих груп', kr: 'Години контактної роботи', known: 'Нові знані по імені', finance: 'Надходження, ₴' };
   const buckets = [];
   const byKey = {};
   if (period === 'year') {
@@ -1406,7 +1421,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
     rows.forEach((r) => { const b = byKey[r.week]; if (b) b.v += Number(metric(r)) || 0; });
   }
 
-  const ML2 = { overview: 'підлітків на клубах', club: 'підлітків на клубах', mg: 'учасників малих груп', kr: 'годин КР', known: 'знаних по імені', finance: 'надходжень, ₴' };
+  const ML2 = { people: 'людей', overview: 'підлітків на клубах', club: 'підлітків на клубах', mg: 'учасників малих груп', kr: 'годин КР', known: 'знаних по імені', finance: 'надходжень, ₴' };
   let groups = [];
   if (scope.level === 'nat') groups = st.regions.map((x) => ({ key: 'r:' + x.id, name: x.name, test: (r) => r.regionId === x.id, teams: teamIds.filter((id) => st.teamRegion(id) === x.id) }));
   if (scope.level === 'region') groups = st.areas.filter((a) => a.regionId === scope.unitId).map((x) => ({ key: 'a:' + x.id, name: x.name, test: (r) => r.areaId === x.id, teams: teamIds.filter((id) => st.team[id].areaId === x.id) }));
@@ -1414,6 +1429,11 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   if (scope.level === 'multi') {
     const LVN = { nat: 'Україна', region: '', area: 'Ерія ', team: '' };
     groups = scope.members.map((m) => { const ids = scopeTeamIds_(m); const set = {}; ids.forEach((id) => { set[id] = true; }); return { key: m.key, name: (LVN[m.level] || '') + (m.level === 'nat' ? '' : m.name), test: (r) => !!set[r.teamId], teams: ids }; });
+  }
+  if (scope.level === 'team' && cat === 'people') {
+    const ROLE_SHORT = {};
+    ROLES.filter((x) => x.level === 'team').forEach((x) => { ROLE_SHORT[x.key] = x.label; });
+    groups = ROLES.filter((x) => x.level === 'team' && tRoles.some((r) => r.key === x.key)).map((x) => ({ key: '', name: x.label, count: uniq_(tRoles.filter((r) => r.key === x.key).map((r) => r.tgId)).length }));
   }
   if (scope.level === 'team' && (cat === 'kr' || cat === 'mg')) {
     const names = {};
@@ -1426,9 +1446,10 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const reported = {};
   loadLog_().forEach((r) => { if (r.week === nowWk && r.type === repType && inScope[r.teamId]) reported[r.teamId] = true; });
   const breakdown = groups.map((g) => {
-    const v = cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) : sum(inP.filter(g.test), metric);
+    const v = cat === 'people' ? (g.count != null ? g.count : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) : sum(inP.filter(g.test), metric);
     const row = { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
-    if (g.teams) { row.total = g.teams.length; row.done = g.teams.filter((id) => reported[id]).length; row.teams = g.teams.length; }
+    if (cat === 'people' && g.teams) row.sub = g.teams.length + (g.teams.length === 1 ? ' команда' : ' команд');
+    if (g.teams && cat !== 'people') { row.total = g.teams.length; row.done = g.teams.filter((id) => reported[id]).length; row.teams = g.teams.length; }
     return row;
   }).sort((a, b) => b.value - a.value);
 
@@ -1444,11 +1465,13 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
     return { type: type, label: { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота' }[type], ok: m.ok, none: m.none, total: m.total, unit: m.unit, missing: m.missingNames };
   });
 
+  const roleBars = ROLES.filter((x) => x.level === 'team').map((x) => ({ label: { CAPTAIN: 'Кап', TEAM_ADMIN: 'Адм', DGL: 'DGL', LEADER: 'Лід', HELPER: 'Пом', SUGAR: 'Сах', VOLUNTEER: 'Вол' }[x.key] || x.label.slice(0, 3), v: uniq_(tRoles.filter((r) => r.key === x.key).map((r) => r.tgId)).length }));
   return {
     scope, scopes, cats, cat, period,
     kpis: K[cat].map((k) => ({ v: k[0], l: k[1] })),
-    chart: { title: titles[cat], sub: period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
-    breakdown: { title: ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
+    chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер', bars: roleBars }
+      : { title: titles[cat], sub: period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
+    breakdown: { title: cat === 'people' && scope.level === 'team' ? 'Ролі' : ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
     path, report,
     weekLabel: weekLabel_(nowWk),
     canNudge: c.roles.some((r) => r.rank <= RANK.APPROVE),
@@ -1536,7 +1559,7 @@ function notifyApprovers_(c, roleIds) {
   rows.forEach((r) => primaryApprovers_(r).forEach((id) => { who[id] = true; }));
   const text = '🆕 <b>Нова заявка</b>\n' + esc_(c.name) + (c.tg.username ? ' (@' + esc_(c.tg.username) + ')' : '') + '\n' +
     rows.map((r) => '• ' + esc_(r.label) + ' · ' + esc_(unitName_(r.level, r.unitId))).join('\n');
-  Object.keys(who).forEach((id) => sendApp_(id, text, 'Розглянути', 'requests'));
+  Object.keys(who).filter((id) => wants_(id, 'requests')).forEach((id) => sendApp_(id, text, 'Розглянути', 'requests'));
 }
 
 function pendingApproversText_(c) {
@@ -1722,6 +1745,7 @@ function weeklyReminder() {
   const by = {};
   loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team').forEach((r) => { (by[r.tgId] = by[r.tgId] || []).push(r); });
   Object.keys(by).forEach((id) => {
+    if (!wants_(id, 'remind')) return;
     const miss = weekStatus_({ id: id, roles: by[id] }).items.filter((x) => x.status === 'missing');
     if (!miss.length) return;
     sendApp_(id, '🔔 <b>Нагадування</b>\nЗа цей тиждень ще не заповнено:\n' + miss.map((x) => '• ' + esc_(x.label)).join('\n') +
@@ -1735,7 +1759,7 @@ function eventReminder() {
   days.forEach((n) => {
     const day = addDaysKey_(today, n);
     loadEvents_().filter((e) => e.date === day).forEach((e) => {
-      S.rsvp.filter((r) => r.eventId === e.id).forEach((r) => {
+      S.rsvp.filter((r) => r.eventId === e.id && wants_(r.tgId, 'events')).forEach((r) => {
         sendApp_(r.tgId, '📅 ' + (n === 1 ? 'Завтра' : 'Через ' + n + ' дні') + ': <b>' + esc_(e.title) + '</b>\n' + esc_([e.time, e.place].filter(Boolean).join(' · ')), 'Деталі', 'calendar');
       });
     });
@@ -1836,7 +1860,17 @@ function uid_() { return crypto.randomUUID().replace(/-/g, '').slice(0, 10); }
 function uniq_(a) { return a.filter((x, i) => x && a.indexOf(x) === i); }
 function fullName_(f) { return [f.first_name, f.last_name].filter(Boolean).join(' ') || f.username || String(f.id); }
 function nowIso() { return new Date().toISOString(); }
-function profileOf_(p) { return { name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp }; }
+function profileOf_(p) { return { name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
+// bc — розсилки від інших; remind — нагадування про звіти; events — про події; requests — нові заявки
+const NOTIF = ['bc', 'remind', 'events', 'requests'];
+function notifOf_(tgId) {
+  const p = getPerson_(tgId) || {};
+  const sup = loadRoles_().some((r) => r.tgId === String(tgId) && r.status === ST.ACTIVE && r.key === 'SUPER');
+  const out = {};
+  NOTIF.forEach((k) => { const v = (p.notif || {})[k]; out[k] = v == null ? !(sup && k === 'bc') : !!v; });
+  return out;
+}
+const wants_ = (tgId, k) => notifOf_(tgId)[k];
 function roleOut_(r) { return { id: r.id, key: r.key, label: r.label, level: r.level, unitId: r.unitId, unitName: unitName_(r.level, r.unitId), status: r.status }; }
 function teamOut_(id) { const st = loadStruct_(); const t = st.team[id]; return { id: id, name: t.name, areaId: t.areaId, areaName: (st.area[t.areaId] || {}).name || '', regionId: st.teamRegion(id) }; }
 function knownOut_(r) { return { id: r.id, stage: stageOk_(r.stage) ? r.stage : 'meet', authorId: r.author_id || '', name: r.name || '', phone: r.phone || '', ig: r.ig || '', bday: r.bday || '', school: r.school || '', grade: r.grade || '', leader: r.leader || '', note: r.note || '' }; }
