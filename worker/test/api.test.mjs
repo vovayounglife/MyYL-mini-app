@@ -843,6 +843,23 @@ ok(!r.ok, 'ресурси: видаляє лише автор або Раб Бо
   ok(rf.status === 404, 'файли: без ключа — 404');
 }
 
+
+// ── встановили MyYL ──
+r = await api(AD, 'installStats', { units: ['a:a1'] });
+ok(r.ok && r.data.total > r.data.reg && r.data.reg > 0 && r.data.rows.length >= 1 && r.data.users.some((u) => u.name === 'Кап Тан') && r.data.notYet.some((u) => u.name === 'Марія Нова'), 'встановили: ерія — X з Y, імена ' + r.data.reg + '/' + r.data.total);
+r = await api(VOVA, 'installStats', {});
+ok(r.ok && r.data.title === 'Регіони' && r.data.rows.some((x) => x.name === 'West'), 'встановили: Україна → регіони');
+
+
+// ── людина з бота збігається з записом «без MyYL» ──
+await api(CAP, 'memberAdd', { teamId: capTeam.id, names: 'Вадим Гарань', role: 'LEADER' });
+const VG = { id: 270, first_name: 'Вадим' };
+r = await api(VG, 'register', { name: 'Гарань Вадим', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
+me = await api(VG, 'me');
+ok(r.ok && r.data.status === 'active' && me.data.status === 'active' && me.data.roles.filter((x) => x.key === 'LEADER').length === 1, 'обʼєднання: зареєструвався без вибору — роль зі складу активна, дубля немає');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+ok(r.data.filter((p) => /Гарань/.test(p.name)).length === 1 && r.data.find((p) => /Гарань/.test(p.name)).registered, 'обʼєднання: у складі один, з позначкою YL');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

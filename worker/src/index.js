@@ -115,6 +115,8 @@ export default {
     const DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     if (DAYS[p.dow % 7] === day && p.hour === hour) { await S.loadLog(weekKey_(new Date())); use(S, () => weeklyReminder()); }
     if (p.hour === 9) { await S.loadEvents(); use(S, () => eventReminder()); }
+    // хто вже в боті, але ще записаний у складі «без MyYL» — обʼєднуємо
+    use(S, () => linkPlaceholders_());
     await S.flush();
     await drainOutbox(env, 30);
   },
@@ -144,7 +146,7 @@ const NEEDS = {
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   memberAdd: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
-  dirStats: { log: 'stats' },
+  dirStats: { log: 'stats' }, installStats: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
@@ -427,7 +429,7 @@ function indexBase(b) {
 function personFromRow(r) {
   let notif = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
-  return { main: r.main || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
+  return { main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -770,8 +772,51 @@ API.register = function (c, d) {
     claimMember_(c, claim, name, str_(d.teamId));
     if (!d.roles || !d.roles.length) return { status: 'active', approvers: '' };
   }
-  return requestRoles_(c, d);
+  const res = requestRoles_(c, d);
+  // якщо капітан уже вніс цю людину в склад — роль одразу активна
+  if (linkPlaceholders_(c.id) && loadRoles_().some((r) => r.tgId === c.id && r.status === ST.ACTIVE)) res.status = 'active';
+  return res;
 };
+// записи «без MyYL», що збігаються з людиною в боті: повне імʼя — одразу; схоже — якщо вона в тій самій команді чи ерії
+function linkPlaceholders_(onlyId) {
+  const st = loadStruct_();
+  const roles = loadRoles_();
+  const real = Object.keys(S.b.people).filter((id) => isReal_(id) && S.b.people[id].name && (!onlyId || id === onlyId));
+  if (!real.length) return 0;
+  const areaOf = (r) => (r.level === 'team' ? (st.team[r.unitId] || {}).areaId : r.level === 'area' ? r.unitId : '');
+  let n = 0;
+  uniq_(roles.filter((r) => !isReal_(r.tgId) && r.status === ST.ACTIVE).map((r) => r.tgId)).forEach((mid) => {
+    const pname = (getPerson_(mid) || {}).name;
+    if (!pname) return;
+    const mine = roles.filter((r) => r.tgId === mid && r.status === ST.ACTIVE);
+    const cands = real.filter((id) => {
+      const sc = nameScore_(pname, S.b.people[id].name);
+      if (!sc.same) return false;
+      if (sc.exact) return true;
+      return roles.some((t) => t.tgId === id && (t.status === ST.ACTIVE || t.status === ST.PENDING) && mine.some((m) => t.unitId === m.unitId || (areaOf(t) && areaOf(t) === areaOf(m))));
+    });
+    if (cands.length !== 1) return;
+    mergeMember_(mid, cands[0]);
+    n++;
+  });
+  return n;
+}
+function mergeMember_(mid, id) {
+  const name = S.b.people[id].name;
+  const theirs = loadRoles_().filter((r) => r.tgId === id);
+  const got = [];
+  loadRoles_().filter((r) => r.tgId === mid).forEach((r) => {
+    const dup = theirs.filter((t) => t.key === r.key && t.unitId === r.unitId && (t.status === ST.ACTIVE || t.status === ST.PENDING))[0];
+    if (dup && dup.status === ST.ACTIVE) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); return; }
+    if (dup) { dup.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, dup.id], true); }
+    r.tgId = id; r.name = name;
+    S.run('UPDATE roles SET tg_id = ?, name = ? WHERE id = ?', [id, name, r.id], true);
+    if (r.status === ST.ACTIVE) got.push(r);
+  });
+  S.run('DELETE FROM people WHERE tg_id = ?', [mid], true);
+  delete S.b.people[mid];
+  if (got.length && wants_(id, 'requests')) sendApp_(id, '✅ Тебе вже внесли в склад: ' + got.map((r) => esc_(r.label + ' · ' + levelLabel_(r.level, r.unitId).replace(/^Команда /, ''))).join(', ') + '. Роль активна — заходь!', 'Відкрити');
+}
 
 // ── люди в складі без MyYL (їх додає капітан / адмін команди або імпорт) ──
 // tg_id таких людей починається з «m:»; коли людина реєструється, вона обирає себе — і ролі переходять до неї
@@ -2238,6 +2283,40 @@ function statCats_(c, scope) {
   if (upperCovers('see.fin') || teamOk('see.fin')) cats.push({ key: 'finance', label: 'Фінанси' });
   return cats;
 }
+
+// «Встановили MyYL»: скільки людей зі складу вже зареєстровані (по регіонах, еріях, командах) + імена
+API.installStats = function (c0, d) {
+  const c = P_(c0, 'see.team');
+  if (!c.roles.length) deny_();
+  const p = pickScope_(c, keysOf_(d));
+  const scope = p.scope || p.scopes[0];
+  if (!scope) deny_();
+  const st = loadStruct_();
+  const act = loadRoles_().filter((r) => (r.status === ST.ACTIVE || r.status === ST.PENDING) && r.key !== 'SUPER');
+  const inUnit = (u) => act.filter((r) => within_(u, r) && (r.level !== 'nat' || u.level === 'nat'));
+  const count = (rows) => { const ids = uniq_(rows.map((r) => r.tgId)); const reg = ids.filter(isReal_); return { total: ids.length, reg: reg.length }; };
+  const members = scope.level === 'multi' ? scope.members : [scope];
+  const all = [].concat.apply([], members.map(inUnit));
+  let kids = [];
+  if (scope.level === 'multi') kids = scope.members.map((m) => ({ key: m.key, name: m.name, u: m }));
+  else if (scope.level === 'nat') kids = st.regions.map((x) => ({ key: 'r:' + x.id, name: x.name, u: { level: 'region', unitId: x.id } }));
+  else if (scope.level === 'region') kids = st.areas.filter((a) => a.regionId === scope.unitId).map((x) => ({ key: 'a:' + x.id, name: x.name, u: { level: 'area', unitId: x.id } }));
+  else if (scope.level === 'area') kids = st.teams.filter((t) => t.areaId === scope.unitId && t.active).map((x) => ({ key: 't:' + x.id, name: x.name, u: { level: 'team', unitId: x.id } }));
+  const scopeKeys = {};
+  p.scopes.forEach((x) => { scopeKeys[x.key] = 1; });
+  const rows = kids.map((k) => Object.assign({ name: k.name, drill: scopeKeys[k.key] ? k.key : '' }, count(inUnit(k.u)))).filter((r) => r.total).sort((a, b) => b.reg / b.total - a.reg / a.total || b.total - a.total);
+  // люди: ім'я, головна роль, коли зареєструвався
+  const byId = {};
+  all.forEach((r) => { const x = byId[r.tgId] = byId[r.tgId] || { id: r.tgId, roles: [] }; x.roles.push(r); });
+  const people = Object.keys(byId).map((id) => {
+    const per = getPerson_(id) || {};
+    const top = byId[id].roles.sort((a, b) => a.rank - b.rank)[0];
+    return { name: per.name || top.name, role: top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, ''), reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '' };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const t = count(all);
+  return { scope: scope, scopes: p.scopes, total: t.total, reg: t.reg, rows: rows, title: { nat: 'Регіони', region: 'Ерії', area: 'Команди', team: '', multi: 'Вибрані' }[scope.level] || '',
+    users: people.filter((x) => x.reg), notYet: people.filter((x) => !x.reg).map((x) => ({ name: x.name, role: x.role })) };
+};
 
 API.dirStats = function (c0, d) {
   const c = P_(c0, 'see.stats');

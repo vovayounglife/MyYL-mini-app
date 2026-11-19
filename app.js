@@ -93,6 +93,7 @@
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false, from: '', to: '' },
     dirs: { data: null, period: 'month', from: '', to: '' },
     res: { data: null, form: null },
+    inst: { data: null, q: '', showNot: false },
     known: { teamId: null, list: null, mode: 'mine', detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
@@ -237,6 +238,7 @@
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
     if (screen === 'perms') loadPerms();
+    if (screen === 'inst') { ensurePick('inst'); loadInst(); }
     if (screen === 'res') { S.res.form = null; loadRes(); }
     if (screen === 'dirs') { ensurePick('dirs'); loadDirs(); }
     if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
@@ -893,6 +895,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   function onPick(scr) {
     if (scr === 'stats') { S.stats.showAll = false; S.stats.showMiss = false; loadStats(); }
     if (scr === 'dirs') loadDirs();
+    if (scr === 'inst') loadInst();
     if (scr === 'known') { S.known.detail = null; loadKnown(); }
     if (scr === 'team') { S.team.open = null; loadTeam(); }
     if (scr === 'finance') loadFin();
@@ -1074,6 +1077,37 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <button type="button" class="btn sm" style="min-height:44px" data-a="periodApply" data-s="${scr}">Показати</button></div>`;
     return h;
   }
+
+  // ───────────── ВСТАНОВИЛИ MyYL ─────────────
+  async function loadInst() {
+    try { S.inst.data = await api('installStats', { units: (S.pick.inst || { keys: [] }).keys }); } catch (e) { toast(e.message); }
+    if (S.screen === 'inst') render();
+  }
+  const pctOf = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  VIEWS.inst = function () {
+    const I = S.inst, d = I.data;
+    let h = header('Встановили MyYL', pickLabel('inst'));
+    h += picker('inst');
+    if (!d) return h + loading();
+    h += `<div class="card col" style="gap:6px;text-align:center"><div class="b" style="font-size:32px">${d.reg} <span class="muted" style="font-size:18px">з ${d.total}</span></div>
+      <div class="small muted">людей у складі вже зареєстровані в MyYL · ${pctOf(d.reg, d.total)}%</div>
+      <span class="track" style="height:8px"><i style="width:${pctOf(d.reg, d.total)}%;background:var(--turq)"></i></span></div>`;
+    if (d.rows.length) {
+      h += `<div class="card col" style="gap:4px"><h2>${esc(d.title)}</h2>${d.rows.map((r) => `<button type="button" class="brk" style="border-top:1px solid var(--line);padding:9px 0"${r.drill ? ` data-a="instGo" data-k="${esc(r.drill)}"` : ' disabled'}>
+        <span class="row between" style="width:100%"><span class="b">${esc(r.name)}</span><span class="small"><b>${r.reg}</b> з ${r.total} · ${pctOf(r.reg, r.total)}%</span></span>
+        <span class="track" style="width:100%"><i style="width:${pctOf(r.reg, r.total)}%;background:var(--turq)"></i></span></button>`).join('')}</div>`;
+    }
+    const q = String(I.q || '').toLowerCase();
+    const f = (l) => (q ? l.filter((x) => x.name.toLowerCase().indexOf(q) >= 0) : l);
+    h += `<div class="sec">Користувачі MyYL · ${d.users.length}</div>`;
+    if (d.users.length > 8) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти…" value="${esc(I.q)}" data-bind="inst.q" data-live="instFind" aria-label="Пошук">`;
+    h += `<div class="card list" id="instList">${f(d.users).map((u) => `<div class="li" style="cursor:default"><span class="avatar">${esc(initials(u.name))}</span><span class="grow"><span class="b" style="display:block">${esc(u.name)}${ylBadge}</span><span class="xs muted">${esc(u.role)}${u.since ? ' · з ' + esc(fmtShortDay(u.since)) + ' ' + u.since.slice(0, 4) : ''}</span></span></div>`).join('') || '<div class="empty small">Нікого</div>'}</div>`;
+    if (d.notYet.length) {
+      h += `<button type="button" class="link-btn" style="align-self:flex-start" data-a="instNot">${I.showNot ? 'Сховати' : 'Ще не в MyYL · ' + d.notYet.length}</button>`;
+      if (I.showNot) h += `<div class="card list">${f(d.notYet).map((u) => `<div class="li" style="cursor:default"><span class="avatar" style="opacity:.6">${esc(initials(u.name))}</span><span class="grow"><span style="display:block">${esc(u.name)}</span><span class="xs muted">${esc(u.role)}</span></span></div>`).join('')}</div>`;
+    }
+    return h;
+  };
 
   // ───────────── СТАТИСТИКА ЗА НАПРЯМКАМИ ─────────────
   const DIR_COLORS = { YoungLife: 'var(--coral)', WyldLife: 'var(--teal)', College: 'var(--blue)', Capernaum: 'var(--purple)', YoungMoms: 'var(--yellow)', '': 'var(--muted)' };
@@ -1399,6 +1433,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
     if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
+    if ((S.me.scopes || []).length) manage.push({ k: 'inst', label: 'Встановили MyYL', sub: 'хто вже в застосунку — по регіонах, еріях, командах', icon: 'phoneApp', ic: 'ic-teal' });
     if (c.stats !== false && (S.me.scopes || []).length) manage.splice((c.reportItems || []).length ? 1 : 0, 0, { k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-teal' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
     const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
@@ -1850,6 +1885,10 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
 
+  // встановили MyYL
+  A.instGo = (d) => { setPick('inst', d.k); S.inst.data = null; render(); loadInst(); window.scrollTo(0, 0); };
+  A.instNot = () => { S.inst.showNot = !S.inst.showNot; render(); };
+  A.instFind = () => { const y = window.scrollY; render(); const el = document.querySelector('[data-bind="inst.q"]'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } window.scrollTo(0, y); };
   // ресурси
   const resById = (id) => S.res.data.list.filter((x) => x.id === id)[0];
   A.resOpen = (d) => { const x = resById(d.id); const u = x.hasFile ? resFileUrl(x) : x.url; if (tg && tg.openLink) tg.openLink(u); else window.open(u, '_blank', 'noopener'); };
