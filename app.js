@@ -392,6 +392,11 @@
   // ───────────── рендер ─────────────
   function render() {
     if (!S.me) return;
+    // горизонтальні ряди (вибір команд, вкладки) не повинні відскакувати на початок після кожного оновлення
+    const HS = '.pills, .rtab-w, .board';
+    const hsKey = (el, i) => S.screen + '|' + ((el.closest('[id]') || {}).id || '') + '|' + el.className + '|' + i;
+    const hsSaved = {};
+    $app.querySelectorAll(HS).forEach((el, i) => { if (el.scrollLeft) hsSaved[hsKey(el, i)] = el.scrollLeft; });
     const view = VIEWS[S.screen] ? VIEWS[S.screen]() : '';
     const nav = S.me.status === 'active' ? navHtml() : '';
     $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
@@ -399,7 +404,15 @@
       <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
     syncBack();
-    document.querySelectorAll('.pills.lvl').forEach((p) => { const on = p.querySelector('.pill.on'); if (on) p.scrollLeft = on.offsetLeft - p.offsetLeft - (p.clientWidth - on.clientWidth) / 2; });
+    $app.querySelectorAll(HS).forEach((p, i) => {
+      const k = hsKey(p, i);
+      if (hsSaved[k] != null) p.scrollLeft = hsSaved[k];
+      // вибраний пункт ряду вибору має бути видно; якщо вже видно — нічого не рухаємо
+      const on = p.classList.contains('lvl') && p.querySelector('.pill.on:not(.multi)');
+      if (!on) return;
+      const l = on.offsetLeft - p.offsetLeft, r = l + on.offsetWidth;
+      if (hsSaved[k] == null ? l > p.clientWidth - 40 : (l < p.scrollLeft || r > p.scrollLeft + p.clientWidth)) p.scrollLeft = l - (p.clientWidth - on.offsetWidth) / 2;
+    });
   }
   function renderFatal() {
     $app.innerHTML = `<main class="main no-nav"><div class="row"><div class="logo">YL</div><h2>Young Life Україна</h2></div>
@@ -645,7 +658,7 @@
     // єдиний вибір рівня й одиниць — без гортання
     h += picker('stats');
     if (!d) return h + loading();
-    if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === d.cat ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
+    if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === (st.loading ? st.cat : d.cat) ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
     h += `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік']].map((p) => `<button type="button" class="${p[0] === st.period ? 'on' : ''}" data-a="statsPeriod" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
     h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;

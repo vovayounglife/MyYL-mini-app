@@ -185,7 +185,7 @@ nav.tabs .dot { position: absolute; top: 4px; left: 50%; margin-left: 8px; width
 .rtab tr.top td { font-weight: 600; }
 .rtab tr.ch td:first-child { padding-left: 18px; color: var(--muted); }
 .rtab tr.tot td { font-weight: 800; border-top: 2px solid var(--text); border-bottom: 0; }
-.pills.lvl { scroll-behavior: smooth; }
+.pills.lvl { scroll-behavior: auto; }
 
 /* єдиний вибір одиниць */
 .pill .hint { font-weight: 400; opacity: .7; }
