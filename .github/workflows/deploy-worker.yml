@@ -98,6 +98,7 @@ jobs:
         env:
           URL: ${{ steps.deploy.outputs.url }}
         run: |
+          sleep 20
           i=0; n=1
           while [ "$i" -lt "$n" ]; do
             jq -n --rawfile enc "$GITHUB_WORKSPACE/worker/seed/history.enc" --argjson i "$i" '{enc: ($enc | rtrimstr("\n")), index: $i}' > body.json

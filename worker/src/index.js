@@ -2597,9 +2597,9 @@ function importHistory_(team, t, ex) {
   // фінанси: лише місяці, яких ще немає в MyYL
   const months = {};
   ex.finance.forEach((f) => { months[f.month] = 1; });
-  const fin = (t.fin || []).filter((f) => !months[f[0]]).map((f) => ({ m: f[0], p: f[1], o: f[2], t: f[3], s: f[4], b: f[5] }));
+  const fin = (t.fin || []).filter((f) => { if (months[f[0]]) return false; months[f[0]] = 1; return true; }).map((f) => ({ m: f[0], p: f[1], o: f[2], t: f[3], s: f[4], b: f[5] }));
   if (fin.length) {
-    S.run("INSERT INTO finance (team_id, month, prev, office, church, team, spent, balance, author, updated) SELECT ?, json_extract(value, '$.m'), json_extract(value, '$.p'), json_extract(value, '$.o'), 0, " +
+    S.run("INSERT OR IGNORE INTO finance (team_id, month, prev, office, church, team, spent, balance, author, updated) SELECT ?, json_extract(value, '$.m'), json_extract(value, '$.p'), json_extract(value, '$.o'), 0, " +
       "json_extract(value, '$.t'), json_extract(value, '$.s'), json_extract(value, '$.b'), 'Командна табличка', ? FROM json_each(?)", [team.id, now, JSON.stringify(fin)]);
     res.fin = fin.length;
   }
