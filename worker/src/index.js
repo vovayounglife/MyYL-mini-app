@@ -60,6 +60,7 @@ export default {
     if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     try {
       if (url.pathname === '/tg' && req.method === 'POST') return await handleTelegram(req, env, ctx);
+      if (url.pathname.startsWith('/auth/') && req.method === 'POST') return await handleAuth(req, env, url);
       if (url.pathname.startsWith('/admin/') && req.method === 'POST') return await handleAdmin(req, env, ctx, url);
       if (req.method === 'POST' && (url.pathname === '/' || url.pathname === '/api')) return await handleApi(req, env, ctx);
       if (req.method === 'GET' && url.pathname === '/') return cors(new Response('Young Life Mini App · бекенд працює ✅', { headers: { 'content-type': 'text/plain; charset=utf-8' } }));
@@ -114,7 +115,7 @@ async function handleApi(req, env, ctx) {
   try { body = await req.json(); } catch (e) { return json({ ok: false, error: 'bad_request', message: 'Невірний запит.' }); }
   const S = new Store(env, ctx);
   try {
-    const tgUser = await verifyInitData(body.initData, env.BOT_TOKEN);
+    const tgUser = body.session ? await verifySession(body.session, env) : await verifyInitData(body.initData, env.BOT_TOKEN);
     if (!tgUser) throw new ApiError('auth', 'Не вдалося перевірити Telegram. Відкрий застосунок заново.');
     const fn = API[body.action];
     const need = NEEDS[body.action];
@@ -1492,6 +1493,52 @@ function pendingApproversText_(c) {
 
 // ───────────────────────────── TELEGRAM ─────────────────────────────
 
+// ── вхід в окремий застосунок: посилання на бота → бот підтверджує → застосунок отримує токен ──
+const LOGIN_TTL = 10 * 60 * 1000;
+const SESSION_DAYS = 180;
+const b64u = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (ch) => ch.charCodeAt(0)));
+async function sessionKey(env) { return hmac(new TextEncoder().encode('session:' + env.BOT_TOKEN), 'yl-session'); }
+async function makeSession(env, u) {
+  const body = b64u(JSON.stringify({ u: u, exp: Date.now() + SESSION_DAYS * 864e5 }));
+  return body + '.' + hex(await hmac(await sessionKey(env), body));
+}
+async function verifySession(token, env) {
+  const p = String(token || '').split('.');
+  if (p.length !== 2) return null;
+  if (hex(await hmac(await sessionKey(env), p[0])) !== p[1]) return null;
+  let d;
+  try { d = JSON.parse(unb64u(p[0])); } catch (e) { return null; }
+  if (!d || !d.u || !d.u.id) return null;
+  if (d.exp < Date.now()) throw new ApiError('auth_expired', 'Сесія завершилась. Увійди через Telegram ще раз.');
+  return d.u;
+}
+async function handleAuth(req, env, url) {
+  const body = await req.json().catch(() => ({}));
+  const db = env.DB;
+  if (url.pathname === '/auth/start') {
+    const nonce = hex(crypto.getRandomValues(new Uint8Array(20)));
+    await db.batch([
+      db.prepare('DELETE FROM auth_login WHERE created < ?').bind(Date.now() - 24 * 3600 * 1000),
+      db.prepare('INSERT INTO auth_login (nonce, created) VALUES (?, ?)').bind(nonce, Date.now()),
+    ]);
+    const bot = (await db.prepare("SELECT value FROM settings WHERE key = 'BOT_USERNAME'").first('value')) || '';
+    return json({ ok: true, nonce: nonce, bot: bot, link: 'https://t.me/' + bot + '?start=login_' + nonce, app: 'tg://resolve?domain=' + bot + '&start=login_' + nonce });
+  }
+  if (url.pathname === '/auth/poll') {
+    const nonce = String(body.nonce || '');
+    if (!/^[a-f0-9]{40}$/.test(nonce)) return json({ ok: false, error: 'bad_request' });
+    const row = await db.prepare('SELECT * FROM auth_login WHERE nonce = ?').bind(nonce).first();
+    if (!row || row.used || row.created < Date.now() - LOGIN_TTL) return json({ ok: false, error: 'expired', message: 'Час на вхід минув. Спробуй ще раз.' });
+    if (!row.user_json) return json({ ok: true, pending: true });
+    const r = await db.prepare('UPDATE auth_login SET used = 1 WHERE nonce = ? AND used = 0').bind(nonce).run();
+    if (!r.meta || !r.meta.changes) return json({ ok: false, error: 'expired', message: 'Спробуй ще раз.' });
+    const u = JSON.parse(row.user_json);
+    return json({ ok: true, session: await makeSession(env, u), user: u });
+  }
+  return json({ ok: false, error: 'bad_action' }, 400);
+}
+
 async function webhookSecret(env) { return hex(await hmac(new TextEncoder().encode(String(env.SYNC_KEY || '')), 'tg-webhook')).slice(0, 48); }
 
 async function handleTelegram(req, env, ctx) {
@@ -1500,6 +1547,14 @@ async function handleTelegram(req, env, ctx) {
   const m = upd.message;
   if (!m || !m.chat || m.chat.type !== 'private' || !m.from || m.from.is_bot) return new Response('ok');
   const text = (m.text || '').trim();
+  const loginM = /^\/start\s+login_([A-Za-z0-9]{20,64})$/.exec(text);
+  if (loginM) {
+    const u = { id: m.from.id, first_name: m.from.first_name || '', last_name: m.from.last_name || '', username: m.from.username || '' };
+    const r = await env.DB.prepare('UPDATE auth_login SET user_json = ? WHERE nonce = ? AND used = 0 AND user_json IS NULL AND created > ?').bind(JSON.stringify(u), loginM[1], Date.now() - LOGIN_TTL).run();
+    const okLogin = r.meta && r.meta.changes > 0;
+    await tg(env, 'sendMessage', { chat_id: m.chat.id, parse_mode: 'HTML', text: okLogin ? '✅ <b>Вхід у MyYL підтверджено.</b>\nПовернись у застосунок — він відкриється сам.' : 'Посилання для входу застаріло. Натисни «Увійти через Telegram» у застосунку ще раз.' });
+    return new Response('ok');
+  }
   const S2 = new Store(env, ctx);
   await S2.loadBase();
   use(S2, () => {

@@ -2,7 +2,32 @@
 (function () {
   'use strict';
 
-  const tg = window.Telegram && window.Telegram.WebApp;
+  const realTg = window.Telegram && window.Telegram.WebApp;
+  const IN_TG = !!(realTg && realTg.initData);
+  const SESSION_KEY = 'yl:session';
+  const APP_LINK = 'https://vovayounglife.github.io/MyYL-mini-app/?app=1';
+  let SESSION = null;
+  try { SESSION = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { SESSION = null; }
+  const IS_INSTALLED = !IN_TG && ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true);
+  const IS_IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  // поза Telegram — та сама програма з власними замінниками функцій Telegram
+  function makeShim() {
+    const mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+    return {
+      standalone: true, initData: '',
+      initDataUnsafe: { user: (SESSION && SESSION.user) || null },
+      colorScheme: mq && mq.matches ? 'dark' : 'light',
+      ready() {}, expand() {}, setHeaderColor() {},
+      onEvent(ev, fn) { if (ev === 'themeChanged' && mq && mq.addEventListener) mq.addEventListener('change', (e) => { this.colorScheme = e.matches ? 'dark' : 'light'; fn(); }); },
+      BackButton: { show() {}, hide() {}, onClick() {} },
+      HapticFeedback: { notificationOccurred() { try { if (navigator.vibrate) navigator.vibrate(10); } catch (e) { /* ок */ } }, impactOccurred() {} },
+      showConfirm(m, cb) { cb(window.confirm(m)); },
+      showAlert(m) { window.alert(m); },
+      openLink(u) { window.open(u, '_blank', 'noopener'); },
+      isVersionAtLeast() { return false; },
+    };
+  }
+  const tg = IN_TG ? realTg : makeShim();
   const API_URL = (window.YL_CONFIG || {}).API_URL || '';
   const $app = document.getElementById('app');
 
@@ -102,9 +127,13 @@
   async function api(action, data) {
     S.busy++; progress();
     try {
-      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ initData: tg.initData, action: action, data: data || {} }) });
+      const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
+      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign(auth, { action: action, data: data || {} })) });
       const j = await res.json();
-      if (!j.ok) { const e = new Error(j.message || 'Помилка'); e.code = j.error; throw e; }
+      if (!j.ok) {
+        if (!IN_TG && (j.error === 'auth' || j.error === 'auth_expired')) { logout(true); }
+        const e = new Error(j.message || 'Помилка'); e.code = j.error; throw e;
+      }
       return j.data;
     } catch (e) {
       if (!e.code) e.message = 'Немає звʼязку із сервером. Перевір інтернет і спробуй ще раз.';
@@ -166,7 +195,16 @@
       (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
+  let histOn = false, histIgnore = false;
+  function syncHistory() {
+    if (IN_TG) return;
+    const cb = canBack();
+    if (cb && !histOn) { history.pushState({ yl: 1 }, ''); histOn = true; }
+    else if (!cb && histOn) { histOn = false; histIgnore = true; history.back(); }
+  }
+  window.addEventListener('popstate', () => { if (histIgnore) { histIgnore = false; return; } if (histOn) { histOn = false; back(); } });
   function syncBack() {
+    syncHistory();
     if (!tg || !tg.BackButton) return;
     if (canBack()) tg.BackButton.show(); else tg.BackButton.hide();
   }
@@ -213,7 +251,7 @@
     }
     try {
       S.me = await api('me');
-    } catch (e) { S.fatal = e.message; return renderFatal(); }
+    } catch (e) { if (!IN_TG && (e.code === 'auth' || e.code === 'auth_expired')) return; S.fatal = e.message; return renderFatal(); }
     if (S.me.status === 'active') { LS.set('me', S.me); S.events = S.me.events || null; }
     if (S.me.status === 'new') { S.reg.name = S.reg.name || S.me.user.name; S.screen = 'onboarding'; }
     else if (S.me.status === 'pending') S.screen = 'pending';
@@ -870,6 +908,32 @@
     if (res && !send) { const o = document.getElementById('repOut'); if (o && o.scrollIntoView) o.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   }
 
+  // ───────────── ВСТАНОВИТИ ─────────────
+  VIEWS.install = function () {
+    let h = header('Встановити MyYL', 'Окремий застосунок на телефоні');
+    if (IS_INSTALLED) return h + '<div class="card col"><h2>✅ Застосунок встановлено</h2><div class="muted">Ти зараз у ньому. Відкривай MyYL з іконки на головному екрані.</div></div>';
+    h += `<div class="card col"><h2>Окремий застосунок</h2><div class="small muted">Відкривається з іконки YL на весь екран, без Telegram. Дані ті самі. Вхід — один раз через Telegram.</div>`;
+    if (IN_TG) {
+      h += `<button type="button" class="btn" data-a="openApp">Відкрити в браузері</button>
+        <button type="button" class="btn sec2 sm" data-a="copyApp">Скопіювати посилання</button>`;
+    } else if (S.installEvt) h += '<button type="button" class="btn" data-a="pwaInstall">Встановити</button>';
+    h += `</div>
+      <div class="sec">iPhone</div><div class="card rows small">
+        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Відкрий посилання в <b>Safari</b>${IN_TG ? ' (якщо відкрилось у Telegram — натисни значок компаса чи «Відкрити в Safari»)' : ''}</span></div>
+        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Натисни «Поділитися» <b>⎋</b> унизу екрана</span></div>
+        <div class="kv"><span>3</span><span style="text-align:left;flex:1">«На початковий екран» → «Додати»</span></div>
+        <div class="kv"><span>4</span><span style="text-align:left;flex:1">Відкрий MyYL з іконки → «Увійти через Telegram»</span></div></div>
+      <div class="sec">Android</div><div class="card rows small">
+        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Відкрий посилання в <b>Chrome</b></span></div>
+        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Меню <b>⋮</b> → «Встановити застосунок» або «Додати на головний екран»</span></div>
+        <div class="kv"><span>3</span><span style="text-align:left;flex:1">Відкрий MyYL з іконки → «Увійти через Telegram»</span></div></div>`;
+    if (IN_TG && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
+      h += `<div class="sec">Або ярлик Telegram</div><div class="card col"><div class="small muted">Іконка на головному екрані, яка відкриває MyYL через Telegram.</div>
+        <button type="button" class="btn sec2" data-a="installHome"${S.homeSt === 'added' ? ' disabled' : ''}>${S.homeSt === 'added' ? 'Ярлик уже додано ✓' : 'Додати ярлик Telegram'}</button></div>`;
+    }
+    return h;
+  };
+
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
     const c = caps();
@@ -877,7 +941,7 @@
     if (c.approve) items.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
     if ((c.reportItems || []).length) items.push({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     items.push({ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' });
-    items.push({ a: 'installHome', label: 'Встановити на головний екран', sub: S.homeSt === 'added' ? 'вже встановлено ✓' : S.homeSt === 'unsupported' ? 'потрібна новіша версія Telegram' : 'окрема іконка YL на телефоні', icon: 'phoneApp', ic: 'ic-teal' });
+    items.push({ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' });
     return header('Ще') + `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
   };
@@ -1043,7 +1107,7 @@
   VIEWS.profile = function () {
     if (S.roleReq) return roleReqView();
     const m = me(), p = S.profile || {};
-    let h = header('Мій профіль');
+    let h = header('Мій профіль', '', IN_TG ? '' : '<button type="button" class="btn ghost sm" data-a="logout">Вийти</button>');
     h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
       <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${activeRoles().some((r) => r.key === 'SUPER') ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
@@ -1309,6 +1373,12 @@
     const msg = 'Твоя версія Telegram ще не вміє додавати застосунки на головний екран. Онови Telegram в App Store / Google Play і спробуй знову.';
     if (tg && tg.showAlert) tg.showAlert(msg); else toast(msg);
   };
+  A.openApp = () => { try { tg.openLink(APP_LINK, { try_browser: IS_IOS ? 'safari' : 'chrome' }); } catch (e) { tg.openLink(APP_LINK); } };
+  A.copyApp = async () => { try { await navigator.clipboard.writeText(APP_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(APP_LINK); } };
+  A.pwaInstall = async () => { const ev = S.installEvt; if (!ev) return; ev.prompt(); try { await ev.userChoice; } catch (e) { /* ок */ } S.installEvt = null; render(); };
+  A.logout = () => { if (confirm('Вийти з MyYL на цьому пристрої?')) logout(false); };
+  A.loginStart = () => loginStart();
+  A.loginCancel = () => { S.login = null; clearTimeout(S.loginTimer); renderLogin(); };
   A.repUnit = (d, el) => { S.rep.units[d.k] = el.checked; S.rep.data = null; render(); };
   A.repItem = (d, el) => { S.rep.items[d.k] = el.checked; S.rep.data = null; };
   A.repPreset = (d) => { const r = S.rep; r.preset = d.p; if (d.p !== 'custom') { const x = presetRange(d.p); r.from = x[0]; r.to = x[1]; } r.data = null; render(); };
@@ -1438,12 +1508,68 @@
     if (el.dataset.ch && A[el.dataset.ch]) A[el.dataset.ch](el.dataset, el);
   });
 
+  // ───────────── ВХІД В ОКРЕМИЙ ЗАСТОСУНОК ─────────────
+  const AUTH_URL = (p) => API_URL.replace(/\/+$/, '') + '/auth/' + p;
+  function logout(expired) {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ок */ }
+    SESSION = null; S.me = null;
+    renderLogin(expired ? 'Сесія завершилась. Увійди ще раз.' : '');
+  }
+  function renderLogin(msg) {
+    const L = S.login;
+    $app.innerHTML = `<main class="main no-nav login"><div class="login-box">
+      <img src="icons/icon-192.png" alt="" class="login-logo" width="88" height="88">
+      <h1 style="font-size:28px;margin:0">MyYL</h1><div class="muted">Young Life Україна</div>
+      ${msg ? `<div class="note small">${esc(msg)}</div>` : ''}
+      ${L ? `<div class="card col" style="gap:10px;text-align:center"><div class="spin" style="margin:0 auto"></div>
+          <div class="b">Чекаю підтвердження в Telegram…</div>
+          <div class="small muted">У чаті з ботом натисни <b>«Старт»</b> (або «Запустити»), а потім повернись сюди.</div>
+          <a class="btn sec2 sm" href="${esc(L.link)}" target="_blank" rel="noopener">Не відкрився Telegram? Натисни тут</a>
+          <button type="button" class="link-btn" data-a="loginCancel">Скасувати</button></div>`
+        : `<button type="button" class="btn" data-a="loginStart">${icon('tg', 20)} Увійти через Telegram</button>
+          <div class="small muted" style="text-align:center">Відкриється наш бот у Telegram — підтвердь вхід одним натисканням. Пароль не потрібен.</div>`}
+      ${!IS_INSTALLED ? `<div class="xs muted" style="text-align:center;margin-top:8px">Порада: додай MyYL на головний екран — ${IS_IOS ? 'Safari → «Поділитися» → «На початковий екран»' : 'меню браузера → «Встановити застосунок»'}.</div>` : ''}
+    </div></main>`;
+  }
+  async function loginStart() {
+    let r;
+    try { r = await (await fetch(AUTH_URL('start'), { method: 'POST', body: '{}' })).json(); } catch (e) { return renderLogin('Немає звʼязку із сервером. Перевір інтернет.'); }
+    if (!r || !r.ok) return renderLogin('Не вдалося почати вхід. Спробуй ще раз.');
+    S.login = { nonce: r.nonce, link: r.link, until: Date.now() + 10 * 60 * 1000 };
+    renderLogin();
+    // відкриваємо Telegram: спершу застосунок, а посилання — запасний варіант на екрані
+    try { window.location.href = r.app; } catch (e) { /* ок */ }
+    pollLogin();
+  }
+  async function pollLogin() {
+    const L = S.login;
+    clearTimeout(S.loginTimer);
+    if (!L) return;
+    if (Date.now() > L.until) { S.login = null; return renderLogin('Час на вхід минув. Спробуй ще раз.'); }
+    try {
+      const r = await (await fetch(AUTH_URL('poll'), { method: 'POST', body: JSON.stringify({ nonce: L.nonce }) })).json();
+      if (r.ok && r.session) {
+        SESSION = { token: r.session, user: r.user };
+        try { localStorage.setItem(SESSION_KEY, JSON.stringify(SESSION)); } catch (e) { /* ок */ }
+        S.login = null;
+        location.replace(location.pathname + '?app=1');
+        return;
+      }
+      if (!r.ok) { S.login = null; return renderLogin(r.message || 'Спробуй ще раз.'); }
+    } catch (e) { /* немає мережі — спробуємо ще */ }
+    S.loginTimer = setTimeout(pollLogin, 2500);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.login) pollLogin(); });
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.screen === 'install') render(); });
+
   // ───────────── СТАРТ ─────────────
   function start() {
-    if (!tg || !tg.initData) {
-      $app.innerHTML = `<main class="main no-nav"><div class="row"><div class="logo">YL</div><h2>Young Life Україна</h2></div>
-        <div class="card col"><h2>Відкрий через Telegram</h2><div class="muted">Цей застосунок працює всередині Telegram. Знайди бота Young Life і натисни «Відкрити».</div></div></main>`;
-      return;
+    if (!IN_TG) {
+      document.documentElement.classList.add('standalone');
+      if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) { /* ок */ } }
+      if (tg.colorScheme === 'dark') document.documentElement.classList.add('dark');
+      tg.onEvent('themeChanged', () => document.documentElement.classList.toggle('dark', tg.colorScheme === 'dark'));
+      if (!SESSION || !SESSION.token) return renderLogin();
     }
     tg.ready();
     tg.expand();
@@ -1451,9 +1577,10 @@
     tg.onEvent('themeChanged', () => document.documentElement.classList.toggle('dark', tg.colorScheme === 'dark'));
     try { tg.setHeaderColor('secondary_bg_color'); } catch (e) { /* старий Telegram */ }
     tg.BackButton.onClick(back);
+    if (!IN_TG) { if (!API_URL) return; return loadMe(); }
     S.homeSt = '';
     if (tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
-      try { tg.checkHomeScreenStatus((st) => { S.homeSt = st; if (S.screen === 'more') render(); }); } catch (e) { /* ок */ }
+      try { tg.checkHomeScreenStatus((st) => { S.homeSt = st; if (S.screen === 'more' || S.screen === 'install') render(); }); } catch (e) { /* ок */ }
       tg.onEvent('homeScreenAdded', () => { S.homeSt = 'added'; toast('Готово! Іконка YL тепер на головному екрані', 'success'); if (S.screen === 'more') render(); });
     } else S.homeSt = 'unsupported';
     if (!API_URL) {

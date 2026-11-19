@@ -315,6 +315,28 @@ r = await api(CAP, 'knownBulk', { teamId: capTeam.id, names: 'Капітанів
 r = await api(LEAD, 'knownList', { teamId: capTeam.id });
 ok(r.data.find((x) => x.name === 'Марко Іванюк').authorId === '5' && r.data.find((x) => x.name === 'Капітанів Підліток').authorId === '4', 'знані: видно, хто вніс');
 
+
+// окремий застосунок: вхід через бота
+const auth = async (path, b) => (await W.fetch(new Request('https://w/auth/' + path, { method: 'POST', body: JSON.stringify(b || {}) }), env, ectx)).json();
+let st0 = await auth('start');
+ok(st0.ok && /^https:\/\/t\.me\/yl_bot\?start=login_[a-f0-9]{40}$/.test(st0.link), 'вхід: посилання на бота');
+let pl = await auth('poll', { nonce: st0.nonce });
+ok(pl.ok && pl.pending, 'вхід: поки чекаємо');
+sent.length = 0;
+await req('/tg', { message: { chat: { id: 4, type: 'private' }, from: CAP, text: '/start login_' + st0.nonce } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
+ok(sent.some((x) => /Вхід у MyYL підтверджено/.test(x.text || '')), 'вхід: бот підтвердив');
+pl = await auth('poll', { nonce: st0.nonce });
+ok(pl.ok && pl.session && pl.user.id === 4, 'вхід: отримано сесію');
+const pl2 = await auth('poll', { nonce: st0.nonce });
+ok(!pl2.ok, 'вхід: повторно токен не видається');
+let rs = await req('/', { session: pl.session, action: 'me' }); rs = await rs.json();
+ok(rs.ok && rs.data.status === 'active' && rs.data.user.id === '4', 'вхід: API працює з сесією');
+rs = await (await req('/', { session: pl.session.replace(/.$/, (c) => (c === 'a' ? 'b' : 'a')), action: 'me' })).json();
+ok(!rs.ok && rs.error === 'auth', 'вхід: підроблена сесія відхилена');
+sent.length = 0;
+await req('/tg', { message: { chat: { id: 5, type: 'private' }, from: LEAD, text: '/start login_' + st0.nonce } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
+ok(sent.some((x) => /застаріло/.test(x.text || '')), 'вхід: використане посилання не спрацює вдруге');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
