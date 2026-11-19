@@ -337,6 +337,52 @@ sent.length = 0;
 await req('/tg', { message: { chat: { id: 5, type: 'private' }, from: LEAD, text: '/start login_' + st0.nonce } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
 ok(sent.some((x) => /застаріло/.test(x.text || '')), 'вхід: використане посилання не спрацює вдруге');
 
+
+// знані: права й «Без команди»
+r = await api(AD, 'knownSave', { teamId: capTeam.id, item: { name: 'Чужий' } });
+ok(!r.ok && /лише її учасники/.test(r.message), 'знані: ЕД не додає в команду');
+r = await api(AD, 'knownSave', { teamId: '', item: { name: 'Мій підліток', stage: 'friends' } });
+ok(r.ok, 'знані: ЕД додає «Без команди»');
+const noTeamId = r.data.id;
+r = await api(AD, 'knownBulk', { teamId: '', names: 'Мій підліток\nЩе один' });
+ok(r.ok && r.data.added === 1, 'знані: список без команди, дубль пропущено');
+r = await api(AD, 'knownList', { mine: true });
+ok(r.ok && r.data.length === 2 && r.data.every((x) => x.team === 'Без команди' && x.canEdit), 'знані: «Мій список» з «Без команди»');
+r = await api(VOVA, 'knownStage', { id: noTeamId, stage: 'own' });
+ok(!r.ok, 'знані: чужий особистий список не змінити');
+r = await api(AD, 'knownList', { units: ['a:a1'] });
+ok(r.ok && !r.data.some((x) => x.name === 'Мій підліток') && r.data.every((x) => x.canEdit === false), 'знані: перегляд ерії — без «Без команди», ЕД лише дивиться');
+r = await api(LEAD, 'knownList', { mine: true });
+ok(r.ok && r.data.length >= 4 && r.data.every((x) => x.canEdit), 'знані: «Мій список» лідера');
+const lm = r.data.find((x) => x.name === 'Софія Бойко');
+r = await api(AD, 'knownSave', { teamId: capTeam.id, item: Object.assign({}, lm, { phone: '1' }) });
+ok(!r.ok, 'знані: ЕД не редагує знаних команди');
+r = await api(CAP, 'knownStage', { id: lm.id, stage: 'own' });
+ok(r.ok, 'знані: капітан (учасник команди) змінює етап');
+me = await api(AD, 'me');
+ok(me.data.caps.knownNoTeam === true && me.data.caps.knownEditTeams.length === 0, 'caps: ЕД — лише «Без команди»');
+
+// події: для кого + редагування
+const evDay = T.kyivDay(new Date(Date.now() + 5 * 864e5));
+r = await api(VOVA, 'eventSave', { level: 'nat', unitId: '', title: 'Нарада капітанів', date: evDay, roles: ['CAPTAIN', 'AREA_DIRECTOR'] });
+const capEv = r.data.id;
+ok(r.ok, 'подія для капітанів');
+ok((await api(CAP, 'events')).data.some((e) => e.id === capEv && e.rolesLabel === 'Капітан, Еріа Директор'), 'капітан бачить подію для капітанів');
+ok(!(await api(LEAD, 'events')).data.some((e) => e.id === capEv), 'лідер не бачить подію для капітанів');
+r = await api(VOVA, 'eventSave', { id: capEv, level: 'nat', unitId: '', title: 'Нарада всіх', date: evDay, roles: [] });
+ok(r.ok && (await api(LEAD, 'events')).data.some((e) => e.id === capEv && e.title === 'Нарада всіх'), 'редагування: тепер для всіх');
+r = await api(LEAD, 'eventSave', { id: capEv, level: 'team', unitId: capTeam.id, title: 'Хак', date: evDay });
+ok(!r.ok, 'редагування: лідер не змінює чужу подію');
+
+// бот: посилання на окремий застосунок
+sent.length = 0;
+await req('/tg', { message: { chat: { id: 9, type: 'private' }, from: { id: 9, first_name: 'Гість' }, text: '/start' } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
+const wel = sent.find((x) => x.m === 'sendMessage');
+ok(wel && wel.reply_markup.inline_keyboard[1][0].url === 'https://vovayounglife.github.io/MyYL-mini-app/?app=1', 'бот: кнопка «Встановити на телефон»');
+sent.length = 0;
+await req('/tg', { message: { chat: { id: 9, type: 'private' }, from: { id: 9, first_name: 'Гість' }, text: '/app' } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
+ok(sent.some((x) => /окремий застосунок/.test(x.text || '')), 'бот: /app з інструкцією');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

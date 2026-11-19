@@ -126,7 +126,12 @@ async function handleApi(req, env, ctx) {
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
     if (need.events) await S.loadEvents();
-    if (need.known) await S.loadKnownTeams(unitTeams_(S.b, d));
+    if (need.known) {
+      if (d.mine || (body.action !== 'knownList' && !str_(d.teamId))) await S.loadKnownMine(String(tgUser.id));
+      if (!d.mine) await S.loadKnownTeams(unitTeams_(S.b, d));
+      const rid = str_(d.id || (d.item && d.item.id));
+      if (rid) await S.loadKnownRow(rid);
+    }
     if (need.finance) {
       const ids = unitTeams_(S.b, d);
       if (isSingleTeam_(d)) await S.loadFinance(ids[0]);
@@ -235,7 +240,7 @@ class Store {
       this.db.prepare('SELECT * FROM events WHERE COALESCE(end_date, date) >= ?').bind(addDaysKey_(today, -1)),
       this.db.prepare('SELECT r.* FROM rsvp r JOIN events e ON e.id = r.event_id WHERE COALESCE(e.end_date, e.date) >= ?').bind(addDaysKey_(today, -1)),
     ]);
-    this.events = (ev.results || []).map((r) => ({ id: r.id, level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
+    this.events = (ev.results || []).map((r) => ({ id: r.id, roles: String(r.roles || '').split(',').filter(Boolean), level: r.level, unitId: r.unit_id || '', title: r.title || '', date: r.date, end: r.end_date && r.end_date > r.date ? r.end_date : '', time: r.time || '', place: r.place || '', desc: r.descr || '', authorId: r.author_id || '', author: r.author || '' }));
     this.rsvp = (rs.results || []).map((r) => ({ eventId: r.event_id, tgId: r.tg_id, name: r.name || '', team: r.team || '' }));
   }
   async loadKnownTeams(ids) {
@@ -243,6 +248,13 @@ class Store {
     const rs = await this.db.prepare('SELECT * FROM known WHERE team_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)).all();
     ids.forEach((id) => { this.known[id] = []; });
     (rs.results || []).forEach((r) => { (this.known[r.team_id] = this.known[r.team_id] || []).push(r); });
+  }
+  async loadKnownMine(tgId) {
+    const rs = await this.db.prepare('SELECT * FROM known WHERE author_id = ?').bind(tgId).all();
+    this.knownMine = rs.results || [];
+  }
+  async loadKnownRow(id) {
+    this.knownRow = await this.db.prepare('SELECT * FROM known WHERE id = ?').bind(id).first();
   }
   async loadFinanceMonth(ids, month) {
     this.finMonth = {};
@@ -504,6 +516,8 @@ API.me = function (c) {
   out.caps = {
     report: { club: reportTeams_(c, RANK.CLUB), mg: reportTeams_(c, RANK.MG), kr: reportTeams_(c, RANK.KR) },
     knownTeams: reportTeams_(c, RANK.KNOWN),
+    knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && r.rank <= RANK.KNOWN && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
+    knownNoTeam: canNoTeam_(c),
     financeTeams: reportTeams_(c, RANK.FINANCE),
     viewTeams: st.teams.filter((t) => t.active && canViewTeam_(c, t.id)).map((t) => t.id),
     approve: canApproveAny_(c),
@@ -655,21 +669,38 @@ const STAGES = [['meet', 'Хочу познайомитись'], ['friends', 'Д
 const stageOk_ = (v) => STAGES.some((x) => x[0] === v);
 const stageSum_ = (teamIds, stage) => teamIds.reduce((a, id) => a + (Number(((S.knownStages || {})[id] || {})[stage]) || 0), 0);
 
+// бачать: команда (Помічник+) і вищі рівні; додають і змінюють — лише учасники цієї команди; «Без команди» — особистий список автора
+const canKnownEdit_ = (c, teamId) => teamRoles_(c, teamId, RANK.KNOWN).length > 0;
+const canNoTeam_ = (c) => c.roles.length > 0 && !isSugarOnly_(c);
+const canRowView_ = (c, r) => (r.team_id ? canKnown_(c, r.team_id) : r.author_id === c.id);
+const canRowEdit_ = (c, r) => (r.team_id ? canKnownEdit_(c, r.team_id) : r.author_id === c.id);
+const NO_TEAM = 'Без команди';
+
 API.knownList = function (c, d) {
-  const teams = pickTeams_(c, d, canKnown_);
-  if (!teams.length) deny_();
   const st = loadStruct_();
-  return [].concat.apply([], teams.map((id) => (S.known[id] || []).filter((r) => r.active).map((r) => Object.assign(knownOut_(r), { teamId: id, team: (st.team[id] || {}).name || '' }))))
+  let rows;
+  if (d.mine) rows = (S.knownMine || []).filter((r) => r.active && canRowView_(c, r));
+  else {
+    const teams = pickTeams_(c, d, canKnown_);
+    if (!teams.length) deny_();
+    rows = [].concat.apply([], teams.map((id) => (S.known[id] || []).filter((r) => r.active)));
+  }
+  return rows.map((r) => Object.assign(knownOut_(r), { teamId: r.team_id || '', team: r.team_id ? (st.team[r.team_id] || {}).name || '' : NO_TEAM, canEdit: canRowEdit_(c, r) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 };
 
+function knownTargetCheck_(c, teamId) {
+  if (teamId) { if (!loadStruct_().team[teamId]) bad_('Команду не знайдено.'); if (!canKnownEdit_(c, teamId)) deny_('Додавати знаних у команду можуть лише її учасники.'); }
+  else if (!canNoTeam_(c)) deny_();
+}
+
 API.knownBulk = function (c, d) {
   const teamId = str_(d.teamId);
-  if (!canKnown_(c, teamId)) deny_();
+  knownTargetCheck_(c, teamId);
   const stage = stageOk_(d.stage) ? d.stage : 'meet';
-  const list = S.known[teamId] || (S.known[teamId] = []);
+  const pool = teamId ? (S.known[teamId] || []) : (S.knownMine || []).filter((r) => !r.team_id);
   const have = {};
-  list.filter((r) => r.active).forEach((r) => { have[String(r.name).toLowerCase()] = true; });
+  pool.filter((r) => r.active).forEach((r) => { have[String(r.name).toLowerCase()] = true; });
   const names = [];
   String(d.names || '').split(/[\n;,]+/).forEach((x) => {
     const n = x.replace(/^[\s\d.)•\-–]+/, '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -683,65 +714,55 @@ API.knownBulk = function (c, d) {
   const rows = names.map((n) => ({ id: uid_(), n: n }));
   S.run("INSERT INTO known (id, team_id, name, added, active, updated, stage, author_id, phone, ig, bday, school, grade, leader, note) SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.n'), ?, 1, ?, ?, ?, '', '', '', '', '', '', '' FROM json_each(?)",
     [teamId, day, now, stage, c.id, JSON.stringify(rows)]);
-  rows.forEach((r) => list.push({ id: r.id, team_id: teamId, name: r.n, added: day, active: 1, updated: now, stage: stage, author_id: c.id }));
-  refreshKnownCount_(teamId);
+  if (teamId) refreshKnownCount_(teamId);
   return { added: names.length };
 };
 
+function knownRowFor_(c, d) {
+  const r = S.knownRow;
+  if (!r || r.id !== str_(d.id || (d.item && d.item.id)) || !r.active) bad_('Не знайдено.');
+  if (!canRowEdit_(c, r)) deny_(r.team_id ? 'Змінювати знаних команди можуть лише її учасники.' : 'Це особистий список іншої людини.');
+  return r;
+}
+
 API.knownStage = function (c, d) {
-  const teamId = str_(d.teamId);
-  if (!canKnown_(c, teamId)) deny_();
   if (!stageOk_(d.stage)) bad_('Невідомий етап.');
-  const r = (S.known[teamId] || []).filter((x) => x.id === str_(d.id))[0];
-  if (!r) bad_('Не знайдено.');
-  S.run('UPDATE known SET stage = ?, updated = ? WHERE id = ? AND team_id = ?', [d.stage, nowIso(), r.id, teamId]);
-  r.stage = d.stage;
+  const r = knownRowFor_(c, d);
+  S.run('UPDATE known SET stage = ?, updated = ? WHERE id = ?', [d.stage, nowIso(), r.id]);
   return { ok: true };
 };
 
 API.knownSave = function (c, d) {
-  const teamId = str_(d.teamId);
-  if (!canKnown_(c, teamId)) deny_();
   const it = d.item || {};
   if (str_(it.name).length < 2) bad_('Вкажи імʼя.');
   const v = { name: clip_(it.name), phone: clip_(it.phone), ig: clip_(it.ig), bday: clip_(it.bday), school: clip_(it.school), grade: clip_(it.grade), leader: clip_(it.leader), note: clip_(it.note) };
   if (stageOk_(it.stage)) v.stage = it.stage;
-  const list = S.known[teamId] || (S.known[teamId] = []);
-  let id = str_(it.id);
-  const ex = id ? list.filter((r) => r.id === id)[0] : null;
   const now = nowIso();
-  if (ex) {
+  if (str_(it.id)) {
+    const r = knownRowFor_(c, d);
     const keys = Object.keys(v);
-    S.run('UPDATE known SET ' + keys.map((k) => k + ' = ?').join(', ') + ', updated = ? WHERE id = ? AND team_id = ?', keys.map((k) => v[k]).concat([now, id, teamId]));
-    Object.assign(ex, v, { updated: now });
-    return { id: id };
+    S.run('UPDATE known SET ' + keys.map((k) => k + ' = ?').join(', ') + ', updated = ? WHERE id = ?', keys.map((k) => v[k]).concat([now, r.id]));
+    return { id: r.id };
   }
-  id = uid_();
+  const teamId = str_(d.teamId);
+  knownTargetCheck_(c, teamId);
+  const id = uid_();
   const row = Object.assign({ id: id, team_id: teamId, added: kyivDay(new Date()), active: 1, updated: now, stage: 'meet', author_id: c.id }, v);
   const keys = Object.keys(row);
   S.run('INSERT INTO known (' + keys.join(', ') + ') VALUES (' + keys.map(() => '?').join(',') + ')', keys.map((k) => row[k]));
-  list.push(row);
-  refreshKnownCount_(teamId);
+  if (teamId) refreshKnownCount_(teamId);
   return { id: id };
 };
 
 API.knownArchive = function (c, d) {
-  const teamId = str_(d.teamId);
-  if (!canKnown_(c, teamId)) deny_();
-  const r = (S.known[teamId] || []).filter((x) => x.id === str_(d.id))[0];
-  if (r) {
-    S.run('UPDATE known SET active = 0, updated = ? WHERE id = ? AND team_id = ?', [nowIso(), r.id, teamId]);
-    r.active = 0;
-    refreshKnownCount_(teamId);
-  }
+  const r = knownRowFor_(c, d);
+  S.run('UPDATE known SET active = 0, updated = ? WHERE id = ?', [nowIso(), r.id]);
+  if (r.team_id) refreshKnownCount_(r.team_id);
   return { ok: true };
 };
 
 function refreshKnownCount_(teamId) {
-  const n = (S.known[teamId] || []).filter((r) => r.active).length;
-  S.run('UPDATE teams SET known = ? WHERE id = ?', [n, teamId], true);
-  const t = S.b.team[teamId];
-  if (t) t.known = n;
+  S.run('UPDATE teams SET known = (SELECT COUNT(*) FROM known WHERE team_id = ? AND active = 1) WHERE id = ?', [teamId, teamId], true);
 }
 
 // ── склад команди ──
@@ -844,6 +865,7 @@ function ancestors_(level, unitId) {
   return out;
 }
 function canSeeEvent_(c, ev) {
+  if (ev.roles && ev.roles.length && ev.authorId !== c.id && !canManageEvent_(c, ev) && !(c.active || c.roles).some((r) => ev.roles.indexOf(r.key) >= 0)) return false;
   return (c.active || c.roles).some((r) => covers_(r, ev.level, ev.unitId) || ancestors_(r.level, r.unitId).some((a) => a.level === ev.level && a.unitId === ev.unitId));
 }
 function canManageEvent_(c, ev) {
@@ -858,6 +880,7 @@ API.events = function (c) {
     const manage = canManageEvent_(c, e);
     return Object.assign({}, e, {
       levelLabel: levelLabel_(e.level, e.unitId), going: people.length,
+      rolesLabel: (e.roles || []).map((k) => (roleDef_(k) || {}).label).filter(Boolean).join(', '),
       isGoing: people.some((r) => r.tgId === c.id),
       manage: manage,
       people: manage ? people.map((r) => ({ name: r.name, team: r.team })) : [],
@@ -866,15 +889,28 @@ API.events = function (c) {
 };
 
 API.eventSave = function (c, d) {
-  const u = eventUnits_(c).filter((x) => x.level === d.level && x.unitId === str_(d.unitId))[0];
+  const old = d.id ? loadEvents_().filter((x) => x.id === str_(d.id))[0] : null;
+  const u = eventUnits_(c).filter((x) => x.level === d.level && x.unitId === str_(d.unitId))[0] ||
+    (old && old.level === d.level && old.unitId === str_(d.unitId) ? { level: old.level, unitId: old.unitId } : null);
   if (!u) deny_('Ти не можеш додавати події на цьому рівні.');
   if (str_(d.title).length < 2) bad_('Вкажи назву.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) bad_('Вкажи дату.');
   const end = /^\d{4}-\d{2}-\d{2}$/.test(d.end || '') && d.end > d.date ? d.end : '';
   if (d.end && /^\d{4}-\d{2}-\d{2}$/.test(d.end) && d.end < d.date) bad_('Дата кінця раніше за дату початку.');
-  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name };
-  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso()]);
+  const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
+  const rolesStr = roles.length ? ',' + roles.join(',') + ',' : '';
+  if (d.id) {
+    const ex = loadEvents_().filter((x) => x.id === str_(d.id))[0];
+    if (!ex) bad_('Подію не знайдено.');
+    if (!canManageEvent_(c, ex)) deny_('Редагувати подію може автор або керівник цього рівня.');
+    Object.assign(ex, { level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), roles: roles });
+    S.run('UPDATE events SET level = ?, unit_id = ?, title = ?, date = ?, end_date = ?, time = ?, place = ?, descr = ?, roles = ? WHERE id = ?',
+      [ex.level, ex.unitId, ex.title, ex.date, ex.end || null, ex.time, ex.place, ex.desc, rolesStr, ex.id]);
+    return { id: ex.id };
+  }
+  const e = { id: uid_(), level: u.level, unitId: u.unitId, title: clip_(d.title), date: d.date, end: end, time: clip_(d.time), place: clip_(d.place), desc: clip_(d.desc), authorId: c.id, author: c.name, roles: roles };
+  S.run('INSERT INTO events (id, level, unit_id, title, date, end_date, time, place, descr, author_id, author, created, roles) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [e.id, e.level, e.unitId, e.title, e.date, e.end || null, e.time, e.place, e.desc, e.authorId, e.author, nowIso(), rolesStr]);
   S.events.push(e);
   rsvpSet_(c, e.id, true);
   return { id: e.id };
@@ -1563,7 +1599,8 @@ async function handleTelegram(req, env, ctx) {
       if (payload.indexOf('admin_') === 0) return claimAdmin_(m, payload.slice(6));
     }
     if (text === '/id') return S.send(m.chat.id, 'Твій Telegram ID: <code>' + m.from.id + '</code>');
-    return sendApp_(m.chat.id, 'Привіт! Це застосунок Young Life Україна 💙💛\nЗвіти, знані по імені, календар і статистика — тут 👇', 'Відкрити Young Life');
+    if (/^\/app\b/.test(text)) return sendInstall_(m.chat.id);
+    return sendWelcome_(m.chat.id);
   });
   await S2.flush();
   return new Response('ok');
@@ -1586,6 +1623,17 @@ function claimAdmin_(m, code) {
     insertRole_({ id: uid_(), tgId: c.id, name: c.name, key: top.key, level: 'nat', unitId: '', status: ST.ACTIVE, decidedBy: 'посилання власника', decided: nowIso() });
   }
   return sendApp_(m.chat.id, '✅ Готово! Твоя роль — <b>' + top.label + '</b>: найвищий рівень доступу.', 'Відкрити Young Life');
+}
+
+const appLink_ = () => (S.env.APP_URL || '').replace(/\?.*$/, '') + '?app=1';
+function sendWelcome_(chatId) {
+  S.send(chatId, 'Привіт! Це застосунок Young Life Україна 💙💛\nЗвіти, знані по імені, календар і статистика — тут 👇\n\n📲 Хочеш окрему іконку на телефоні? Натисни «Встановити на телефон».', { reply_markup: { inline_keyboard: [
+    [{ text: 'Відкрити Young Life', web_app: { url: (S.env.APP_URL || '').replace(/\?.*$/, '') } }],
+    [{ text: '📲 Встановити на телефон', url: appLink_() }],
+  ] } });
+}
+function sendInstall_(chatId) {
+  S.send(chatId, '📲 <b>MyYL як окремий застосунок</b>\n\n<b>iPhone:</b> відкрий посилання в Safari → «Поділитися» → «На початковий екран» → «Додати».\n<b>Android:</b> відкрий у Chrome → меню ⋮ → «Встановити застосунок».\n\nПотім відкрий MyYL з іконки й натисни «Увійти через Telegram».', { reply_markup: { inline_keyboard: [[{ text: '📲 Відкрити посилання', url: appLink_() }]] } });
 }
 
 function sendApp_(chatId, text, button, screen) {
@@ -1683,7 +1731,7 @@ async function handleAdmin(req, env, ctx, url) {
     const me = await tg(env, 'getMe', {});
     const hook = await tg(env, 'setWebhook', { url: origin + '/tg', secret_token: await webhookSecret(env), allowed_updates: ['message'], drop_pending_updates: false });
     await tg(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Відкрити', web_app: { url: env.APP_URL } } });
-    await tg(env, 'setMyCommands', { commands: [{ command: 'start', description: 'Відкрити застосунок' }] });
+    await tg(env, 'setMyCommands', { commands: [{ command: 'start', description: 'Відкрити застосунок' }, { command: 'app', description: 'Встановити MyYL на телефон' }] });
     if (me.ok) await db.prepare("INSERT INTO settings (key, value) VALUES ('BOT_USERNAME', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(me.result.username).run();
     return json({ ok: !!hook.ok, bot: me.ok ? me.result.username : null, api: origin, webhook: hook.description || 'ok' });
   }

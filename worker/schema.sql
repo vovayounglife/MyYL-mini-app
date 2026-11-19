@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS roles_tg ON roles (tg_id);
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '', title TEXT, date TEXT NOT NULL, end_date TEXT, time TEXT, place TEXT,
-  descr TEXT, author_id TEXT, author TEXT, created TEXT
+  descr TEXT, author_id TEXT, author TEXT, created TEXT, roles TEXT
 );
 CREATE INDEX IF NOT EXISTS events_date ON events (date);
 CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT NOT NULL, tg_id TEXT NOT NULL, name TEXT, team TEXT, created TEXT, PRIMARY KEY (event_id, tg_id));

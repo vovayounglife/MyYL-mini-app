@@ -85,7 +85,7 @@
     events: null, ev: null, evForm: null, evFilter: 'all',
     add: null, knownCache: {},
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false },
-    known: { teamId: null, list: null, mine: true, detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
+    known: { teamId: null, list: null, mode: 'mine', detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
     fin: { teamId: null, month: ym(new Date()), data: null, cur: null },
     thanks: false, reqs: null, reqSel: {}, tree: null, structOpen: {}, structEdit: null,
@@ -215,7 +215,7 @@
     if (screen === 'calendar') { S.ev = o.ev || null; S.evForm = null; loadEvents(); }
     if (screen === 'add') initAdd(o.type, o.teamId);
     if (screen === 'stats') { if (o.scope) setPick('stats', o.scope); ensurePick('stats'); if (o.cat) S.stats.cat = o.cat; loadStats(); }
-    if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.bulk = null; ensurePick('known', ownTeamKeys('known')); loadKnown(); }
+    if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.bulk = null; if (S.known.mode === 'browse') ensurePick('known', ownTeamKeys('known')); loadKnown(); }
     if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
@@ -285,13 +285,19 @@
     if (S.screen === 'stats' && !S.stats.find) render();
   }
   async function loadKnown(force) {
+    const browse = S.known.mode === 'browse';
     const P = S.pick.known;
-    if (!P || !P.keys.length) { S.known.list = []; return render(); }
-    const key = P.keys.join(',');
+    if (browse && (!P || !P.keys.length)) { S.known.list = []; return render(); }
+    const key = browse ? P.keys.join(',') : 'mine';
     if (!force && S.knownMem[key]) S.known.list = S.knownMem[key];
     else S.known.list = LS.get('kn:' + key) || null;
     render();
-    try { S.knownMem[key] = await api('knownList', { units: P.keys }); if (S.pick.known.keys.join(',') === key) S.known.list = S.knownMem[key]; LS.set('kn:' + key, S.knownMem[key]); } catch (e) { S.known.list = S.known.list || []; toast(e.message); }
+    try {
+      const data = await api('knownList', browse ? { units: P.keys } : { mine: true });
+      S.knownMem[key] = data; LS.set('kn:' + key, data);
+      const nowKey = S.known.mode === 'browse' ? (S.pick.known || { keys: [] }).keys.join(',') : 'mine';
+      if (nowKey === key) S.known.list = data;
+    } catch (e) { S.known.list = S.known.list || []; toast(e.message); }
     S.knownCache = {};
     if (S.screen === 'known' && !S.known.edit && !S.known.bulk) render();
   }
@@ -396,6 +402,10 @@
       h += `<div class="sec">Швидко внести</div><div class="grid3">${quick.map((t) =>
         `<button type="button" class="tile" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}</button>`).join('')}</div>`;
     }
+    if (IN_TG && !LS.get('hideInstall')) {
+      h += `<div class="banner" style="cursor:default"><span class="ic ic-teal">${icon('phoneApp', 18)}</span><span class="grow"><b>MyYL на телефон</b><br><span class="small muted">Окрема іконка — відкривай без Telegram</span></span>
+        <button type="button" class="btn sm" data-a="tabGo" data-s="install">Як?</button><button type="button" class="icon-btn" style="width:34px;height:34px" data-a="hideInstall" aria-label="Сховати">✕</button></div>`;
+    }
     const tiles = sectionTiles();
     if (tiles.length) {
       h += `<div class="sec">Розділи</div><div class="grid2">${tiles.map((t) =>
@@ -418,7 +428,7 @@
     const out = [];
     if (c.myyl) out.push({ k: 'myyl', label: 'Моя команда в MyYL', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-blue' });
     if (c.broadcast) out.push({ k: 'broadcast', label: 'Написати всім', sub: 'повідомлення в боті', icon: 'send', ic: 'ic-coral' });
-    if ((c.knownTeams || []).length) out.push({ k: 'known', label: 'Знані по імені', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
+    if ((c.knownTeams || []).length || c.knownNoTeam) out.push({ k: 'known', label: 'Знані по імені', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
     if ((c.viewTeams || []).length) out.push({ k: 'team', label: 'Склад команди', sub: 'ролі й анкети', icon: 'club', ic: 'ic-teal' });
     if ((c.financeTeams || []).length) out.push({ k: 'finance', label: 'Фінансовий звіт', sub: 'щомісяця', icon: 'finance', ic: 'ic-yellow' });
     if (c.manage) out.push({ k: 'structure', label: 'Ерії та команди', sub: 'додати, перейменувати', icon: 'more', ic: 'ic-purple' });
@@ -509,6 +519,7 @@
     list.forEach((e) => { const m = evDateParts(e).month; if (m !== cur) { cur = m; h += `<div class="sec">${esc(m)}</div>`; } h += evCard(e); });
     return h;
   }
+  const evUnits = (f) => { const u = (caps().eventUnits || []).slice(); if (f && f.extraUnit && !u.some((x) => x.level === f.extraUnit.level && x.unitId === f.extraUnit.unitId)) u.push(f.extraUnit); return u; };
   function evDetailView() {
     const e = (S.events || []).filter((x) => x.id === S.ev)[0];
     if (!e) return header('Подія') + '<div class="empty">Подію не знайдено</div>';
@@ -516,7 +527,8 @@
     let h = header(e.title, '', '');
     h += `<div><span class="tag lvl-${e.level}">${esc(e.levelLabel)}</span></div>`;
     h += `<div class="card rows"><div class="kv"><span>Коли</span><span>${esc(fmtRange(e))}${e.time ? ', ' + esc(e.time) : ''}</span></div>
-      ${e.place ? `<div class="kv"><span>Де</span><span>${esc(e.place)}</span></div>` : ''}<div class="kv"><span>Організатор</span><span>${esc(e.author || '—')}</span></div></div>`;
+      ${e.place ? `<div class="kv"><span>Де</span><span>${esc(e.place)}</span></div>` : ''}<div class="kv"><span>Організатор</span><span>${esc(e.author || '—')}</span></div>
+      ${e.rolesLabel ? `<div class="kv"><span>Для кого</span><span>${esc(e.rolesLabel)}</span></div>` : ''}</div>`;
     if (e.desc) h += `<div style="white-space:pre-line">${esc(e.desc)}</div>`;
     h += `<div class="row small muted">${icon('club', 18)}${e.going} ${e.going % 10 === 1 && e.going % 100 !== 11 ? 'людина йде' : 'людей йдуть'}</div>`;
     h += e.isGoing ? `<button type="button" class="btn ghost" data-a="rsvp" data-id="${esc(e.id)}" data-g="0" style="border-color:var(--teal);color:var(--teal)">Ти йдеш ✓ — скасувати</button>`
@@ -525,13 +537,23 @@
     h += '<div class="small muted center">Бот нагадає в Telegram тим, хто записався</div>';
     if (e.manage) {
       h += `<div class="card col"><h2>Учасники (${e.people.length})</h2>${e.people.length ? e.people.map((x) => `<div class="row between small"><span>${esc(x.name)}</span><span class="muted">${esc(x.team)}</span></div>`).join('') : '<div class="small muted">Ще ніхто не записався</div>'}</div>`;
-      h += `<button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}">Видалити подію</button>`;
+      h += `<div class="grid2"><button type="button" class="btn sec2" data-a="evEdit" data-id="${esc(e.id)}">Редагувати</button><button type="button" class="btn ghost" data-a="evDelete" data-id="${esc(e.id)}">Видалити</button></div>`;
     }
     return h;
   }
+  const AUD_GROUPS = [['all', 'Усім'], ['leaders', 'Лідерам і вище'], ['captains', 'Капітанам і вище'], ['heads', 'Керівництву ерій і регіонів']];
+  const audRoles = (g) => S.me.roleDefs.filter((r) => r.key !== 'OFFICE' && (g === 'leaders' ? r.rank <= 9 : g === 'captains' ? r.rank <= 6 : g === 'heads' ? r.rank <= 5 : false)).map((r) => r.key);
+  function audienceField(f) {
+    const sel = f.roles || [];
+    const grp = !sel.length ? 'all' : (AUD_GROUPS.filter((g) => g[0] !== 'all' && audRoles(g[0]).join() === sel.slice().sort((a, b) => roleDef(a).rank - roleDef(b).rank).join())[0] || [''])[0];
+    return `<div class="f"><span>Для кого (хто бачить подію)</span>
+      <div class="pills" style="flex-wrap:wrap">${AUD_GROUPS.map((g) => `<button type="button" class="pill${grp === g[0] ? ' on' : ''}" data-a="evAudGroup" data-g="${g[0]}">${g[1]}</button>`).join('')}<button type="button" class="pill${sel.length && !grp ? ' on' : ''}" data-a="evAudCustom">Вибрати ролі</button></div>
+      ${f.audOpen || (sel.length && !grp) ? `<div class="pills" style="flex-wrap:wrap;margin-top:8px">${S.me.roleDefs.map((r) => `<button type="button" class="pill${sel.indexOf(r.key) >= 0 ? ' on' : ''}" style="min-height:34px" data-a="evAudRole" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>` : ''}
+      <span class="xs muted" style="font-weight:400">${sel.length ? 'Бачать лише: ' + esc(sel.map((k) => roleDef(k).label).join(', ')) + '. Ти й керівники рівня бачать завжди.' : 'Подію бачать усі ролі на цьому рівні й нижче.'}</span></div>`;
+  }
   function evFormView() {
-    const f = S.evForm, units = caps().eventUnits || [];
-    let h = header('Нова подія');
+    const f = S.evForm, units = evUnits(f);
+    let h = header(f.id ? 'Редагувати подію' : 'Нова подія');
     h += '<div class="card col">';
     h += units.length > 1
       ? `<label class="f"><span>Календар</span><select class="in" data-bind="evForm.unit">${units.map((u, i) => `<option value="${i}"${String(i) === String(f.unit) ? ' selected' : ''}>${esc(u.label)}</option>`).join('')}</select></label>`
@@ -543,7 +565,8 @@
       <label class="f"><span>Час початку</span><input class="in" type="time" data-bind="evForm.time" value="${esc(f.time)}"></label>
       <label class="f"><span>Місце</span><input class="in" type="text" data-bind="evForm.place" value="${esc(f.place)}" placeholder="Адреса або назва"></label>
       <label class="f"><span>Опис</span><textarea class="in" rows="3" data-bind="evForm.desc">${esc(f.desc)}</textarea></label>
-      <button type="button" class="btn" data-a="evSave">Додати подію</button></div>`;
+      ${audienceField(f)}
+      <button type="button" class="btn" data-a="evSave">${f.id ? 'Зберегти зміни' : 'Додати подію'}</button></div>`;
     return h;
   }
 
@@ -950,58 +973,63 @@
   const STAGES = [['meet', 'Хочу познайомитись'], ['friends', 'Дружимо'], ['grow', 'Допомагаю зростати в вірі'], ['own', 'Йдуть самі']];
   const stageLabel = (k) => (STAGES.filter((x) => x[0] === k)[0] || STAGES[0])[1];
   const knownSelTeams = () => { const P = S.pick.known; const ok = caps().knownTeams || []; return P ? teamsUnder(P.keys).filter((id) => ok.indexOf(id) >= 0) : []; };
+  // куди можна додавати: лише свої команди (+ «Без команди»)
+  function knownTargets() {
+    const edit = caps().knownEditTeams || [];
+    const ids = S.known.mode === 'browse' ? knownSelTeams().filter((id) => edit.indexOf(id) >= 0) : edit.slice();
+    const out = ids.map((id) => ({ id: id, name: teamName(id) }));
+    if (S.known.mode !== 'browse' && caps().knownNoTeam) out.push({ id: '', name: 'Без команди' });
+    return out;
+  }
   VIEWS.known = function () {
     const k = S.known;
     if (k.bulk) return knownBulkView();
     if (k.edit) return knownEditView();
     if (k.detail) return knownDetailView();
-    const teams = knownSelTeams();
-    let h = header('Знані по імені', pickLabel('known'));
-    h += picker('known');
-    if (teams.length) h += `<div class="grid2"><button type="button" class="btn sm" data-a="knownNew">${icon('plus', 18)} Одного</button><button type="button" class="btn sec2 sm" data-a="knownBulkOpen">Додати списком</button></div>`;
+    const canBrowse = (caps().knownTeams || []).length > 0;
+    let h = header('Знані по імені', k.mode === 'browse' ? pickLabel('known') : 'Ті, кого вніс ти');
+    if (canBrowse) h += `<div class="seg" role="tablist"><button type="button" role="tab" class="${k.mode !== 'browse' ? 'on' : ''}" data-a="knownMode" data-m="mine">Мій список</button><button type="button" role="tab" class="${k.mode === 'browse' ? 'on' : ''}" data-a="knownMode" data-m="browse">Регіон · ерія · команда</button></div>`;
+    if (k.mode === 'browse') h += picker('known');
+    const targets = knownTargets();
+    if (targets.length) h += `<div class="grid2"><button type="button" class="btn sm" data-a="knownNew">${icon('plus', 18)} Одного</button><button type="button" class="btn sec2 sm" data-a="knownBulkOpen">Додати списком</button></div>`;
+    else if (k.mode === 'browse') h += '<div class="xs muted">Додавати знаних у команду можуть лише її учасники. Тут можна переглядати.</div>';
     h += `<label class="sr" for="kq">Пошук</label><input id="kq" class="in" type="search" placeholder="Пошук за іменем" data-live="knownSearch">`;
     if (!k.list) return h + loading();
-    const meId = String(S.me.user.id), f = first().toLowerCase();
-    const isMine = (p) => p.authorId === meId || (!p.authorId && f && String(p.leader).toLowerCase().indexOf(f) >= 0);
-    const mineN = k.list.filter(isMine).length;
-    const list = k.mine ? k.list.filter(isMine) : k.list;
-    const multiTeam = new Set(k.list.map((p) => p.teamId)).size > 1;
+    const list = k.list;
+    const multiTeam = new Set(list.map((p) => p.teamId)).size > 1;
     const word = (n) => n % 10 === 1 && n % 100 !== 11 ? 'підліток' : 'підлітків';
-    h += `<div class="row between"><h2 style="font-size:17px">${k.mine ? 'Мій список' : 'Усі знані'}</h2><span class="small muted">${list.length} ${word(list.length)}</span></div>`;
-    if (k.mine && !mineN) h += `<div class="note small">${k.list.length ? 'У твоєму списку ще нікого немає. Додай тих, кого знаєш по імені, — або подивись усіх нижче.' : 'Додай підлітків, яких знаєш по імені, — по одному або одразу списком.'}</div>`;
-    if (list.length) h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
+    h += `<div class="small muted">${list.length} ${word(list.length)} · за них молимось${list.length ? ' · гортай колонки вбік →' : ''}</div>`;
+    if (!list.length) return h + `<div class="note small">${k.mode === 'browse' ? 'Тут поки нікого немає.' : 'У твоєму списку ще нікого немає. Додай тих, кого знаєш по імені, — по одному або одразу списком.'}</div>`;
+    h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
       const col = list.filter((p) => (p.stage || 'meet') === st[0]);
       return `<section class="col-st st-${st[0]}" aria-label="${esc(st[1])}"><div class="col-h"><span>${esc(st[1])}</span><span class="n">${col.length}</span></div>
         ${col.length ? col.map((p) => `<button type="button" class="kcard" data-a="knownOpen" data-id="${esc(p.id)}" data-name="${esc(p.name.toLowerCase())}"><span class="b" style="display:block">${esc(p.name)}</span>
-          <span class="xs muted">${esc([multiTeam ? p.team : '', p.grade, p.leader ? 'веде ' + p.leader : ''].filter(Boolean).join(' · ') || (p.phone ? p.phone : 'додай контакти'))}</span></button>`).join('') : '<div class="xs muted" style="padding:6px 4px">Поки нікого</div>'}</section>`;
+          <span class="xs muted">${esc([multiTeam ? p.team : '', p.grade, p.leader ? 'веде ' + p.leader : ''].filter(Boolean).join(' · ') || (p.phone ? p.phone : (p.canEdit ? 'додай контакти' : '')))}</span></button>`).join('') : '<div class="xs muted" style="padding:6px 4px">Поки нікого</div>'}</section>`;
     }).join('')}</div>`;
-    if (k.mine) { if (k.list.length > mineN) h += `<button type="button" class="btn sec2" data-a="knownMine" data-v="0">Показати всіх знаних · ${k.list.length}</button>`; }
-    else h += `<button type="button" class="btn sec2" data-a="knownMine" data-v="1">Лише мій список · ${mineN}</button>`;
-    if (!k.mine && !k.list.length) h += `<div class="empty small">Тут поки нікого</div>`;
     return h;
   };
   const knownItem = () => (S.known.list || []).filter((x) => x.id === S.known.detail)[0];
-  function stagePills(cur, action) {
-    return `<div class="pills" style="flex-wrap:wrap">${STAGES.map((st) => `<button type="button" class="pill st-pill st-${st[0]}${cur === st[0] ? ' on' : ''}" data-a="${action}" data-st="${st[0]}" aria-pressed="${cur === st[0]}">${esc(st[1])}</button>`).join('')}</div>`;
+  function stagePills(cur, action, disabled) {
+    return `<div class="pills" style="flex-wrap:wrap">${STAGES.map((st) => `<button type="button" class="pill st-pill st-${st[0]}${cur === st[0] ? ' on' : ''}" data-a="${action}" data-st="${st[0]}" aria-pressed="${cur === st[0]}"${disabled ? ' disabled' : ''}>${esc(st[1])}</button>`).join('')}</div>`;
   }
   function knownDetailView() {
     const p = knownItem();
     if (!p) return header('Знані по імені') + '<div class="empty">Не знайдено</div>';
-    let h = header(p.name, [p.team, p.grade, p.school].filter(Boolean).join(' · '), `<button type="button" class="icon-btn" data-a="knownEdit" aria-label="Редагувати"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg></button>`);
-    h += `<div class="card col" style="gap:8px"><div class="small muted">Етап</div>${stagePills(p.stage || 'meet', 'knownStage')}</div>`;
+    let h = header(p.name, [p.team, p.grade, p.school].filter(Boolean).join(' · '), p.canEdit ? `<button type="button" class="icon-btn" data-a="knownEdit" aria-label="Редагувати"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg></button>` : '');
+    h += `<div class="card col" style="gap:8px"><div class="small muted">Етап${p.canEdit ? '' : ' · змінюють учасники команди'}</div>${stagePills(p.stage || 'meet', 'knownStage', !p.canEdit)}</div>`;
     const tel = String(p.phone || '').replace(/[^\d+]/g, '');
     const ig = String(p.ig || '').replace(/^@/, '');
     if (tel || ig) h += `<div class="grid2">${tel ? `<button type="button" class="btn sec2" data-a="openUrl" data-url="tel:${esc(tel)}">${icon('phone', 18)} Подзвонити</button>` : ''}${ig ? `<button type="button" class="btn sec2" data-a="openUrl" data-url="https://instagram.com/${esc(encodeURIComponent(ig))}">Instagram</button>` : ''}</div>`;
     const rows = [['Телефон', p.phone], ['Instagram', p.ig], ['День народження', p.bday ? fmtDay(p.bday) : ''], ['Школа', p.school], ['Клас', p.grade], ['Веде', p.leader]].filter((x) => x[1]);
     h += `<div class="card rows">${rows.map((x) => `<div class="kv"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="kv"><span>Контактів поки немає</span><span></span></div>'}</div>`;
-    if (!rows.length) h += `<button type="button" class="btn sec2" data-a="knownEdit">Додати контакти й дані</button>`;
+    if (!rows.length && p.canEdit) h += `<button type="button" class="btn sec2" data-a="knownEdit">Додати контакти й дані</button>`;
     if (p.note) h += `<div class="note"><div class="sec" style="margin:0 0 6px">Молитовна нотатка</div><div style="white-space:pre-line">${esc(p.note)}</div></div>`;
     return h;
   }
   function teamPick(bind, cur) {
-    const ids = knownSelTeams();
-    if (ids.length < 2) return '';
-    return `<label class="f"><span>Команда</span><select class="in" data-bind="${bind}">${ids.map((id) => `<option value="${esc(id)}"${id === cur ? ' selected' : ''}>${esc(teamName(id))}</option>`).join('')}</select></label>`;
+    const t = knownTargets();
+    if (t.length < 2) return '';
+    return `<label class="f"><span>Команда</span><select class="in" data-bind="${bind}">${t.map((x) => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`;
   }
   function knownEditView() {
     const e = S.known.edit;
@@ -1018,12 +1046,12 @@
       <label class="f"><span>Молитовна нотатка</span><textarea class="in" rows="3" data-bind="known.edit.note">${esc(e.note)}</textarea></label>
       <button type="button" class="btn" data-a="knownSave">Зберегти</button>
       ${e.id ? '<button type="button" class="btn ghost" data-a="knownArchive">Прибрати зі списку</button>' : ''}</div>
-      <div class="xs muted">Дані підлітків бачать лише команда, ерія й регіон. Переконайся, що батьки погодились.</div>`;
+      <div class="xs muted">${e.teamId || e.id ? 'Знаних команди бачать команда, ерія й регіон.' : '«Без команди» — твій особистий список, його бачиш лише ти.'} Переконайся, що батьки погодились.</div>`;
   }
   function knownBulkView() {
     const b = S.known.bulk;
     const n = String(b.text).split(/[\n;,]+/).map((x) => x.trim()).filter((x) => x.length > 1).length;
-    return header('Додати списком', b.teamId ? teamName(b.teamId) : '') + `<div class="card col">
+    return header('Додати списком', knownTargets().length < 2 ? (b.teamId ? teamName(b.teamId) : 'Без команди') : '') + `<div class="card col">
       ${teamPick('known.bulk.teamId', b.teamId)}
       <label class="f"><span>Імена — кожне з нового рядка</span><textarea id="bulkText" class="in" rows="9" data-bind="known.bulk.text" data-live="knownBulkCount" placeholder="Марко Іванюк&#10;Софія Бойко&#10;Денис Ткач">${esc(b.text)}</textarea></label>
       <div class="xs muted" id="bulkCount">${n ? 'Імен: ' + n : 'Можна вставити список з нотаток чи чату. Номери й крапки на початку рядків приберуться самі.'}</div>
@@ -1246,12 +1274,12 @@
   A.evNew = () => { S.evForm = { unit: 0, title: '', date: ymd(new Date(Date.now() + 7 * 864e5)), end: '', time: '', place: '', desc: '' }; render(); };
   A.evDate = () => { const f = S.evForm; if (f.end && f.end < f.date) f.end = ''; const e = document.querySelector('[data-bind="evForm.end"]'); if (e) { e.min = f.date; e.value = f.end; } };
   A.evSave = async () => {
-    const f = S.evForm, u = (caps().eventUnits || [])[Number(f.unit) || 0];
+    const f = S.evForm, u = evUnits(f)[Number(f.unit) || 0];
     if (!u) return;
     if (String(f.title).trim().length < 2) return toast('Вкажи назву події');
     if (f.end && f.end < f.date) return toast('Дата кінця раніше за дату початку');
-    const res = await run(() => api('eventSave', { level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), 'Подію додано: ' + u.label);
-    if (res) { S.evForm = null; S.events = null; render(); loadEvents(); }
+    const res = await run(() => api('eventSave', { id: f.id || '', roles: f.roles || [], level: u.level, unitId: u.unitId, title: f.title, date: f.date, end: f.end || '', time: f.time, place: f.place, desc: f.desc }), f.id ? 'Зміни збережено' : 'Подію додано: ' + u.label);
+    if (res) { const wasId = f.id; S.evForm = null; S.events = null; if (!wasId) S.ev = null; render(); loadEvents(); }
   };
   A.rsvp = async (d) => {
     const going = d.g === '1';
@@ -1269,6 +1297,17 @@
     const url = 'https://calendar.google.com/calendar/render?action=TEMPLATE&ctz=Europe/Kiev&text=' + encodeURIComponent(e.title) + '&dates=' + dates +
       '&location=' + encodeURIComponent(e.place || '') + '&details=' + encodeURIComponent((e.desc || '') + '\n\nYoung Life Україна · ' + e.levelLabel);
     A.openUrl({ url: url });
+  };
+  A.evAudGroup = (d) => { S.evForm.roles = audRoles(d.g); S.evForm.audOpen = false; render(); };
+  A.evAudCustom = () => { S.evForm.audOpen = true; render(); };
+  A.evAudRole = (d) => { const r = S.evForm.roles = (S.evForm.roles || []).slice(); const i = r.indexOf(d.k); if (i >= 0) r.splice(i, 1); else r.push(d.k); render(); };
+  A.evEdit = (d) => {
+    const e = (S.events || []).filter((x) => x.id === d.id)[0]; if (!e) return;
+    const f = { id: e.id, title: e.title, date: e.date, end: e.end || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).slice(), audOpen: false };
+    let units = caps().eventUnits || [];
+    let idx = units.findIndex((x) => x.level === e.level && x.unitId === e.unitId);
+    if (idx < 0) { f.extraUnit = { level: e.level, unitId: e.unitId, label: e.levelLabel }; idx = units.length; }
+    f.unit = idx; S.evForm = f; render(); window.scrollTo(0, 0);
   };
   A.evDelete = (d) => {
     const doIt = async () => { const res = await run(() => api('eventDelete', { id: d.id }), 'Подію видалено'); if (res) { S.ev = null; S.events = null; render(); loadEvents(); } };
@@ -1323,35 +1362,35 @@
     document.querySelectorAll('#knownBoard .kcard').forEach((li) => { li.classList.toggle('hidden', !!q && li.dataset.name.indexOf(q) < 0); });
   };
   A.knownOpen = (d) => { S.known.detail = d.id; render(); window.scrollTo(0, 0); };
-  const firstKnownTeam = () => { const ids = knownSelTeams(); return myTeamFirst(ids) || ids[0] || ''; };
-  A.knownNew = () => { S.known.edit = { id: '', teamId: firstKnownTeam(), stage: 'meet', name: '', phone: '', ig: '', bday: '', school: '', grade: '', leader: first(), note: '' }; render(); window.scrollTo(0, 0); };
-  A.knownEdit = () => { const p = knownItem(); if (p) { S.known.edit = Object.assign({}, p); render(); window.scrollTo(0, 0); } };
+  const firstTarget = () => { const t = knownTargets(); const mine = (S.me.myTeams || []).map((x) => x.id); return (t.filter((x) => mine.indexOf(x.id) >= 0)[0] || t[0] || { id: '' }).id; };
+  A.knownMode = (d) => { if (S.known.mode === d.m) return; S.known.mode = d.m; if (d.m === 'browse') ensurePick('known', ownTeamKeys('known')); loadKnown(); };
+  A.knownNew = () => { S.known.edit = { id: '', teamId: firstTarget(), stage: 'meet', name: '', phone: '', ig: '', bday: '', school: '', grade: '', leader: first(), note: '' }; render(); window.scrollTo(0, 0); };
+  A.knownEdit = () => { const p = knownItem(); if (p && p.canEdit) { S.known.edit = Object.assign({}, p); render(); window.scrollTo(0, 0); } };
   A.knownEditStage = (d) => { S.known.edit.stage = d.st; render(); };
   A.knownStage = async (d) => {
-    const p = knownItem(); if (!p || p.stage === d.st) return;
+    const p = knownItem(); if (!p || !p.canEdit || p.stage === d.st) return;
     const old = p.stage; p.stage = d.st; render(); haptic('success');
-    const res = await run(() => api('knownStage', { teamId: p.teamId, id: p.id, stage: d.st }));
+    const res = await run(() => api('knownStage', { id: p.id, stage: d.st }));
     if (!res) { p.stage = old; render(); } else { S.knownMem = {}; toast('Етап: ' + stageLabel(d.st)); }
   };
   A.knownSave = async () => {
     const e = S.known.edit;
     if (String(e.name).trim().length < 2) return toast('Вкажи імʼя');
-    const teamId = e.teamId || firstKnownTeam();
-    const res = await run(() => api('knownSave', { teamId: teamId, item: e }), 'Збережено');
+    const res = await run(() => api('knownSave', { teamId: e.id ? e.teamId : (e.teamId || ''), item: e }), 'Збережено');
     if (res) { S.known.edit = null; S.known.detail = e.id ? e.id : null; S.knownMem = {}; loadKnown(true); }
   };
   A.knownArchive = () => {
     const e = S.known.edit;
-    const doIt = async () => { const res = await run(() => api('knownArchive', { teamId: e.teamId, id: e.id }), 'Прибрано зі списку'); if (res) { S.known.edit = null; S.known.detail = null; S.knownMem = {}; loadKnown(true); } };
+    const doIt = async () => { const res = await run(() => api('knownArchive', { id: e.id }), 'Прибрано зі списку'); if (res) { S.known.edit = null; S.known.detail = null; S.knownMem = {}; loadKnown(true); } };
     if (tg && tg.showConfirm) tg.showConfirm('Прибрати підлітка зі списку знаних?', (ok) => { if (ok) doIt(); }); else if (confirm('Прибрати зі списку?')) doIt();
   };
-  A.knownBulkOpen = () => { S.known.bulk = { text: '', stage: 'meet', teamId: firstKnownTeam() }; render(); window.scrollTo(0, 0); const t = document.getElementById('bulkText'); if (t) t.focus(); };
+  A.knownBulkOpen = () => { S.known.bulk = { text: '', stage: 'meet', teamId: firstTarget() }; render(); window.scrollTo(0, 0); const t = document.getElementById('bulkText'); if (t) t.focus(); };
   A.knownBulkStage = (d) => { S.known.bulk.stage = d.st; render(); };
   A.knownBulkCount = (d, el) => { const n = el.value.split(/[\n;,]+/).map((x) => x.trim()).filter((x) => x.length > 1).length; const c = document.getElementById('bulkCount'); if (c) c.textContent = n ? 'Імен: ' + n : ''; };
   A.knownBulkSave = async () => {
     const b = S.known.bulk;
     if (!String(b.text).trim()) return toast('Впиши імена — кожне з нового рядка', 'error');
-    const res = await run(() => api('knownBulk', { teamId: b.teamId || firstKnownTeam(), names: b.text, stage: b.stage }));
+    const res = await run(() => api('knownBulk', { teamId: b.teamId || '', names: b.text, stage: b.stage }));
     if (res) { toast('Додано: ' + res.added, 'success'); S.known.bulk = null; S.knownMem = {}; loadKnown(true); }
   };
   A.pkLevel = (d) => { const P = S.pick[d.s]; if (!P || P.level === d.l) return; const t = levelTarget(unitsFor(d.s), P.keys[0], d.l); P.level = d.l; P.keys = t ? [t] : []; onPick(d.s); };
@@ -1373,6 +1412,7 @@
     const msg = 'Твоя версія Telegram ще не вміє додавати застосунки на головний екран. Онови Telegram в App Store / Google Play і спробуй знову.';
     if (tg && tg.showAlert) tg.showAlert(msg); else toast(msg);
   };
+  A.hideInstall = () => { LS.set('hideInstall', 1); render(); };
   A.openApp = () => { try { tg.openLink(APP_LINK, { try_browser: IS_IOS ? 'safari' : 'chrome' }); } catch (e) { tg.openLink(APP_LINK); } };
   A.copyApp = async () => { try { await navigator.clipboard.writeText(APP_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(APP_LINK); } };
   A.pwaInstall = async () => { const ev = S.installEvt; if (!ev) return; ev.prompt(); try { await ev.userChoice; } catch (e) { /* ок */ } S.installEvt = null; render(); };
