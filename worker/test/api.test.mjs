@@ -421,7 +421,7 @@ me = await api(LEAD, 'me');
 ok(me.data.profile.notif.bc === false && me.data.profile.notif.remind === true, 'сповіщення: збережено');
 // статистика «Команда»
 r = await api(AD, 'stats', { units: ['a:a1'], cat: 'people' });
-ok(r.ok && r.data.cats.some((x) => x.key === 'people' && x.label === 'Команда') && r.data.kpis[0].l === 'Людей у командах' && r.data.breakdown.rows.length === 2 && r.data.chart.bars.length === 7, 'статистика «Команда» по ерії');
+ok(r.ok && r.data.cats.some((x) => x.key === 'people' && x.label === 'Команда') && r.data.kpis[0].l === 'Людей усього' && r.data.breakdown.rows.length === 2 && r.data.chart.bars.length === 8 && r.data.chart.bars[7].label === 'Офіс', 'статистика «Команда» по ерії');
 r = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'people' });
 ok(r.ok && r.data.breakdown.title === 'Ролі' && r.data.breakdown.rows.some((x) => x.name === 'Волонтер'), 'статистика «Команда» по команді — ролі');
 
@@ -537,6 +537,26 @@ r = await api(AD, 'teamDelete', { id: tmpT, dry: true });
 ok(r.data.targets.every((x) => x.same), 'видалення: перенести можна лише в межах ерії');
 r = await api(AD, 'teamDelete', { id: tmpT, drop: true });
 ok(r.ok && (await api({ id: 91, first_name: 'Т' }, 'me')).data.status !== 'active', 'видалення без перенесення: ролі зняті, команда зникла');
+
+
+// офіс ерії / регіону з власною назвою ролі
+const OFF = { id: 220, first_name: 'Офіс' };
+r = await api(OFF, 'register', { name: 'Ірина Бух', roles: ['AREA_OFFICE'], regionId: 'r0', areaId: 'a1', titles: { AREA_OFFICE: 'Бухгалтер' } });
+ok(r.ok, 'офіс ерії: заявка');
+reqs = await api(AD, 'requests');
+const offReq = reqs.data.find((p) => p.tgId === '220');
+ok(offReq && offReq.primary && offReq.roles[0].label === 'Бухгалтер (офіс ерії)' && offReq.roles[0].titled, 'офіс ерії: ЕД бачить заявку з назвою ролі');
+r = await api(AD, 'decide', { roleIds: [offReq.roles[0].id], approve: true, titles: { [offReq.roles[0].id]: 'Головний бухгалтер' } });
+me = await api(OFF, 'me');
+ok(me.data.status === 'active' && me.data.roles.find((x) => x.key === 'AREA_OFFICE').label === 'Головний бухгалтер (офіс ерії)', 'офіс ерії: підтверджено з відредагованою назвою');
+r = await api(AD, 'teamMembers', { units: ['a:a1'] });
+ok(r.ok && r.data.some((p) => p.tgId === '220' && p.team === 'Офіс ерії Тернопіль') && r.data[0].office, 'склад ерії: офіс ерії першим');
+r = await api(AD, 'stats', { units: ['a:a1'], cat: 'people' });
+ok(r.data.kpis.find((k) => k.l === 'В офісі ерій і регіонів').v === '2', 'статистика: офіс ерії враховано (ЕД + бухгалтер)');
+r = await api(RD, 'roleTitle', { roleId: offReq.roles[0].id, title: 'Фінансист' });
+ok(r.ok && r.data.label === 'Фінансист (офіс ерії)', 'назву ролі змінює керівник');
+r = await api(CAP, 'roleTitle', { roleId: offReq.roles[0].id, title: 'Хак' });
+ok(!r.ok, 'капітан не змінює назву офісної ролі');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

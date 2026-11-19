@@ -30,8 +30,9 @@ const ROLES = [
   { key: 'HELPER', label: 'Помічник', rank: 10, level: 'team' },
   { key: 'SUGAR', label: 'Сахарок', rank: 11, level: 'team' },
   { key: 'VOLUNTEER', label: 'Волонтер', rank: 12, level: 'team' },
-  // Працівник офісу: привʼязаний до регіону (зазвичай «Office»), поки що бачить лише календар у межах офісу
-  { key: 'OFFICE', label: 'Працівник офісу', rank: 13, level: 'region', viewOnly: true },
+  // Офіс регіону / ерії: людина сама називає свою роль (напр., «Бухгалтер»), підтверджувач може змінити
+  { key: 'OFFICE', label: 'Офіс регіону', rank: 13, level: 'region', viewOnly: true, titled: true },
+  { key: 'AREA_OFFICE', label: 'Офіс ерії', rank: 14, level: 'area', viewOnly: true, titled: true },
 ];
 const RANK = { CLUB: 7, MG: 9, KR: 10, KNOWN: 10, FINANCE: 7, APPROVE: 6, EVENT: 9, GMAIL: 6 };
 const ST = { PENDING: 'очікує', ACTIVE: 'активна', REJECTED: 'відхилена', REMOVED: 'знята' };
@@ -47,6 +48,7 @@ const APPROVAL = {
   AREA_ADMIN: [['AREA_DIRECTOR', 'same'], ['REGIONAL_DIRECTOR', 'cover'], ['REGIONAL_ADMIN', 'cover']],
   CAPTAIN: [['AREA_DIRECTOR', 'cover'], ['AREA_ADMIN', 'cover'], ['REGIONAL_ADMIN', 'cover']],
   OFFICE: [['REGIONAL_DIRECTOR', 'same'], ['REGIONAL_ADMIN', 'same']],
+  AREA_OFFICE: [['AREA_DIRECTOR', 'same'], ['AREA_ADMIN', 'same'], ['REGIONAL_DIRECTOR', 'cover'], ['REGIONAL_ADMIN', 'cover']],
 };
 const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
 const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
@@ -109,7 +111,7 @@ const NEEDS = {
   saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
-  structureTree: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
+  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
 };
 
@@ -367,7 +369,8 @@ function personFromRow(r) {
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
   if (!def) return null;
-  return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, label: def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '' };
+  const title = def.titled ? String(r.title || '').trim() : '';
+  return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, title: title, label: title ? title + ' (' + def.label.toLowerCase() + ')' : def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '' };
 }
 function logFromRow(r) {
   return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '' };
@@ -388,6 +391,11 @@ function unitTeams_(b, d) {
 }
 const isSingleTeam_ = (d) => (!Array.isArray(d.units) || !d.units.length) ? !!d.teamId : d.units.length === 1 && String(d.units[0]).indexOf('t:') === 0;
 
+// вища роль r лежить у межах вибору (одиниці або кількох)
+function upperIn_(scope, r) {
+  if (scope.level === 'multi') return scope.members.some((m) => upperIn_(m, r));
+  return within_({ level: scope.level, unitId: scope.unitId }, r);
+}
 const keyUnit_ = (k) => (k === 'nat' ? { level: 'nat', unitId: '' } : { level: { r: 'region', a: 'area', t: 'team' }[String(k).charAt(0)] || '', unitId: String(k).slice(2) });
 const unitKey_ = (level, id) => (level === 'nat' ? 'nat' : { region: 'r:', area: 'a:', team: 't:' }[level] + id);
 // роль r знаходиться всередині одиниці u (u — { level, unitId })
@@ -414,9 +422,9 @@ function unitName_(level, id) {
 
 // Записи (у памʼять — одразу, у базу — при flush)
 function insertRole_(row) {
-  S.run('INSERT INTO roles (id, tg_id, name, role_key, level, unit_id, status, decided_by, requested, decided) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    [row.id, row.tgId, row.name, row.key, row.level, row.unitId, row.status, row.decidedBy || '', row.requested || nowIso(), row.decided || ''], true);
-  S.b.roles.push(roleFromRow({ id: row.id, tg_id: row.tgId, name: row.name, role_key: row.key, unit_id: row.unitId, status: row.status, requested: row.requested || nowIso() }));
+  S.run('INSERT INTO roles (id, tg_id, name, role_key, level, unit_id, status, decided_by, requested, decided, title) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [row.id, row.tgId, row.name, row.key, row.level, row.unitId, row.status, row.decidedBy || '', row.requested || nowIso(), row.decided || '', row.title || ''], true);
+  S.b.roles.push(roleFromRow({ id: row.id, tg_id: row.tgId, name: row.name, role_key: row.key, unit_id: row.unitId, status: row.status, requested: row.requested || nowIso(), title: row.title || '' }));
 }
 function setRoleStatus_(r, status, by) {
   S.run('UPDATE roles SET status = ?, decided_by = ?, decided = ? WHERE id = ?', [status, by || '', nowIso(), r.id], true);
@@ -589,7 +597,7 @@ API.me = function (c) {
       teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name, dir: t.dir })),
       dirs: DIRS,
     },
-    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank })),
+    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, titled: !!r.titled })),
     roles: c.allRoles.filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING).map(roleOut_),
   };
   if (!c.active.length) {
@@ -670,7 +678,7 @@ function requestRoles_(c, d) {
     if (existing.some((r) => r.key === k && r.unitId === unitId)) return;
     // Раб Божий не чекає на підтвердження власних ролей
     if (sup && def.level === 'team') activateTeam_(unitId);
-    const row = { id: uid_(), tgId: c.id, name: c.name, key: k, level: def.level, unitId: unitId, status: sup ? ST.ACTIVE : ST.PENDING, decidedBy: sup ? c.name : '', decided: sup ? nowIso() : '' };
+    const row = { id: uid_(), tgId: c.id, name: c.name, key: k, level: def.level, unitId: unitId, status: sup ? ST.ACTIVE : ST.PENDING, decidedBy: sup ? c.name : '', decided: sup ? nowIso() : '', title: def.titled ? clip_(((d.titles || {})[k] || '')).slice(0, 60) : '' };
     insertRole_(row);
     created.push(row.id);
   });
@@ -694,12 +702,28 @@ API.requests = function (c) {
   return Object.keys(byPerson).map((k) => byPerson[k]).sort((a, b) => (b.primary - a.primary));
 };
 
+function setRoleTitle_(r, title) {
+  const t = clip_(title).slice(0, 60);
+  S.run('UPDATE roles SET title = ? WHERE id = ?', [t, r.id], true);
+  const def = roleDef_(r.key);
+  r.title = t; r.label = t ? t + ' (' + def.label.toLowerCase() + ')' : def.label;
+}
+// назву ролі в офісі змінює той, хто може її підтверджувати
+API.roleTitle = function (c, d) {
+  const r = loadRoles_().filter((x) => x.id === str_(d.roleId))[0];
+  if (!r || !(roleDef_(r.key) || {}).titled) bad_('Цю роль не можна перейменувати.');
+  if (!canDecide_(c, r)) deny_();
+  setRoleTitle_(r, d.title);
+  return { label: r.label };
+};
+
 API.decide = function (c, d) {
   const ids = (d.roleIds || []).map(String);
   const approve = !!d.approve;
   const done = [];
   loadRoles_().filter((r) => ids.indexOf(r.id) >= 0 && r.status === ST.PENDING).forEach((r) => {
     if (!canDecide_(c, r)) deny_('Ти не можеш вирішувати щодо ролі «' + r.label + '».');
+    if (approve && d.titles && d.titles[r.id] != null && (roleDef_(r.key) || {}).titled) setRoleTitle_(r, d.titles[r.id]);
     if (approve && r.level === 'team') activateTeam_(r.unitId);
     setRoleStatus_(r, approve ? ST.ACTIVE : ST.REJECTED, c.name);
     done.push(r);
@@ -868,8 +892,13 @@ function refreshKnownCount_(teamId) {
 // ── склад команди ──
 API.teamMembers = function (c, d) {
   const teams = pickTeams_(c, d, canViewTeam_);
-  if (!teams.length) deny_();
+  // вищі одиниці з вибору — показуємо їхній «офіс» (ролі рівня регіону / ерії / країни)
+  const sel = Array.isArray(d.units) && d.units.length ? pickScope_(c, d.units).scope : null;
+  const ups = !sel ? [] : sel.level === 'multi' ? sel.members.filter((m) => m.level !== 'team') : sel.level !== 'team' ? [sel] : [];
+  if (!teams.length && !ups.length) deny_();
   const st = loadStruct_();
+  const OFFICE_NAME = { nat: 'Національний рівень', region: 'Офіс регіону ', area: 'Офіс ерії ' };
+  const ORDER = { nat: '0', region: '1', area: '2' };
   const set = {};
   teams.forEach((id) => { set[id] = true; });
   const byPerson = {};
@@ -878,15 +907,22 @@ API.teamMembers = function (c, d) {
     p.roles.push({ id: r.id, label: r.label, canRemove: canDecide_(c, r) });
     p.rank = Math.min(p.rank, r.rank);
   });
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level !== 'team' && r.key !== 'SUPER' && ups.some((u) => within_(u, r) && (r.level !== 'nat' || u.level === 'nat'))).forEach((r) => {
+    const gk = 'u:' + unitKey_(r.level, r.unitId);
+    const p = byPerson[r.tgId + '|' + gk] = byPerson[r.tgId + '|' + gk] || { tgId: r.tgId, name: r.name, roles: [], rank: 99, teamId: gk, office: true,
+      team: OFFICE_NAME[r.level] + (r.level === 'nat' ? '' : unitName_(r.level, r.unitId)), sortKey: ORDER[r.level] + unitName_(r.level, r.unitId) };
+    p.roles.push({ id: r.id, label: r.label, canRemove: r.tgId !== c.id && canDecide_(c, r) });
+    p.rank = Math.min(p.rank, r.rank);
+  });
   return Object.keys(byPerson).map((k) => {
     const p = byPerson[k];
     const person = getPerson_(p.tgId);
     if (person) { p.name = person.name || p.name; p.username = person.username; p.profile = profileOf_(person); }
     // усі ролі людини (у будь-яких командах і на будь-яких рівнях) — щоб бачити, хто де служить
     p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE).sort((a, b) => a.rank - b.rank)
-      .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), canRemove: r.tgId !== c.id && canDecide_(c, r) }));
+      .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), titled: !!(roleDef_(r.key) || {}).titled, title: r.title || '', canRemove: r.tgId !== c.id && canDecide_(c, r) }));
     return p;
-  }).sort((a, b) => a.team.localeCompare(b.team) || a.rank - b.rank || a.name.localeCompare(b.name));
+  }).sort((a, b) => (a.office ? a.sortKey : '9' + a.team).localeCompare(b.office ? b.sortKey : '9' + b.team) || a.rank - b.rank || a.name.localeCompare(b.name));
 };
 
 // ── фінанси ──
@@ -1524,11 +1560,15 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   // люди в командах: активні командні ролі
   const tRoles = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && inScope[r.unitId]);
   const peopleIn = (ids) => { const set = {}; ids.forEach((id) => { set[id] = true; }); return uniq_(tRoles.filter((r) => set[r.unitId]).map((r) => r.tgId)).length; };
-  const pplTotal = uniq_(tRoles.map((r) => r.tgId)).length;
+  const uRoles = scope.level === 'team' ? [] : loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level !== 'team' && r.key !== 'SUPER' && (r.level !== 'nat' || scope.level === 'nat') && upperIn_(scope, r));
+  const officeIn = (key) => { const u = keyUnit_(key); return uniq_(uRoles.filter((r) => within_(u, r)).map((r) => r.tgId)); };
+  const pplTotal = uniq_(tRoles.map((r) => r.tgId).concat(uRoles.map((r) => r.tgId))).length;
+  const pplTeams = uniq_(tRoles.map((r) => r.tgId)).length;
   const pplNew = uniq_(tRoles.filter((r) => String(r.requested).slice(0, 10) >= periodStart).map((r) => r.tgId)).length;
   const pplRank = (max) => uniq_(tRoles.filter((r) => r.rank <= max).map((r) => r.tgId)).length;
   const K = {
-    people: [[nf(pplTotal), 'Людей у командах'], [nf(teamIds.length), teamIds.length === 1 ? 'Команда' : 'Команд'], [teamIds.length ? df(pplTotal / teamIds.length) : '—', 'Середньо в команді'], [nf(pplRank(RANK.MG)), 'Лідерів і вище'], [nf(pplNew), 'Нових за період']],
+    people: scope.level === 'team' ? [[nf(pplTeams), 'Людей у команді'], [nf(pplRank(RANK.MG)), 'Лідерів і вище'], [nf(pplNew), 'Нових за період']]
+      : [[nf(pplTotal), 'Людей усього'], [nf(pplTeams), 'У командах'], [nf(uniq_(uRoles.map((r) => r.tgId)).length), 'В офісі ерій і регіонів'], [nf(teamIds.length), teamIds.length === 1 ? 'Команда' : 'Команд'], [teamIds.length ? df(pplTeams / teamIds.length) : '—', 'Середньо в команді'], [nf(pplNew), 'Нових за період']],
     overview: [[nf(clubs.length), 'Клубів'], [nf(sum(clubs, (r) => r.count)), 'Підлітків на клубах'], [nf(mgs.length), 'Зустрічей малих груп'], [df(sum(krs, (r) => r.hours)), 'Годин контактної роботи']],
     club: [[nf(clubs.length), 'Клубів проведено'], [nf(sum(clubs, (r) => r.count)), 'Відвідувань підлітків'], [clubs.length ? df(sum(clubs, (r) => r.count) / clubs.length) : '—', 'Середньо на клубі'], [nf(sum(clubs, (r) => r.newT)), 'Нових підлітків']],
     mg: [[nf(mgs.length), 'Зустрічей малих груп'], [nf(sum(mgs, (r) => r.count)), 'Відвідувань'], [mgs.length ? df(sum(mgs, (r) => r.count) / mgs.length) : '—', 'Середньо на зустрічі'], [nf(sum(mgs, (r) => r.newT)), 'Нових учасників']],
@@ -1582,7 +1622,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const reported = {};
   loadLog_().forEach((r) => { if (r.week === nowWk && r.type === repType && inScope[r.teamId]) reported[r.teamId] = true; });
   const breakdown = groups.map((g) => {
-    const v = cat === 'people' ? (g.count != null ? g.count : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + (g.key && g.key.indexOf('t:') !== 0 ? selfKnown_(Object.assign(keyUnit_(g.key), {}), '') : 0) : sum(dd_(inPAll.filter(g.test)), metric);
+    const v = cat === 'people' ? (g.count != null ? g.count : g.key && g.key.indexOf('t:') !== 0 ? uniq_(tRoles.filter((r) => g.teams.indexOf(r.unitId) >= 0).map((r) => r.tgId).concat(officeIn(g.key))).length : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + (g.key && g.key.indexOf('t:') !== 0 ? selfKnown_(Object.assign(keyUnit_(g.key), {}), '') : 0) : sum(dd_(inPAll.filter(g.test)), metric);
     const row = { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
     if (cat === 'people' && g.teams) row.sub = g.teams.length + (g.teams.length === 1 ? ' команда' : ' команд');
     if (g.teams && cat !== 'people') { row.total = g.teams.length; row.done = g.teams.filter((id) => reported[id]).length; row.teams = g.teams.length; }
@@ -1602,10 +1642,11 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   });
 
   const roleBars = ROLES.filter((x) => x.level === 'team').map((x) => ({ label: { CAPTAIN: 'Кап', TEAM_ADMIN: 'Адм', DGL: 'DGL', LEADER: 'Лід', HELPER: 'Пом', SUGAR: 'Сах', VOLUNTEER: 'Вол' }[x.key] || x.label.slice(0, 3), v: uniq_(tRoles.filter((r) => r.key === x.key).map((r) => r.tgId)).length }));
+  if (uRoles.length) roleBars.push({ label: 'Офіс', v: uniq_(uRoles.map((r) => r.tgId)).length });
   return {
     scope, scopes, cats, cat, period,
     kpis: K[cat].map((k) => ({ v: k[0], l: k[1] })),
-    chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер', bars: roleBars }
+    chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер' + (uRoles.length ? ' · Офіс (ролі ерій і регіонів)' : ''), bars: roleBars }
       : { title: titles[cat], sub: period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
     breakdown: { title: cat === 'people' && scope.level === 'team' ? 'Ролі' : ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
     path, report,
@@ -2016,7 +2057,7 @@ function notifOf_(tgId) {
   return out;
 }
 const wants_ = (tgId, k) => notifOf_(tgId)[k];
-function roleOut_(r) { return { id: r.id, key: r.key, label: r.label, level: r.level, unitId: r.unitId, unitName: unitName_(r.level, r.unitId), status: r.status }; }
+function roleOut_(r) { return { id: r.id, key: r.key, title: r.title || '', titled: !!(roleDef_(r.key) || {}).titled, label: r.label, level: r.level, unitId: r.unitId, unitName: unitName_(r.level, r.unitId), status: r.status }; }
 function teamOut_(id) { const st = loadStruct_(); const t = st.team[id]; return { id: id, name: t.name, areaId: t.areaId, areaName: (st.area[t.areaId] || {}).name || '', regionId: st.teamRegion(id) }; }
 function knownOut_(r) { return { id: r.id, stage: stageOk_(r.stage) ? r.stage : 'meet', authorId: r.author_id || '', name: r.name || '', phone: r.phone || '', ig: r.ig || '', bday: r.bday || '', school: r.school || '', grade: r.grade || '', leader: r.leader || '', note: r.note || '' }; }
 function finOut_(r) { return { month: r.month, prev: r.prev || 0, office: r.office || 0, church: r.church || 0, team: r.team || 0, spent: r.spent || 0, balance: r.balance || 0 }; }

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS people (
 );
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, name TEXT, role_key TEXT NOT NULL, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL, decided_by TEXT, requested TEXT, decided TEXT
+  status TEXT NOT NULL, decided_by TEXT, requested TEXT, decided TEXT, title TEXT
 );
 CREATE INDEX IF NOT EXISTS roles_tg ON roles (tg_id);
 
