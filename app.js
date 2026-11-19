@@ -1196,20 +1196,21 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // ───────────── ЗАЯВКИ ─────────────
   VIEWS.requests = function () {
-    let h = header('Заявки', 'Тут — заявки, які чекають саме на тебе');
+    let h = header('Заявки', S.reqOthers ? 'Не стосуються тебе напряму, але ти можеш підтвердити' : 'Чекають саме на тебе');
     if (!S.reqs) return h + loading();
     const main = S.reqs.filter((p) => p.primary), other = S.reqs.filter((p) => !p.primary);
-    if (!main.length) h += '<div class="empty">Нових заявок немає</div>';
+    h += `<div class="seg" role="tablist"><button type="button" role="tab" class="${!S.reqOthers ? 'on' : ''}" data-a="reqTab" data-v="0">Мені · ${main.length}</button><button type="button" role="tab" class="${S.reqOthers ? 'on' : ''}" data-a="reqTab" data-v="1">Інші заявки · ${other.length}</button></div>`;
     const card = (p) => `<div class="card col"><div class="row"><span class="avatar" style="background:rgba(76,110,245,.18)">${esc(initials(p.name))}</span>
       <div class="grow"><div class="b">${esc(p.name)}</div><div class="small muted">${p.username ? '@' + esc(p.username) : ''}${p.phone ? ' · ' + esc(p.phone) : ''}</div></div></div>
       <div class="col" style="gap:4px">${p.roles.map((r) => `<label class="check" style="border:0;border-radius:12px;background:var(--soft);min-height:46px;padding:0 12px"><input type="checkbox" data-ch="reqToggle" data-id="${esc(r.id)}"${S.reqSel[r.id] ? ' checked' : ''}>
         <span class="grow"><span class="b">${esc(r.label)}</span> <span class="small muted">· ${esc(r.unitName)}</span></span></label>`).join('')}</div>
       <div class="row"><button type="button" class="btn sec2 sm" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="0">Відхилити</button>
       <button type="button" class="btn teal sm grow" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="1">Підтвердити вибрані</button></div></div>`;
-    h += main.map(card).join('');
-    if (other.length) {
-      h += `<button type="button" class="btn ghost" data-a="reqOthers">${S.reqOthers ? 'Сховати' : 'Показати'} інші заявки, які ти теж можеш підтвердити (${other.length})</button>`;
-      if (S.reqOthers) h += '<div class="xs muted">Їх уже отримали відповідальні на своєму рівні. Втручайся, лише якщо потрібно.</div>' + other.map(card).join('');
+    if (!S.reqOthers) {
+      h += main.length ? main.map(card).join('') : '<div class="empty">Нових заявок для тебе немає</div>';
+    } else {
+      h += '<div class="xs muted">Ці заявки вже отримали відповідальні на своєму рівні. Підтверджуй тих, кого знаєш.</div>';
+      h += other.length ? other.map(card).join('') : '<div class="empty">Інших заявок немає</div>';
     }
     return h;
   };
@@ -1600,6 +1601,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // заявки
   A.reqOthers = () => { S.reqOthers = !S.reqOthers; render(); };
+  A.reqTab = (d) => { S.reqOthers = d.v === '1'; render(); window.scrollTo(0, 0); };
   A.reqToggle = (d, el) => { S.reqSel[d.id] = el.checked; };
   A.reqDecide = async (d) => {
     const p = S.reqs.filter((x) => x.tgId === d.tg)[0];
