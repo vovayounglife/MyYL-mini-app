@@ -2650,7 +2650,20 @@ async function handleAdmin(req, env, ctx, url) {
     if (!body.force && await db.prepare('SELECT 1 AS x FROM meta WHERE k = ?').bind(mk).first('x')) return json({ ok: true, n: list.length, team: t.team, skipped: true });
     const S0 = new Store(env, ctx);
     await S0.loadBase();
-    const team = use(S0, () => { const a = findArea_(t.area); return a ? findTeamIn_(a.id, t.team) : null; });
+    const team = use(S0, () => {
+      const a = findArea_(t.area);
+      if (!a) return null;
+      const direct = findTeamIn_(a.id, t.team);
+      if (direct || !Array.isArray(t.roster) || !t.roster.length) return direct;
+      // команду могли перейменувати чи обʼєднати — шукаємо ту, де зараз найбільше людей з цієї таблички
+      let best = null, bestN = 0;
+      loadStruct_().teams.filter((x) => x.areaId === a.id).forEach((x) => {
+        const names = uniq_(loadRoles_().filter((r) => r.level === 'team' && r.unitId === x.id && r.status === ST.ACTIVE).map((r) => r.tgId)).map((id) => (getPerson_(id) || {}).name || '');
+        const n = t.roster.filter((nm) => names.some((pn) => nameScore_(nm, pn).same)).length;
+        if (n > bestN) { bestN = n; best = x; }
+      });
+      return bestN >= Math.min(2, t.roster.length) ? best : null;
+    });
     if (!team) return json({ ok: true, n: list.length, team: t.team, missing: true });
     const ex = await db.batch([
       db.prepare('SELECT type, date, author_id, author FROM reports WHERE team_id = ?').bind(team.id),
