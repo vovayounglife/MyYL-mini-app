@@ -276,7 +276,7 @@
     try {
       const d = await api('stats', { units: S.pick.stats.keys, cat: S.stats.cat, period: S.stats.period });
       if (statsKey() !== key) return; // людина вже перейшла далі
-      S.stats.data = d;
+      S.stats.data = d; S.stats.at = 'оновлено о ' + pad(new Date().getHours()) + ':' + pad(new Date().getMinutes());
       if (d.scope.level !== 'multi' && S.pick.stats.keys.join() !== d.scope.key) setPick('stats', d.scope.key);
       S.stats.cat = d.cat;
       S.statsMem = S.statsMem || {}; S.statsMem[key] = d; S.statsMem[statsKey()] = d;
@@ -605,7 +605,7 @@
     if (!d) return h + loading();
     if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === d.cat ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
     h += `<div class="seg">${[['week', 'Тиждень'], ['month', 'Місяць'], ['q', '3 міс'], ['year', 'Рік']].map((p) => `<button type="button" class="${p[0] === st.period ? 'on' : ''}" data-a="statsPeriod" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;
-    if (st.loading) h += '<div class="small muted center">Оновлюю…</div>';
+    h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
 
     const bars = d.chart.bars, max = Math.max.apply(null, bars.map((x) => x.v).concat([1]));
@@ -666,8 +666,9 @@
     let h = header('Ерії та команди', 'Додавай, перейменовуй, закривай');
     if (S.structEdit) {
       const e = S.structEdit;
-      const title = e.kind === 'area' ? (e.id ? 'Перейменувати ерію' : 'Нова ерія · ' + e.parentName) : (e.id ? 'Перейменувати команду' : 'Нова команда · ' + e.parentName);
+      const title = e.kind === 'area' ? (e.id ? 'Перейменувати ерію' : 'Нова ерія · ' + e.parentName) : (e.id ? 'Змінити команду' : 'Нова команда · ' + e.parentName);
       h += `<div class="card col"><h2>${esc(title)}</h2><label class="f"><span>Назва</span><input class="in" type="text" data-bind="structEdit.name" value="${esc(e.name)}" maxlength="60"></label>
+        ${e.kind === 'team' ? `<div class="f"><span>Напрям роботи</span><div class="pills" style="flex-wrap:wrap">${DIRS.map((x) => `<button type="button" class="pill${e.dir === x ? ' on' : ''}" data-a="structDir" data-v="${x}">${x}</button>`).join('')}</div></div>` : ''}
         <div class="row"><button type="button" class="btn sec2 sm" data-a="structCancel">Скасувати</button><button type="button" class="btn sm grow" data-a="structSave">Зберегти</button></div></div>`;
     }
     if (S.structDelS) h += structDelView();
@@ -688,8 +689,8 @@
           h += '<div style="padding:4px 16px 12px;border-bottom:1px solid var(--line)">';
           if (rg.canEditAreas) h += `<button type="button" class="link-btn" data-a="structEditArea" data-id="${esc(a.id)}" data-name="${esc(a.name)}">Перейменувати ерію</button>`;
           h += a.teams.length ? a.teams.map((tm) => `<div class="row" style="padding:8px 0;border-top:1px solid var(--line);gap:8px">
-              <span class="grow"><span class="b" style="display:block${tm.state === 'closed' ? ';opacity:.55' : ''}">${esc(tm.name)}</span><span class="xs muted">${tm.people} ${tm.people % 10 === 1 && tm.people % 100 !== 11 ? 'людина' : 'людей'}</span></span>${ST_TAG[tm.state]}
-              ${a.canEditTeams ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structEditTeam" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}">Назва</button>
+              <span class="grow"><span class="b" style="display:block${tm.state === 'closed' ? ';opacity:.55' : ''}">${esc(tm.name)}${tm.dir ? ` <span class="tag" style="font-size:11px;padding:1px 7px">${esc(tm.dir)}</span>` : ''}</span><span class="xs muted">${tm.people} ${tm.people % 10 === 1 && tm.people % 100 !== 11 ? 'людина' : 'людей'}</span></span>${ST_TAG[tm.state]}
+              ${a.canEditTeams ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structEditTeam" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}" data-dir="${esc(tm.dir || '')}">Змінити</button>
               ${tm.state === 'active' ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="closed" data-name="${esc(tm.name)}">Закрити</button>`
                 : `<button type="button" class="btn teal sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="active" data-name="${esc(tm.name)}">${tm.state === 'pending' ? 'Активувати' : 'Відкрити'}</button>`}
               <button type="button" class="icon-btn" style="width:36px;height:36px;color:var(--pink)" data-a="structDel" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}" aria-label="Видалити команду ${esc(tm.name)}">✕</button>` : ''}</div>`).join('')
@@ -707,6 +708,7 @@
     return h;
   };
 
+const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const LEVELS = [['nat', 'Україна'], ['region', 'Регіон'], ['area', 'Ерія'], ['team', 'Команда']];
   const byName = (a, b) => a.name.localeCompare(b.name);
 
@@ -841,7 +843,7 @@
     const u = units[m.at];
     const chain = [];
     for (let k = m.at; k && units[k]; k = units[k].parent) chain.unshift(units[k]);
-    let h = header(LV_NAME[u.level] + u.name, unitCounts(u));
+    let h = header(LV_NAME[u.level] + u.name, [u.dir, unitCounts(u)].filter(Boolean).join(' · '));
     if (chain.length > 1 || d.roots.length > 1) {
       h += `<nav aria-label="Гілка" class="row wrap" style="gap:4px">${d.roots.length > 1 ? '<button type="button" class="pill" data-a="myylGo" data-k="">Усі</button><span class="muted" aria-hidden="true">›</span>' : ''}${chain.map((x, i) => i === chain.length - 1
         ? `<span class="pill on" style="display:inline-flex;align-items:center">${esc(x.name)}</span>`
@@ -1414,6 +1416,7 @@
   // статистика
   A.statsScope = (d, el) => { S.stats.scope = el.value; loadStats(); };
   A.statsCat = (d) => { S.stats.cat = d.c; loadStats(); };
+  A.statsReload = () => { S.statsMem = {}; loadStats(); };
   A.statsPeriod = (d) => { S.stats.period = d.p; loadStats(); };
   A.statsDrill = (d) => { setPick('stats', d.k); S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; loadStats(); window.scrollTo(0, 0); };
   A.statsFindToggle = () => { S.stats.find = !S.stats.find; render(); const i = document.getElementById('statsFindIn'); if (i) i.focus(); };
@@ -1432,8 +1435,9 @@
   A.structFind = (d, el) => { const q = el.value.trim().toLowerCase(); document.querySelectorAll('[data-q]').forEach((x) => { if (x.closest('#app')) x.classList.toggle('hidden', !!q && x.dataset.q.indexOf(q) < 0); }); };
   A.structNewArea = (d) => { S.structEdit = { kind: 'area', parentId: d.id, parentName: d.name, name: '' }; render(); window.scrollTo(0, 0); };
   A.structEditArea = (d) => { S.structEdit = { kind: 'area', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
-  A.structNewTeam = (d) => { S.structEdit = { kind: 'team', parentId: d.id, parentName: d.name, name: '' }; S.structOpen[d.id] = true; render(); window.scrollTo(0, 0); };
-  A.structEditTeam = (d) => { S.structEdit = { kind: 'team', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
+  A.structDir = (d) => { S.structEdit.dir = d.v; render(); };
+  A.structNewTeam = (d) => { S.structEdit = { kind: 'team', parentId: d.id, parentName: d.name, name: '', dir: 'YoungLife' }; S.structOpen[d.id] = true; render(); window.scrollTo(0, 0); };
+  A.structEditTeam = (d) => { S.structEdit = { kind: 'team', id: d.id, name: d.name, dir: d.dir || '' }; render(); window.scrollTo(0, 0); };
   A.structDel = async (d) => {
     S.structEdit = null; S.structDelS = { id: d.id, name: d.name, info: null, into: '' }; render(); window.scrollTo(0, 0);
     const r = await run(() => api('teamDelete', { id: d.id, dry: true }));
@@ -1458,7 +1462,7 @@
     if (String(e.name || '').trim().length < 2) return toast('Вкажи назву');
     const res = await run(() => e.kind === 'area'
       ? api('areaSave', { id: e.id || '', regionId: e.parentId, name: e.name })
-      : api('teamSave', e.id ? { id: e.id, name: e.name } : { areaId: e.parentId, name: e.name }), 'Збережено');
+      : api('teamSave', e.id ? { id: e.id, name: e.name, dir: e.dir || '' } : { areaId: e.parentId, name: e.name, dir: e.dir || 'YoungLife' }), 'Збережено');
     if (res) { S.structEdit = null; await refreshMe(); loadTree(); }
   };
   A.structTeamState = (d) => {

@@ -486,6 +486,27 @@ ok(mm.data.myTeams[0].id === teamId && mm.data.week.items.find((x) => x.type ===
 r = await api(AD, 'knownList', { units: ['t:' + teamId] });
 ok(r.data.some((x) => x.name === 'Дублів Підліток'), 'обʼєднання: знані перейшли');
 
+
+// знані «Без команди» в статистиці рівня автора
+const kA = (await api(VOVA, 'stats', { units: ['a:a1'], cat: 'known' })).data;
+const kT = (await api(VOVA, 'stats', { units: ['t:' + capTeam.id, 't:' + teamId], cat: 'known' })).data;
+ok(Number(kA.kpis[0].v) - Number(kT.kpis[0].v) === 2, 'знані «Без команди» ЕД рахуються в його ерії (+2): ' + kA.kpis[0].v + ' vs ' + kT.kpis[0].v);
+const kR = (await api(VOVA, 'stats', { units: ['r:r0'], cat: 'known' })).data;
+ok(kR.breakdown.rows.find((x) => x.name === 'Тернопіль').value === Number(kA.kpis[0].v), 'знані: розбивка регіону враховує «Без команди»');
+const rk = await api(VOVA, 'report', { units: ['a:a1'], items: ['known'], from: monthAgo, to: today });
+ok(rk.data.rows[0].values.known.total === kA.kpis[0].v, 'знані «Без команди» — і у звіті');
+// напрям команди
+r = await api(AD, 'teamSave', { areaId: 'a1', name: 'Мами', dir: 'YoungMoms' });
+const momT = r.data.id;
+let tree = (await api(AD, 'structureTree')).data;
+ok(tree[0].areas[0].teams.find((x) => x.id === momT).dir === 'YoungMoms', 'напрям: YoungMoms при створенні');
+await api(AD, 'teamSave', { id: momT, dir: 'College' });
+tree = (await api(AD, 'structureTree')).data;
+ok(tree[0].areas[0].teams.find((x) => x.id === momT).dir === 'College', 'напрям: змінено на College');
+r = await api(AD, 'teamSave', { id: momT, dir: 'Хакер' });
+tree = (await api(AD, 'structureTree')).data;
+ok(tree[0].areas[0].teams.find((x) => x.id === momT).dir === 'College', 'напрям: невідомий ігнорується');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

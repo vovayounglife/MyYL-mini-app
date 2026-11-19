@@ -50,6 +50,7 @@ const APPROVAL = {
 };
 const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
 const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
+const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 // клуб за команду вносять Капітан, Адмін команди і ці вищі ролі (у своїх межах); МГ і КР — кожен лише за себе
 const CLUB_UPPER = ['AREA_DIRECTOR'];
 const MANAGE_TEAMS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
@@ -203,7 +204,7 @@ class Store {
     const b = { ver: ver, settings: {} };
     b.regions = regions.map((r) => ({ id: r.id, name: r.name }));
     b.areas = areas.map((r) => ({ id: r.id, regionId: r.region_id, name: r.name }));
-    b.teams = teams.map((r) => ({ id: r.id, areaId: r.area_id, name: r.name, state: r.state, active: r.state === 'active', known: Number(r.known) || 0 }));
+    b.teams = teams.map((r) => ({ id: r.id, areaId: r.area_id, name: r.name, state: r.state, active: r.state === 'active', known: Number(r.known) || 0, dir: r.dir || '' }));
     b.people = {};
     people.forEach((r) => { b.people[r.tg_id] = personFromRow(r); });
     b.roles = roles.map(roleFromRow).filter(Boolean);
@@ -217,17 +218,22 @@ class Store {
     if (withExtras) {
       // нові знані й фінанси — у тому ж форматі, що й звіти (для статистики)
       const fromDay = fromWeek;
-      const [kn, fin, stg] = await this.db.batch([
-        this.db.prepare('SELECT team_id, added FROM known WHERE added >= ?').bind(fromDay),
+      const [kn, fin, stg, slf] = await this.db.batch([
+        this.db.prepare("SELECT team_id, added, author_id FROM known WHERE added >= ? AND active = 1").bind(fromDay),
         this.db.prepare('SELECT team_id, month, office, church, team, spent FROM finance WHERE month >= ?').bind(fromDay.slice(0, 7)),
         this.db.prepare("SELECT team_id, COALESCE(stage, 'meet') AS stage, COUNT(*) AS n FROM known WHERE active = 1 GROUP BY team_id, COALESCE(stage, 'meet')"),
+        this.db.prepare("SELECT author_id, COALESCE(stage, 'meet') AS stage, COUNT(*) AS n FROM known WHERE active = 1 AND team_id = '' GROUP BY author_id, COALESCE(stage, 'meet')"),
       ]);
+      // особисті знані «Без команди»: рахуємо на рівні автора
+      this.knownSelf = (slf.results || []).map((r) => Object.assign({ stage: r.stage, n: r.n }, authorUnit_(this.b, r.author_id)));
       this.knownStages = {};
       (stg.results || []).forEach((r) => { (this.knownStages[r.team_id] = this.knownStages[r.team_id] || {})[r.stage] = r.n; });
       const b = this.b;
       (kn.results || []).forEach((r) => {
         const t = b.team[r.team_id]; const day = String(r.added || '').slice(0, 10);
-        if (!t || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+        if (!r.team_id) { const u = authorUnit_(b, r.author_id); this.log.push({ type: 'known', date: day, week: weekKey_(day), teamId: '', areaId: u.areaId, regionId: u.regionId, mode: '', count: 1, newT: 0, leaders: 0, hours: 0, inc: 0, spent: 0 }); return; }
+        if (!t) return;
         this.log.push({ type: 'known', date: day, week: weekKey_(day), teamId: r.team_id, areaId: t.areaId, regionId: b.teamRegion(r.team_id), mode: '', count: 1, newT: 0, leaders: 0, hours: 0, inc: 0, spent: 0 });
       });
       (fin.results || []).forEach((r) => {
@@ -327,6 +333,21 @@ class Store {
   }
   abort() { if (this.q.length && this.baseDirty) BASE = null; this.q = []; this.out = []; if (this.baseDirty) BASE = null; }
 }
+
+// одиниця автора для особистих записів: найвища не-командна роль; інакше — ерія його команди
+function authorUnit_(b, tgId) {
+  const act = b.roles.filter((r) => r.tgId === String(tgId) && r.status === ST.ACTIVE).sort((a, x) => a.rank - x.rank);
+  const up = act.filter((r) => r.level !== 'team')[0];
+  if (up) {
+    if (up.level === 'area') return { areaId: up.unitId, regionId: (b.area[up.unitId] || {}).regionId || '' };
+    if (up.level === 'region') return { areaId: '', regionId: up.unitId };
+    return { areaId: '', regionId: '' };
+  }
+  const tm = act.filter((r) => r.level === 'team' && b.team[r.unitId])[0];
+  if (tm) { const t = b.team[tm.unitId]; return { areaId: t.areaId, regionId: (b.area[t.areaId] || {}).regionId || '' }; }
+  return { areaId: '', regionId: '' };
+}
+const selfKnown_ = (scope, stage) => (S.knownSelf || []).filter((r) => (!stage || r.stage === stage) && upperRowIn_(scope, { teamId: '', areaId: r.areaId, regionId: r.regionId })).reduce((a, r) => a + r.n, 0);
 
 function indexBase(b) {
   b.region = {}; b.area = {}; b.team = {};
@@ -559,7 +580,8 @@ API.me = function (c) {
     structure: {
       regions: st.regions.map((r) => ({ id: r.id, name: r.name })),
       areas: st.areas.map((a) => ({ id: a.id, regionId: a.regionId, name: a.name })),
-      teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name })),
+      teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name, dir: t.dir })),
+      dirs: DIRS,
     },
     roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank })),
     roles: c.allRoles.filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING).map(roleOut_),
@@ -1044,7 +1066,7 @@ API.structureTree = function (c) {
     const editAreas = canEditAreas_(c, rg.id);
     const areas = st.areas.filter((a) => a.regionId === rg.id && (editAreas || canEditTeams_(c, a.id))).map((a) => ({
       id: a.id, name: a.name, canEditTeams: canEditTeams_(c, a.id),
-      teams: st.teams.filter((t) => t.areaId === a.id).map((t) => ({ id: t.id, name: t.name, state: t.state, people: Object.keys(people[t.id] || {}).length }))
+      teams: st.teams.filter((t) => t.areaId === a.id).map((t) => ({ id: t.id, name: t.name, state: t.state, dir: t.dir, people: Object.keys(people[t.id] || {}).length }))
         .sort((x, y) => (x.state === 'closed') - (y.state === 'closed') || x.name.localeCompare(y.name)),
     })).sort((x, y) => x.name.localeCompare(y.name));
     return { id: rg.id, name: rg.name, canEditAreas: editAreas, areas: areas };
@@ -1124,6 +1146,7 @@ API.teamSave = function (c, d) {
       S.run('UPDATE teams SET name = ? WHERE id = ?', [name, t.id], true);
       t.name = name;
     }
+    if (d.dir != null && (d.dir === '' || DIRS.indexOf(d.dir) >= 0)) { S.run('UPDATE teams SET dir = ? WHERE id = ?', [d.dir, t.id], true); t.dir = d.dir; }
     if (d.state === 'active' || d.state === 'closed') {
       S.run('UPDATE teams SET state = ? WHERE id = ?', [d.state, t.id], true);
       t.state = d.state; t.active = d.state === 'active';
@@ -1135,7 +1158,11 @@ API.teamSave = function (c, d) {
   if (!canEditTeams_(c, areaId)) deny_('Ти не можеш створювати команди в цій ерії.');
   const name = cleanName_(d.name);
   if (st.teams.some((x) => x.areaId === areaId && x.name.toLowerCase() === name.toLowerCase())) bad_('Така команда в ерії вже є.');
-  return { id: createTeam_(areaId, name, true) };
+  const id = createTeam_(areaId, name, true);
+  const dir = DIRS.indexOf(d.dir) >= 0 ? d.dir : 'YoungLife';
+  S.run('UPDATE teams SET dir = ? WHERE id = ?', [dir, id], true);
+  st.team[id].dir = dir;
+  return { id: id };
 };
 
 // ── Моя команда в MyYL: дерево людей у межах відповідальності ──
@@ -1144,7 +1171,7 @@ API.myylTree = function (c) {
   const scopes = allowedScopes_(c);
   if (!scopes.length) deny_();
   const units = {};
-  scopes.forEach((s) => { units[s.key] = { key: s.key, level: s.level, id: s.unitId, name: s.name, sub: s.sub, children: [], people: [], parent: '' }; });
+  scopes.forEach((s) => { units[s.key] = { key: s.key, level: s.level, id: s.unitId, name: s.name, sub: s.sub, dir: s.level === 'team' ? (st.team[s.unitId] || {}).dir || '' : '', children: [], people: [], parent: '' }; });
   const parentKey = (u) => {
     if (u.level === 'team') return 'a:' + (st.team[u.id] || {}).areaId;
     if (u.level === 'area') return 'r:' + (st.area[u.id] || {}).regionId;
@@ -1240,8 +1267,8 @@ function reportRow_(teamIds, items, from, to, allowed, scope) {
       out[it] = { h: df(sum(a.filter(ok), (r) => r.hours)), p: nf(uniq_(a.filter(ok).map((r) => r.authorId)).length), none: nf(a.filter((r) => !ok(r)).length) };
     }
     if (it === 'known') {
-      out[it] = { total: nf(teamIds.reduce((x, id) => x + (Number((st.team[id] || {}).known) || 0), 0)), new: nf(of('known').length) };
-      STAGES.forEach((x) => { out[it][x[0]] = nf(stageSum_(teamIds, x[0])); });
+      out[it] = { total: nf(teamIds.reduce((x, id) => x + (Number((st.team[id] || {}).known) || 0), 0) + (scope ? selfKnown_(scope) : 0)), new: nf(of('known').length) };
+      STAGES.forEach((x) => { out[it][x[0]] = nf(stageSum_(teamIds, x[0]) + (scope ? selfKnown_(scope, x[0]) : 0)); });
     }
     if (it === 'finance') {
       const f = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= from.slice(0, 7) && r.date.slice(0, 7) <= to.slice(0, 7));
@@ -1476,7 +1503,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const df = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
 
   const clubs = of('club').filter(ok), mgs = of('mg').filter(ok), krs = of('kr').filter(ok);
-  const knownTotal = teamIds.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0);
+  const knownTotal = teamIds.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + selfKnown_(scope);
   const fin = rows.filter((r) => r.type === 'fin' && r.date.slice(0, 7) >= periodStart.slice(0, 7));
   // люди в командах: активні командні ролі
   const tRoles = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && inScope[r.unitId]);
@@ -1490,7 +1517,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
     club: [[nf(clubs.length), 'Клубів проведено'], [nf(sum(clubs, (r) => r.count)), 'Відвідувань підлітків'], [clubs.length ? df(sum(clubs, (r) => r.count) / clubs.length) : '—', 'Середньо на клубі'], [nf(sum(clubs, (r) => r.newT)), 'Нових підлітків']],
     mg: [[nf(mgs.length), 'Зустрічей малих груп'], [nf(sum(mgs, (r) => r.count)), 'Відвідувань'], [mgs.length ? df(sum(mgs, (r) => r.count) / mgs.length) : '—', 'Середньо на зустрічі'], [nf(sum(mgs, (r) => r.newT)), 'Нових учасників']],
     kr: [[df(sum(krs, (r) => r.hours)), 'Годин контактної роботи'], [df(sum(krs, (r) => r.hours) / P), 'Годин у середньому за тиждень'], [nf(uniq_(krs.map((r) => r.authorId)).length), 'Людей вносили КР'], [nf(of('kr').filter((r) => !ok(r)).length), 'Відміток «не було»']],
-    known: [[nf(knownTotal), 'Знаних по імені'], [nf(of('known').length), 'Нових за період']].concat(STAGES.map((x) => [nf(stageSum_(teamIds, x[0])), x[1]])),
+    known: [[nf(knownTotal), 'Знаних по імені'], [nf(of('known').length), 'Нових за період']].concat(STAGES.map((x) => [nf(stageSum_(teamIds, x[0]) + selfKnown_(scope, x[0])), x[1]])),
     finance: [[nf(sum(fin, (r) => r.inc)) + ' ₴', 'Надійшло'], [nf(sum(fin, (r) => r.spent)) + ' ₴', 'Витрачено'], [nf(sum(fin, (r) => r.inc - r.spent)) + ' ₴', 'Різниця'], [nf(uniq_(fin.map((r) => r.teamId)).length), 'Команд здали звіт']],
   };
   const metric = {
@@ -1539,7 +1566,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const reported = {};
   loadLog_().forEach((r) => { if (r.week === nowWk && r.type === repType && inScope[r.teamId]) reported[r.teamId] = true; });
   const breakdown = groups.map((g) => {
-    const v = cat === 'people' ? (g.count != null ? g.count : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) : sum(dd_(inPAll.filter(g.test)), metric);
+    const v = cat === 'people' ? (g.count != null ? g.count : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + (g.key && g.key.indexOf('t:') !== 0 ? selfKnown_(Object.assign(keyUnit_(g.key), {}), '') : 0) : sum(dd_(inPAll.filter(g.test)), metric);
     const row = { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
     if (cat === 'people' && g.teams) row.sub = g.teams.length + (g.teams.length === 1 ? ' команда' : ' команд');
     if (g.teams && cat !== 'people') { row.total = g.teams.length; row.done = g.teams.filter((id) => reported[id]).length; row.teams = g.teams.length; }
