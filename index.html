@@ -21,6 +21,20 @@
 <body>
 <div id="app"><div class="loader"><div class="spin"></div>Завантаження…</div></div>
 <script src="config.js?v=3"></script>
-<script src="app.js?v=44"></script>
+<script>
+  // свіжа версія без очікування кешу: номер беремо з version.json (не кешується), інакше — вбудований
+  (function () {
+    var FALLBACK = { app: 45, css: 10 }, done = false;
+    function go(v) {
+      if (done) return; done = true;
+      if (v.css && v.css !== FALLBACK.css) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'styles.css?v=' + v.css; document.head.appendChild(l); }
+      var s = document.createElement('script'); s.src = 'app.js?v=' + (v.app || FALLBACK.app); document.body.appendChild(s);
+    }
+    try {
+      fetch('version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(go, function () { go(FALLBACK); });
+      setTimeout(function () { go(FALLBACK); }, 2500);
+    } catch (e) { go(FALLBACK); }
+  })();
+</script>
 </body>
 </html>
