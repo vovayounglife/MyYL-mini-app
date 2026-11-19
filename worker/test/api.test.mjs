@@ -673,6 +673,33 @@ ok(me.data.caps.report.mg.length === 1 && (await api(CAP, 'stats', {})).ok, 'д�
 await api(RD, 'permReset', { unit: 'r:r0', role: 'SUGAR' });
 await api(CAP, 'permReset', { unit: capPerm.unit, role: 'SUGAR' });
 
+
+// ── каса команди ──
+const curM = T.kyivDay(new Date()).slice(0, 7);
+let fx = await api(CAP, 'finTx', { teamId: capTeam.id });
+const bal0 = fx.data.balance;
+ok(fx.ok && typeof bal0 === 'number', 'каса: поточний баланс ' + bal0);
+r = await api(LEAD, 'finTx', { teamId: capTeam.id });
+ok(!r.ok, 'каса: лідер не веде касу');
+r = await api(RD, 'finTxAdd', { teamId: capTeam.id, kind: 'in', amount: 10 });
+ok(!r.ok, 'каса: регіональний лише переглядає');
+fx = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'in', src: 'office', amount: 200 });
+ok(fx.ok && fx.data.balance === bal0 + 200 && fx.data.items[0].srcLabel === 'Дав офіс', 'каса: дохід від офісу');
+r = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'out', amount: 120 });
+ok(!r.ok, 'каса: витрата без опису не приймається');
+fx = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'out', amount: 120.5, note: 'Піца на клуб' });
+ok(fx.ok && fx.data.balance === bal0 + 79.5 && fx.data.month.spent > 0, 'каса: витрата зменшила баланс');
+let fg = await api(RD, 'financeGet', { teamId: capTeam.id, month: curM });
+ok(fg.data.current.balance === bal0 + 79.5, 'каса: місячний звіт оновився');
+fx = await api(CAP, 'finTxDelete', { teamId: capTeam.id, id: fx.data.items.find((x) => x.kind === 'out').id });
+ok(fx.ok && fx.data.balance === bal0 + 200 && !fx.data.items.some((x) => x.kind === 'out'), 'каса: видалення повертає баланс');
+const prevMonthDay = (() => { const q = curM.split('-').map(Number); return new Date(Date.UTC(q[0], q[1] - 2, 15)).toISOString().slice(0, 10); })();
+fg = await api(CAP, 'financeGet', { teamId: capTeam.id, month: curM });
+const curNoPrev = fg.data.current.balance - fg.data.current.prev;
+fx = await api(CAP, 'finTxAdd', { teamId: capTeam.id, kind: 'in', src: 'church', amount: 50, date: prevMonthDay });
+fg = await api(CAP, 'financeGet', { teamId: capTeam.id, month: curM });
+ok(fx.ok && fg.data.current.prev === 50 && fx.data.balance === 50 + curNoPrev, 'каса: запис минулим місяцем переносить залишок');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

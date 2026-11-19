@@ -129,6 +129,7 @@ const NEEDS = {
   me: { log: 'week', events: true, tp: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
+  finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
@@ -163,6 +164,7 @@ async function handleApi(req, env, ctx) {
       if (isSingleTeam_(d)) await S.loadFinance(ids[0]);
       else await S.loadFinanceMonth(ids, /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : kyivDay(new Date()).slice(0, 7));
     }
+    if (need.ftx) await S.loadFinTx(str_(d.teamId));
     if (need.bc) await S.loadBroadcasts();
     if (need.tp) await S.loadTP();
     if (need.usage) await S.loadTeamUsage(str_(d.id));
@@ -296,6 +298,10 @@ class Store {
     if (!ids.length) return;
     const rs = await this.db.prepare('SELECT * FROM finance WHERE month = ? AND team_id IN (SELECT value FROM json_each(?))').bind(month, JSON.stringify(ids)).all();
     (rs.results || []).forEach((r) => { this.finMonth[r.team_id] = r; });
+  }
+  async loadFinTx(teamId) {
+    const rs = await this.db.prepare('SELECT * FROM fin_tx WHERE team_id = ? ORDER BY date DESC, created DESC LIMIT 40').bind(teamId || '').all();
+    this.finTx = (rs.results || []).map((r) => ({ id: r.id, teamId: r.team_id, date: r.date, kind: r.kind, src: r.src || '', amount: Number(r.amount) || 0, note: r.note || '', authorId: r.author_id || '', author: r.author || '', created: r.created || '' }));
   }
   async loadFinance(teamId) {
     if (!teamId) return;
@@ -1061,6 +1067,72 @@ function financeOverview_(c, d) {
   }).sort((a, b) => (b.done - a.done) || a.area.localeCompare(b.area) || a.name.localeCompare(b.name));
   return { mode: 'overview', month: month, rows: rows, total: Object.assign(tot, { teams: teams.length }) };
 }
+
+// ── каса команди: окремі доходи й витрати, які одразу потрапляють у місячний звіт ──
+const FIN_SRC = { office: 'Дав офіс', church: 'Дала церква', team: 'Зібрала команда' };
+function finApply_(c, teamId, month, delta) {
+  const rows = (S.finance[teamId] = S.finance[teamId] || []);
+  let row = rows.filter((r) => r.month === month)[0];
+  if (!row) {
+    const before = rows.filter((r) => r.month < month).sort((a, b) => (a.month < b.month ? 1 : -1))[0];
+    row = { team_id: teamId, month: month, prev: before ? Number(before.balance) || 0 : 0, office: 0, church: 0, team: 0, spent: 0, balance: 0 };
+    rows.push(row);
+  }
+  ['office', 'church', 'team', 'spent'].forEach((k) => { row[k] = Math.round(((Number(row[k]) || 0) + (delta[k] || 0)) * 100) / 100; });
+  // перерахунок цього й наступних місяців: залишок переноситься далі
+  const asc = rows.slice().sort((a, b) => (a.month < b.month ? -1 : 1));
+  let prevBal = null;
+  asc.forEach((r) => {
+    if (r.month < month) { prevBal = Number(r.balance) || 0; return; }
+    if (r.month > month && prevBal != null) r.prev = prevBal;
+    r.balance = Math.round(((Number(r.prev) || 0) + (Number(r.office) || 0) + (Number(r.church) || 0) + (Number(r.team) || 0) - (Number(r.spent) || 0)) * 100) / 100;
+    prevBal = r.balance;
+    S.run('INSERT INTO finance (team_id, month, prev, office, church, team, spent, balance, author, updated) VALUES (?,?,?,?,?,?,?,?,?,?) ' +
+      'ON CONFLICT (team_id, month) DO UPDATE SET prev = excluded.prev, office = excluded.office, church = excluded.church, team = excluded.team, spent = excluded.spent, balance = excluded.balance, author = excluded.author, updated = excluded.updated',
+    [teamId, r.month, r.prev || 0, r.office || 0, r.church || 0, r.team || 0, r.spent || 0, r.balance, c.name, nowIso()]);
+  });
+}
+const finDelta_ = (t, sign) => (t.kind === 'out' ? { spent: sign * t.amount } : { [FIN_SRC[t.src] ? t.src : 'team']: sign * t.amount });
+API.finTx = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!canFinEdit_(c, teamId)) deny_('Касу команди ведуть Капітан і Адмін команди.');
+  const rows = (S.finance[teamId] || []).map(finOut_).sort((a, b) => (a.month < b.month ? 1 : -1));
+  const month = kyivDay(new Date()).slice(0, 7);
+  const cur = rows.filter((r) => r.month === month)[0];
+  return {
+    teamId: teamId,
+    balance: rows.length ? rows[0].balance : 0,
+    month: { label: month, inc: cur ? cur.office + cur.church + cur.team : 0, spent: cur ? cur.spent : 0 },
+    items: (S.finTx || []).map((t) => ({ id: t.id, date: t.date, kind: t.kind, src: t.src, srcLabel: t.kind === 'in' ? FIN_SRC[t.src] || '' : '', amount: t.amount, note: t.note, author: t.author })),
+  };
+};
+API.finTxAdd = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!canFinEdit_(c, teamId)) deny_('Касу команди ведуть Капітан і Адмін команди.');
+  const amount = Math.round(Number(d.amount) * 100) / 100;
+  if (!isFinite(amount) || amount <= 0) bad_('Вкажи суму більше нуля.');
+  if (amount > 10000000) bad_('Завелика сума.');
+  const kind = d.kind === 'out' ? 'out' : 'in';
+  const today = kyivDay(new Date());
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') && d.date <= today ? d.date : today;
+  const t = { id: uid_(), teamId: teamId, date: date, kind: kind, src: kind === 'in' ? (FIN_SRC[d.src] ? d.src : 'team') : '', amount: amount, note: clip_(d.note).slice(0, 300), authorId: c.id, author: c.name, created: nowIso() };
+  if (kind === 'out' && !t.note) bad_('Напиши, на що витратили.');
+  S.run('INSERT INTO fin_tx (id, team_id, date, kind, src, amount, note, author_id, author, created) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [t.id, teamId, t.date, t.kind, t.src, t.amount, t.note, t.authorId, t.author, t.created]);
+  finApply_(c, teamId, date.slice(0, 7), finDelta_(t, 1));
+  S.finTx = [t].concat(S.finTx || []).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.created < b.created ? 1 : -1)).slice(0, 40);
+  return API.finTx(c, d);
+};
+API.finTxDelete = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!canFinEdit_(c, teamId)) deny_();
+  const t = (S.finTx || []).filter((x) => x.id === str_(d.id))[0];
+  if (!t) bad_('Запис не знайдено — онови сторінку.');
+  S.run('DELETE FROM fin_tx WHERE id = ?', [t.id]);
+  finApply_(c, teamId, t.date.slice(0, 7), finDelta_(t, -1));
+  S.finTx = S.finTx.filter((x) => x.id !== t.id);
+  return API.finTx(c, d);
+};
 
 API.financeSave = function (c, d) {
   const teamId = str_(d.teamId);

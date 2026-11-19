@@ -63,3 +63,7 @@ CREATE TABLE IF NOT EXISTS poll_votes (poll_id TEXT NOT NULL, tg_id TEXT NOT NUL
 
 -- дозволи й доступ
 CREATE TABLE IF NOT EXISTS perms (unit TEXT NOT NULL, role_key TEXT NOT NULL, perm TEXT NOT NULL, val INTEGER NOT NULL, by_name TEXT, updated TEXT, PRIMARY KEY (unit, role_key, perm));
+
+-- каса команди
+CREATE TABLE IF NOT EXISTS fin_tx (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, date TEXT NOT NULL, kind TEXT NOT NULL, src TEXT, amount REAL NOT NULL, note TEXT, author_id TEXT, author TEXT, created TEXT);
+CREATE INDEX IF NOT EXISTS fin_tx_team ON fin_tx (team_id, date);

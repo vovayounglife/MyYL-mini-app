@@ -99,6 +99,7 @@
     myyl: { data: null, at: null, open: null },
     rep: { units: {}, items: {}, preset: 'month', from: '', to: '', split: false, data: null, busy: false },
     perms: { unit: '', role: '', data: null, busy: false },
+    fx: { teamId: '', data: null, kind: 'in', src: 'team', amount: '', note: '', date: '', busy: false },
     tasks: { data: null, tab: 'mine', open: null, form: null, note: '' },
     polls: { data: null, tab: 'open', form: null, sel: {}, showNot: {} },
     bc: { info: null, text: '', roles: [], pending: false, count: null, button: true, sending: false },
@@ -223,7 +224,7 @@
     if (screen === 'home' && !S.events) loadEvents();
     if (screen === 'calendar' && S.events) { /* показуємо, що є, і тихо оновлюємо */ }
     if (screen === 'calendar') { S.ev = o.ev || null; S.evForm = null; loadEvents(); }
-    if (screen === 'add') { if (o.type) S.addKnown = false; initAdd(o.type, o.teamId); }
+    if (screen === 'add') { if (o.type) { S.addKnown = false; S.addFin = false; } S.fx.data = null; initAdd(o.type, o.teamId); }
     if (screen === 'stats') { if (o.scope) setPick('stats', o.scope); ensurePick('stats'); if (o.cat) S.stats.cat = o.cat; loadStats(); }
     if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.bulk = null; if (S.known.mode === 'browse') ensurePick('known', ownTeamKeys('known')); loadKnown(); }
     if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
@@ -497,8 +498,11 @@
     const c = caps(), a = S.add;
     const types = TYPES.filter((t) => canType(t.k));
     const kn = canKnownAdd();
+    const fin = (c.financeEdit || []).length > 0;
+    const showFin = fin && (S.addFin || (!types.length && !kn));
     let h = header('Внести');
-    if (types.length + (kn ? 1 : 0) > 1) h += `<div class="seg">${types.map((t) => `<button type="button" class="${a && t.k === a.type && !S.addKnown ? 'on' : ''}" data-a="addType" data-type="${t.k}">${t.short}</button>`).join('')}${kn ? `<button type="button" class="${S.addKnown || !types.length ? 'on' : ''}" data-a="addKnownTab">Знані</button>` : ''}</div>`;
+    if (types.length + (kn ? 1 : 0) + (fin ? 1 : 0) > 1) h += `<div class="seg">${types.map((t) => `<button type="button" class="${a && t.k === a.type && !S.addKnown && !showFin ? 'on' : ''}" data-a="addType" data-type="${t.k}">${t.short}</button>`).join('')}${kn ? `<button type="button" class="${!showFin && (S.addKnown || !types.length) ? 'on' : ''}" data-a="addKnownTab">Знані</button>` : ''}${fin ? `<button type="button" class="${showFin ? 'on' : ''}" data-a="addFinTab">Каса</button>` : ''}</div>`;
+    if (showFin) return h + finAddView();
     if (S.addKnown || !types.length) {
       if (!kn) return h + '<div class="empty">Для твоєї ролі немає що вносити</div>';
       return h + `<div class="card col"><h2>Знані по імені</h2><div class="small muted">Підлітки, яких ти знаєш по імені. Можна додати одного з контактами або одразу цілий список імен.</div>
@@ -956,6 +960,44 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     return h;
   };
   const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+
+  // ───────────── КАСА КОМАНДИ (у «Внести») ─────────────
+  const money = (n) => (Number(n) || 0).toLocaleString('uk-UA', { maximumFractionDigits: 2 }) + ' ₴';
+  const FIN_SRC = [['team', 'Зібрала команда'], ['office', 'Офіс'], ['church', 'Церква']];
+  async function loadFx() {
+    const F = S.fx, ids = caps().financeEdit || [];
+    if (ids.indexOf(F.teamId) < 0) F.teamId = ids[0] || '';
+    if (!F.teamId) return;
+    F.loading = true; F.err = '';
+    try { F.data = await api('finTx', { teamId: F.teamId }); } catch (e) { F.err = e.message; }
+    F.loading = false;
+    if (S.screen === 'add' && S.addFin) render();
+  }
+  function finAddView() {
+    const F = S.fx, ids = caps().financeEdit || [];
+    if (!F.date) F.date = ymd(new Date());
+    let h = teamSelect(ids, F.teamId, 'fxTeam');
+    if (F.err) return h + `<div class="empty">${esc(F.err)}</div>`;
+    if (!F.data || F.data.teamId !== F.teamId) { if (!F.loading) loadFx(); return h + loading(); }
+    const D = F.data;
+    h += `<div class="card col" style="gap:4px;text-align:center"><div class="small muted">Каса команди${ids.length > 1 ? ' · ' + esc(teamName(F.teamId)) : ''}</div>
+      <div class="b" style="font-size:32px;${D.balance < 0 ? 'color:var(--coral)' : ''}">${money(D.balance)}</div>
+      <div class="small muted">Цього місяця: <b style="color:var(--teal)">+${money(D.month.inc)}</b> · <b>−${money(D.month.spent)}</b></div></div>`;
+    h += `<div class="card col"><div class="seg"><button type="button" class="${F.kind === 'in' ? 'on' : ''}" data-a="fxKind" data-v="in">+ Дохід</button><button type="button" class="${F.kind === 'out' ? 'on' : ''}" data-a="fxKind" data-v="out">− Витрата</button></div>
+      <label class="f"><span>Сума, ₴</span><input class="in" type="text" inputmode="decimal" autocomplete="off" data-bind="fx.amount" value="${esc(F.amount)}" placeholder="0"></label>
+      ${F.kind === 'in' ? `<div class="f"><span>Звідки</span><div class="pills">${FIN_SRC.map((x) => `<button type="button" class="pill${F.src === x[0] ? ' on' : ''}" data-a="fxSrc" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>` : ''}
+      <label class="f"><span>${F.kind === 'out' ? 'На що витратили' : 'Коментар (необовʼязково)'}</span><input class="in" type="text" maxlength="300" data-bind="fx.note" value="${esc(F.note)}" placeholder="${F.kind === 'out' ? 'Наприклад: піца на клуб' : 'Наприклад: пожертва після служіння'}"></label>
+      <label class="f"><span>Дата</span><input class="in" type="date" data-bind="fx.date" value="${esc(F.date)}" max="${ymd(new Date())}"></label>
+      <button type="button" class="btn" data-a="fxAdd"${F.busy ? ' disabled' : ''}>${F.kind === 'out' ? 'Записати витрату' : 'Записати дохід'}</button>
+      <div class="xs muted">Кожен запис одразу потрапляє в місячний фінансовий звіт команди.</div></div>`;
+    if (D.items.length) {
+      h += `<div class="sec">Останні записи</div><div class="card list">${D.items.map((t) => `<div class="li" style="cursor:default"><span class="grow"><span class="b" style="display:block;color:${t.kind === 'in' ? 'var(--teal)' : 'var(--coral)'}">${t.kind === 'in' ? '+' : '−'}${money(t.amount)}</span>
+        <span class="xs muted">${esc(fmtShortDay(t.date))} · ${esc([t.srcLabel, t.note].filter(Boolean).join(' · '))}${t.author ? ' · ' + esc(t.author) : ''}</span></span>
+        <button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="fxDel" data-id="${esc(t.id)}" aria-label="Видалити запис">✕</button></div>`).join('')}</div>`;
+    }
+    h += '<button type="button" class="link-btn" data-a="tabGo" data-s="finance">Місячний фінансовий звіт →</button>';
+    return h;
+  }
 
   // ───────────── ДОЗВОЛИ Й ДОСТУП ─────────────
   const PERM_GROUPS = [['rep', 'Які звіти заповнювати'], ['see', 'Що бачити'], ['part', 'У чому брати участь']];
@@ -1510,8 +1552,28 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // внесення
   A.openAdd = (d) => go('add', { type: d.type, teamId: d.team });
-  A.addType = (d) => { S.addKnown = false; initAdd(d.type, S.add && S.add.teamId); render(); };
-  A.addKnownTab = () => { S.addKnown = true; render(); };
+  A.addFinTab = () => { S.addFin = true; S.addKnown = false; render(); };
+  A.fxTeam = (d, el) => { S.fx.teamId = el.value; S.fx.data = null; S.fx.err = ''; render(); };
+  A.fxKind = (d) => { S.fx.kind = d.v; render(); };
+  A.fxSrc = (d) => { S.fx.src = d.v; render(); };
+  A.fxAdd = async () => {
+    const F = S.fx, amount = Number(String(F.amount).replace(',', '.'));
+    if (!(amount > 0)) return toast('Вкажи суму');
+    if (F.kind === 'out' && !String(F.note).trim()) return toast('Напиши, на що витратили');
+    F.busy = true; render();
+    const res = await run(() => api('finTxAdd', { teamId: F.teamId, kind: F.kind, src: F.src, amount: amount, note: F.note, date: F.date }), F.kind === 'out' ? 'Витрату записано' : 'Дохід записано');
+    F.busy = false;
+    if (res) { F.data = res; F.amount = ''; F.note = ''; }
+    render();
+  };
+  A.fxDel = (d) => {
+    const F = S.fx, t = F.data.items.filter((x) => x.id === d.id)[0];
+    const doIt = async () => { const res = await run(() => api('finTxDelete', { teamId: F.teamId, id: d.id }), 'Запис видалено'); if (res) { F.data = res; render(); } };
+    const msg = 'Видалити запис ' + (t.kind === 'in' ? '+' : '−') + money(t.amount) + '? Баланс каси перерахується.';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
+  A.addType = (d) => { S.addFin = false; S.addKnown = false; initAdd(d.type, S.add && S.add.teamId); render(); };
+  A.addKnownTab = () => { S.addKnown = true; S.addFin = false; render(); };
   A.addKnownGo = (d) => { S.known.mode = 'mine'; S.known.detail = null; go('known'); if (d.m === 'bulk') A.knownBulkOpen(); else A.knownNew(); };
   A.addMode = (d) => { S.add.mode = d.m; render(); };
   A.step = (d) => { const a = S.add; a[d.k] = Math.max(0, Math.round(((Number(a[d.k]) || 0) + Number(d.d)) * 2) / 2); render(); };
