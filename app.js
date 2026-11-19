@@ -51,6 +51,7 @@
     check: 'M20 6L9 17l-5-5',
     doc: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5',
     phoneApp: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2',
+    bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
     tree: 'M12 3v6M12 9H5v5M12 9h7v5M3 14h4v4H3zM17 14h4v4h-4zM10 14h4v4h-4zM12 9v5',
     send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
@@ -213,7 +214,7 @@
     if (screen === 'home' && !S.events) loadEvents();
     if (screen === 'calendar' && S.events) { /* показуємо, що є, і тихо оновлюємо */ }
     if (screen === 'calendar') { S.ev = o.ev || null; S.evForm = null; loadEvents(); }
-    if (screen === 'add') initAdd(o.type, o.teamId);
+    if (screen === 'add') { if (o.type) S.addKnown = false; initAdd(o.type, o.teamId); }
     if (screen === 'stats') { if (o.scope) setPick('stats', o.scope); ensurePick('stats'); if (o.cat) S.stats.cat = o.cat; loadStats(); }
     if (screen === 'known') { S.known.detail = null; S.known.edit = null; S.known.bulk = null; if (S.known.mode === 'browse') ensurePick('known', ownTeamKeys('known')); loadKnown(); }
     if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
@@ -369,9 +370,12 @@
       <button class="btn" type="button" data-a="reload">Спробувати ще раз</button></div></main>`;
   }
 
+  // клуб — за команду; МГ і КР — за себе (у свої команди або, для вищих ролей, на рівень своєї ерії/регіону)
+  const canType = (t) => { const c = caps(); return t === 'club' ? (c.report.club || []).length > 0 : !!((c.reportSelf || {})[t] || (c.report[t] || []).length); };
+  const canKnownAdd = () => (caps().knownEditTeams || []).length > 0 || !!caps().knownNoTeam;
   function navHtml() {
     const c = caps();
-    const canReport = ['club', 'mg', 'kr'].some((t) => (c.report[t] || []).length);
+    const canReport = ['club', 'mg', 'kr'].some(canType) || canKnownAdd();
     const tabs = [['home', 'Головна'], ['add', 'Внести'], ['calendar', 'Календар'], ['stats', 'Статистика'], ['more', 'Ще']]
       .filter((t) => (t[0] !== 'add' || canReport) && (t[0] !== 'stats' || (S.me.scopes || []).length));
     const active = TOP.indexOf(S.screen) >= 0 ? S.screen : 'more';
@@ -406,7 +410,7 @@
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
     }
-    const quick = TYPES.filter((t) => (c.report[t.k] || []).length);
+    const quick = TYPES.filter((t) => canType(t.k));
     if (quick.length && items.length) {
       h += `<div class="sec">Швидко внести</div><div class="grid3">${quick.map((t) =>
         `<button type="button" class="tile" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}</button>`).join('')}</div>`;
@@ -443,7 +447,7 @@
   // ───────────── ВНЕСТИ ─────────────
   function initAdd(type, teamId) {
     const c = caps();
-    const types = TYPES.filter((t) => (c.report[t.k] || []).length).map((t) => t.k);
+    const types = TYPES.filter((t) => canType(t.k)).map((t) => t.k);
     const t = types.indexOf(type) >= 0 ? type : (S.add && types.indexOf(S.add.type) >= 0 ? S.add.type : types[0]);
     const teams = (c.report[t] || []);
     S.add = {
@@ -458,12 +462,20 @@
   };
   VIEWS.add = function () {
     const c = caps(), a = S.add;
-    if (!a || !a.type) return header('Новий запис') + '<div class="empty">Для твоєї ролі немає звітів</div>';
-    const types = TYPES.filter((t) => (c.report[t.k] || []).length);
-    let h = header('Новий запис');
-    if (types.length > 1) h += `<div class="seg">${types.map((t) => `<button type="button" class="${t.k === a.type ? 'on' : ''}" data-a="addType" data-type="${t.k}">${t.short}</button>`).join('')}</div>`;
+    const types = TYPES.filter((t) => canType(t.k));
+    const kn = canKnownAdd();
+    let h = header('Внести');
+    if (types.length + (kn ? 1 : 0) > 1) h += `<div class="seg">${types.map((t) => `<button type="button" class="${a && t.k === a.type && !S.addKnown ? 'on' : ''}" data-a="addType" data-type="${t.k}">${t.short}</button>`).join('')}${kn ? `<button type="button" class="${S.addKnown || !types.length ? 'on' : ''}" data-a="addKnownTab">Знані</button>` : ''}</div>`;
+    if (S.addKnown || !types.length) {
+      if (!kn) return h + '<div class="empty">Для твоєї ролі немає що вносити</div>';
+      return h + `<div class="card col"><h2>Знані по імені</h2><div class="small muted">Підлітки, яких ти знаєш по імені. Можна додати одного з контактами або одразу цілий список імен.</div>
+        <button type="button" class="btn" data-a="addKnownGo" data-m="one">${icon('plus', 18)} Додати одного</button>
+        <button type="button" class="btn sec2" data-a="addKnownGo" data-m="bulk">Додати списком</button>
+        <button type="button" class="link-btn" data-a="tabGo" data-s="known">Відкрити мій список знаних →</button></div>`;
+    }
+    if (!a || !a.type) return h + '<div class="empty">Для твоєї ролі немає звітів</div>';
     if (a.type === 'club') h += teamSelect(c.report[a.type], a.teamId, 'addTeam');
-    else { const ts = c.report[a.type] || []; h += `<div class="small muted">Вносиш за себе · зараховується ${ts.length > 1 ? 'всім твоїм командам: ' : 'команді '}<b>${esc(ts.map(teamName).join(', '))}</b></div>`; }
+    else { const ts = c.report[a.type] || []; h += `<div class="small muted">Вносиш за себе · зараховується ${ts.length ? (ts.length > 1 ? 'всім твоїм командам: ' : 'команді ') + '<b>' + esc(ts.map(teamName).join(', ')) + '</b>' : '<b>' + esc((c.reportSelf || {}).unit || '') + '</b>'}</div>`; }
     h += `<div class="pills">${[['event', 'Окрема подія'], ['week', 'Підсумок тижня']].map((m) => `<button type="button" class="pill${a.mode === m[0] ? ' on' : ''}" data-a="addMode" data-m="${m[0]}">${m[1]}</button>`).join('')}</div>`;
     h += '<div class="card rows">';
     h += a.mode === 'event'
@@ -991,16 +1003,37 @@
     return h;
   };
 
+  // ───────────── СПОВІЩЕННЯ ─────────────
+  VIEWS.notif = function () {
+    const m = me();
+    let h = header('Сповіщення', 'Що бот надсилає тобі в Telegram');
+    const N = (m.profile && m.profile.notif) || {};
+    const NL = [['bc', 'Розсилки від інших', 'повідомлення «Написати» від керівників'], ['remind', 'Нагадування про звіти', 'якщо щось не внесено за тиждень'], ['events', 'Нагадування про події', 'на які ти записався']].concat(caps().approve ? [['requests', 'Нові заявки на ролі', 'коли хтось чекає твого підтвердження']] : []);
+    h += `<div class="card list">${NL.map((x) => `<label class="check" style="min-height:58px"><span class="grow"><span class="b" style="display:block">${x[1]}</span><span class="xs muted">${x[2]}</span></span><input type="checkbox" data-ch="notifToggle" data-k="${x[0]}"${N[x[0]] !== false ? ' checked' : ''}></label>`).join('')}</div>`;
+    h += '<div class="xs muted">Вимкнене сповіщення не зникає з застосунку: заявки, події й звіти так само видно тут.</div>';
+    return h;
+  };
+
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
     const c = caps();
-    const items = sectionTiles().map((t) => ({ k: t.k, label: t.label, sub: t.sub, icon: t.icon, ic: t.ic }));
-    if (c.approve) items.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
-    if ((c.reportItems || []).length) items.push({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
-    items.push({ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' });
-    items.push({ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' });
-    return header('Ще') + `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
+    const tiles = sectionTiles().filter((t) => t.k !== 'broadcast');
+    const team = tiles.filter((t) => ['myyl', 'known', 'team', 'finance'].indexOf(t.k) >= 0);
+    const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
+    if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
+    const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
+    const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
+    if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
+    mine.push({ k: 'notif', label: 'Сповіщення', sub: 'що бот надсилає тобі', icon: 'bell', ic: 'ic-yellow' });
+    if (c.broadcast) mine.push({ k: 'broadcast', label: 'Написати', sub: c.isSuper ? 'усім або вибраним у боті' : 'своїм людям у боті', icon: 'send', ic: 'ic-coral' });
+    const list = (items) => `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
+    let h = header('Ще');
+    if (team.length) h += '<div class="sec">Команда</div>' + list(team);
+    if (manage.length) h += '<div class="sec">Звіти й структура</div>' + list(manage);
+    h += '<div class="sec">Застосунок</div>' + list(app);
+    h += '<div class="sec">Особисте</div>' + list(mine);
+    return h;
   };
 
   // ───────────── ЗНАНІ ПО ІМЕНІ ─────────────
@@ -1176,9 +1209,6 @@
     const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
-    const N = (m.profile && m.profile.notif) || {};
-    const NL = [['bc', 'Розсилки від інших', 'повідомлення «Написати» від керівників'], ['remind', 'Нагадування про звіти', 'якщо щось не внесено за тиждень'], ['events', 'Нагадування про події', 'на які ти записався']].concat(caps().approve ? [['requests', 'Нові заявки на ролі', 'коли хтось чекає твого підтвердження']] : []);
-    h += `<div class="sec">Сповіщення в боті</div><div class="card list">${NL.map((x) => `<label class="check" style="min-height:58px"><span class="grow"><span class="b" style="display:block">${x[1]}</span><span class="xs muted">${x[2]}</span></span><input type="checkbox" data-ch="notifToggle" data-k="${x[0]}"${N[x[0]] !== false ? ' checked' : ''}></label>`).join('')}</div>`;
     return h;
   };
 
@@ -1262,7 +1292,9 @@
 
   // внесення
   A.openAdd = (d) => go('add', { type: d.type, teamId: d.team });
-  A.addType = (d) => { initAdd(d.type, S.add && S.add.teamId); render(); };
+  A.addType = (d) => { S.addKnown = false; initAdd(d.type, S.add && S.add.teamId); render(); };
+  A.addKnownTab = () => { S.addKnown = true; render(); };
+  A.addKnownGo = (d) => { S.known.mode = 'mine'; S.known.detail = null; go('known'); if (d.m === 'bulk') A.knownBulkOpen(); else A.knownNew(); };
   A.addMode = (d) => { S.add.mode = d.m; render(); };
   A.step = (d) => { const a = S.add; a[d.k] = Math.max(0, Math.round(((Number(a[d.k]) || 0) + Number(d.d)) * 2) / 2); render(); };
   A.addTeam = (d, el) => { S.add.teamId = el.value; S.add.att = {}; render(); if (S.add.mark && !S.knownCache[S.add.teamId]) A.addMark(null, { checked: true }); };

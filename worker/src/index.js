@@ -508,6 +508,21 @@ function ownTeams_(c, maxRank) {
   const st = loadStruct_();
   return uniq_(c.roles.filter((r) => r.level === 'team' && r.rank <= maxRank && st.team[r.unitId] && st.team[r.unitId].active).map((r) => r.unitId));
 }
+// вища роль без команди: особистий запис МГ/КР іде на рівень її одиниці (ерія / регіон / Україна)
+function upperSelfUnit_(c) {
+  const r = c.roles.filter((x) => x.level !== 'team').sort((a, b) => a.rank - b.rank)[0];
+  return r ? { level: r.level, unitId: r.unitId } : null;
+}
+const canSelf_ = (c, rank) => ownTeams_(c, rank).length > 0 || !!upperSelfUnit_(c);
+// записи без команди (вищі ролі) — враховуються в підсумках їхньої ерії / регіону / України
+function upperRowIn_(scope, r) {
+  if (r.teamId) return false;
+  if (scope.level === 'multi') return scope.members.some((m) => upperRowIn_(m, r));
+  if (scope.level === 'nat') return true;
+  if (scope.level === 'region') return r.regionId === scope.unitId;
+  if (scope.level === 'area') return r.areaId === scope.unitId;
+  return false;
+}
 // особисті записи (МГ/КР) зберігаються в кожній команді людини з одним pid — у підсумках рахуємо один раз
 function dd_(arr) { const seen = {}; return arr.filter((r) => { if (!r.pid) return true; if (seen[r.pid]) return false; seen[r.pid] = 1; return true; }); }
 
@@ -551,6 +566,7 @@ API.me = function (c) {
   c.roles.forEach((r) => { if (r.level === 'team' && st.team[r.unitId]) myTeams[r.unitId] = true; });
   out.caps = {
     report: { club: clubTeams_(c), mg: ownTeams_(c, RANK.MG), kr: ownTeams_(c, RANK.KR) },
+    reportSelf: { mg: canSelf_(c, RANK.MG), kr: canSelf_(c, RANK.KR), unit: (() => { const u = !ownTeams_(c, RANK.KR).length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
     knownTeams: reportTeams_(c, RANK.KNOWN),
     knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && r.rank <= RANK.KNOWN && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
     knownNoTeam: canNoTeam_(c),
@@ -678,8 +694,10 @@ API.saveReport = function (c, d) {
   const rank = { club: RANK.CLUB, mg: RANK.MG, kr: RANK.KR }[type];
   if (!rank) bad_('Невідомий тип звіту.');
   const personal = type !== 'club';
-  const teams = personal ? ownTeams_(c, rank) : [str_(d.teamId)];
-  if (personal && !teams.length) deny_(type === 'mg' ? 'Малу групу вносить сам лідер — для цього потрібна роль Лідера (або вища) у команді.' : 'Контактну роботу кожен вносить за себе — для цього потрібна роль у команді.');
+  let teams = personal ? ownTeams_(c, rank) : [str_(d.teamId)];
+  const upper = personal && !teams.length ? upperSelfUnit_(c) : null;
+  if (personal && !teams.length && !upper) deny_(type === 'mg' ? 'Малу групу вносить сам лідер — для цього потрібна роль Лідера (або вища).' : 'Контактну роботу кожен вносить за себе — для цього потрібна роль.');
+  if (upper) teams = [''];
   if (!personal && clubTeams_(c).indexOf(teams[0]) < 0) deny_('Клуб вносять Капітан, Адмін команди або Еріа Директор.');
   const mode = MODE[d.mode] ? d.mode : 'event';
   const today = kyivDay(new Date());
@@ -690,9 +708,11 @@ API.saveReport = function (c, d) {
   const st = loadStruct_();
   const pid = personal ? uid_() : null;
   teams.forEach((teamId) => {
-  const team = st.team[teamId];
+  const team = st.team[teamId] || {};
+  const areaId = teamId ? team.areaId : upper.level === 'area' ? upper.unitId : '';
+  const regionId = teamId ? st.teamRegion(teamId) : upper.level === 'region' ? upper.unitId : upper.level === 'area' ? (st.area[upper.unitId] || {}).regionId || '' : '';
   const row = {
-    id: uid_(), pid: pid, created: nowIso(), date: date, week: week, type: type, mode: MODE[mode], team_id: teamId, area_id: team.areaId, region_id: st.teamRegion(teamId),
+    id: uid_(), pid: pid, created: nowIso(), date: date, week: week, type: type, mode: MODE[mode], team_id: teamId, area_id: areaId, region_id: regionId,
     count: none || type === 'kr' ? 0 : n(d.teens), new_t: none || type === 'kr' ? 0 : n(d.newT), leaders: none || type !== 'club' ? 0 : n(d.leaders),
     hours: none || type !== 'kr' ? 0 : n(d.hours), topic: type === 'mg' ? clip_(d.topic) : '', note: clip_(d.note),
     attendees: (d.attendees || []).map(String).join(','), author_id: c.id, author: c.name,
@@ -1142,11 +1162,11 @@ function reportItems_(c) {
   return Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
 }
 
-function reportRow_(teamIds, items, from, to, allowed) {
+function reportRow_(teamIds, items, from, to, allowed, scope) {
   const st = loadStruct_();
   const inT = {};
   teamIds.forEach((id) => { inT[id] = true; });
-  const rows = dd_(loadLog_().filter((r) => inT[r.teamId]));
+  const rows = dd_(loadLog_().filter((r) => inT[r.teamId] || (scope && upperRowIn_(scope, r))));
   const inP = rows.filter((r) => r.date >= from && r.date <= to);
   const ok = (r) => r.mode !== MODE.none;
   const sum = (a, f) => a.reduce((x, r) => x + (Number(f(r)) || 0), 0);
@@ -1206,10 +1226,10 @@ API.report = function (c, d) {
     const s = byKey[k];
     const ids = scopeTeamIds_(s);
     ids.forEach((id) => { union[id] = true; });
-    rows.push({ name: LVL[s.level] + s.name, sub: s.sub, level: s.level, child: false, values: reportRow_(ids, items, from, to, allowedFor(s)) });
+    rows.push({ name: LVL[s.level] + s.name, sub: s.sub, level: s.level, child: false, values: reportRow_(ids, items, from, to, allowedFor(s), s) });
     if (d.split && s.level !== 'team') {
       Object.keys(byKey).map((x) => byKey[x]).filter((x) => x.parent === k).sort((a, b) => a.name.localeCompare(b.name)).forEach((ch) => {
-        rows.push({ name: LVL[ch.level] + ch.name, sub: '', level: ch.level, child: true, values: reportRow_(scopeTeamIds_(ch), items, from, to, allowedFor(ch)) });
+        rows.push({ name: LVL[ch.level] + ch.name, sub: '', level: ch.level, child: true, values: reportRow_(scopeTeamIds_(ch), items, from, to, allowedFor(ch), ch) });
       });
     }
   });
@@ -1217,7 +1237,7 @@ API.report = function (c, d) {
   if (keys.length > 1) {
     const allow = {};
     items.forEach((it) => { allow[it] = keys.every((k) => allowedFor(byKey[k])[it]); });
-    total = { name: 'Разом', values: reportRow_(Object.keys(union), items, from, to, allow) };
+    total = { name: 'Разом', values: reportRow_(Object.keys(union), items, from, to, allow, { level: 'multi', members: keys.map((k) => byKey[k]) }) };
   }
   const fmt = (k) => { const p = k.split('-'); return Number(p[2]) + '.' + p[1] + '.' + p[0]; };
   const out = {
@@ -1398,7 +1418,7 @@ function computeStats_(c, scope, cat, period, cats, scopes) {
   const chartWeeks = period === 'year' ? 52 : period === 'q' ? 13 : 8;
   const chartStart = addDaysKey_(nowWk, -7 * (chartWeeks - 1));
   const from = periodStart < chartStart ? periodStart : chartStart;
-  const rowsAll = loadLog_().filter((r) => inScope[r.teamId] && r.week >= from);
+  const rowsAll = loadLog_().filter((r) => (inScope[r.teamId] || upperRowIn_(scope, r)) && r.week >= from);
   const rows = dd_(rowsAll);
   const inP = rows.filter((r) => r.week >= periodStart);
   const inPAll = rowsAll.filter((r) => r.week >= periodStart);
@@ -1568,8 +1588,8 @@ function weekStatus_(c) {
   // МГ і КР — особисті: один пункт на людину, незалежно від кількості команд
   const own = Object.keys(teams);
   const addOwn = (type, max) => {
-    const tid = own.filter((id) => teams[id] <= max)[0];
-    if (!tid) return;
+    const tid = own.filter((id) => teams[id] <= max)[0] || (!own.some((id) => teams[id] <= max) && c.roles && upperSelfUnit_(c) ? '' : null);
+    if (tid == null) return;
     const mine = dd_(rows.filter((r) => r.type === type && r.authorId === c.id));
     const status = mine.some((r) => r.mode !== MODE.none) ? 'ok' : mine.length ? 'none' : 'missing';
     items.push({ type: type, teamId: tid, label: TYPE_LABEL[type], status: status, hours: type === 'kr' ? mine.reduce((a, r) => a + (Number(r.hours) || 0), 0) : 0 });
