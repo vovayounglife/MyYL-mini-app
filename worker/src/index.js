@@ -108,7 +108,7 @@ const NEEDS = {
   saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
-  structureTree: {}, areaSave: {}, teamSave: {}, stats: { log: 'stats' }, nudge: { log: 'week' },
+  structureTree: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
 };
 
@@ -140,6 +140,7 @@ async function handleApi(req, env, ctx) {
       else await S.loadFinanceMonth(ids, /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : kyivDay(new Date()).slice(0, 7));
     }
     if (need.bc) await S.loadBroadcasts();
+    if (need.usage) await S.loadTeamUsage(str_(d.id));
     const data = use(S, () => fn(ctx_(tgUser), d));
     await S.flush();
     return json({ ok: true, data: data });
@@ -268,6 +269,14 @@ class Store {
     if (!teamId) return;
     const rs = await this.db.prepare('SELECT * FROM finance WHERE team_id = ?').bind(teamId).all();
     this.finance[teamId] = rs.results || [];
+  }
+  async loadTeamUsage(id) {
+    const q = (sql) => this.db.prepare(sql).bind(id);
+    const [rep, kn, fin] = await this.db.batch([
+      q('SELECT COUNT(*) AS n FROM reports WHERE team_id = ?'), q('SELECT COUNT(*) AS n FROM known WHERE team_id = ? AND active = 1'), q('SELECT COUNT(*) AS n FROM finance WHERE team_id = ?'),
+    ]);
+    const n = (r) => ((r.results || [])[0] || {}).n || 0;
+    this.usage = { reports: n(rep), known: n(kn), finance: n(fin) };
   }
   async loadBroadcasts() {
     const [h, q] = await this.db.batch([
@@ -1063,6 +1072,44 @@ API.areaSave = function (c, d) {
   const a = { id: id, regionId: regionId, name: name };
   st.areas.push(a); st.area[id] = a;
   return { id: id };
+};
+
+// Видалити команду (напр., випадковий дубль). Порожню — одразу; з даними — лише перенісши все в іншу команду.
+API.teamDelete = function (c, d) {
+  const st = loadStruct_();
+  const t = st.team[str_(d.id)];
+  if (!t) bad_('Команду не знайдено.');
+  if (!canEditTeams_(c, t.areaId)) deny_('Ти не можеш видаляти цю команду.');
+  const roles = loadRoles_().filter((r) => r.level === 'team' && r.unitId === t.id && (r.status === ST.ACTIVE || r.status === ST.PENDING));
+  const u = Object.assign({ people: uniq_(roles.map((r) => r.tgId)).length }, S.usage || {});
+  const empty = !u.people && !u.reports && !u.known && !u.finance;
+  const targets = st.teams.filter((x) => x.id !== t.id && x.state !== 'closed' && canEditTeams_(c, x.areaId))
+    .map((x) => ({ id: x.id, name: x.name, area: (st.area[x.areaId] || {}).name || '', same: x.areaId === t.areaId }))
+    .sort((a, b) => (b.same - a.same) || a.area.localeCompare(b.area) || a.name.localeCompare(b.name));
+  if (d.dry) return { usage: u, empty: empty, targets: targets };
+  const into = str_(d.mergeInto);
+  if (!empty && !into) bad_('У команді є дані. Обери, в яку команду їх перенести.');
+  if (into) {
+    const tt = st.team[into];
+    if (!tt || into === t.id) bad_('Обери іншу команду.');
+    if (!canEditTeams_(c, tt.areaId)) deny_('Ти не можеш переносити в цю команду.');
+    const reg = st.teamRegion(into);
+    S.run('UPDATE roles SET unit_id = ? WHERE level = ? AND unit_id = ?', [into, 'team', t.id], true);
+    // якщо людина вже мала таку саму роль у цільовій команді — дубль знімаємо
+    S.run("UPDATE roles SET status = ? WHERE level = 'team' AND unit_id = ? AND status IN (?, ?) AND rowid NOT IN (SELECT MIN(rowid) FROM roles WHERE level = 'team' AND unit_id = ? AND status IN (?, ?) GROUP BY tg_id, role_key)",
+      [ST.REMOVED, into, ST.ACTIVE, ST.PENDING, into, ST.ACTIVE, ST.PENDING], true);
+    S.run('UPDATE reports SET team_id = ?, area_id = ?, region_id = ? WHERE team_id = ?', [into, tt.areaId, reg, t.id]);
+    S.run('UPDATE known SET team_id = ?, updated = ? WHERE team_id = ?', [into, nowIso(), t.id]);
+    S.run('UPDATE OR IGNORE finance SET team_id = ?, updated = ? WHERE team_id = ?', [into, nowIso(), t.id]);
+    S.run('DELETE FROM finance WHERE team_id = ?', [t.id]);
+    S.run("UPDATE events SET unit_id = ? WHERE level = 'team' AND unit_id = ?", [into, t.id]);
+    S.run('UPDATE events SET aud = REPLACE(aud, ?, ?) WHERE aud LIKE ?', [',t:' + t.id + ',', ',t:' + into + ',', '%,t:' + t.id + ',%']);
+    refreshKnownCount_(into);
+  } else {
+    S.run("UPDATE roles SET status = ? WHERE level = 'team' AND unit_id = ?", [ST.REMOVED, t.id], true);
+  }
+  S.run('DELETE FROM teams WHERE id = ?', [t.id], true);
+  return { ok: true, merged: !!into };
 };
 
 API.teamSave = function (c, d) {

@@ -184,7 +184,7 @@
     if (S.screen === 'known' && S.known.bulk) { S.known.bulk = null; return render(); }
     if (S.screen === 'known' && (S.known.detail || S.known.edit)) { if (S.known.edit && S.known.detail) S.known.edit = null; else { S.known.detail = null; S.known.edit = null; } return render(); }
     if (S.screen === 'profile' && S.roleReq) { S.roleReq = null; return render(); }
-    if (S.screen === 'structure' && S.structEdit) { S.structEdit = null; return render(); }
+    if (S.screen === 'structure' && (S.structEdit || S.structDelS)) { S.structEdit = null; S.structDelS = null; return render(); }
     if (S.screen === 'stats' && S.stats.find) { S.stats.find = false; return render(); }
     if (S.screen === 'myyl' && myylParent()) { S.myyl.at = myylParent(); S.myyl.open = null; render(); window.scrollTo(0, 0); return; }
     if (S.screen === 'onboarding' && S.reg.step > 1) { S.reg.step--; return render(); }
@@ -193,7 +193,7 @@
   }
   function canBack() {
     return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
-      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && S.structEdit) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
+      (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent());
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
   let histOn = false, histIgnore = false;
@@ -670,6 +670,7 @@
       h += `<div class="card col"><h2>${esc(title)}</h2><label class="f"><span>Назва</span><input class="in" type="text" data-bind="structEdit.name" value="${esc(e.name)}" maxlength="60"></label>
         <div class="row"><button type="button" class="btn sec2 sm" data-a="structCancel">Скасувати</button><button type="button" class="btn sm grow" data-a="structSave">Зберегти</button></div></div>`;
     }
+    if (S.structDelS) h += structDelView();
     if (!t) return h + loading();
     if (!t.length) return h + '<div class="empty">Немає ерій чи команд, якими ти керуєш</div>';
     const total = t.reduce((a, r) => a + r.areas.reduce((x, ar) => x + ar.teams.length, 0), 0);
@@ -690,7 +691,8 @@
               <span class="grow"><span class="b" style="display:block${tm.state === 'closed' ? ';opacity:.55' : ''}">${esc(tm.name)}</span><span class="xs muted">${tm.people} ${tm.people % 10 === 1 && tm.people % 100 !== 11 ? 'людина' : 'людей'}</span></span>${ST_TAG[tm.state]}
               ${a.canEditTeams ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structEditTeam" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}">Назва</button>
               ${tm.state === 'active' ? `<button type="button" class="btn ghost sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="closed" data-name="${esc(tm.name)}">Закрити</button>`
-                : `<button type="button" class="btn teal sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="active" data-name="${esc(tm.name)}">${tm.state === 'pending' ? 'Активувати' : 'Відкрити'}</button>`}` : ''}</div>`).join('')
+                : `<button type="button" class="btn teal sm" style="min-height:36px;padding:0 10px" data-a="structTeamState" data-id="${esc(tm.id)}" data-s="active" data-name="${esc(tm.name)}">${tm.state === 'pending' ? 'Активувати' : 'Відкрити'}</button>`}
+              <button type="button" class="icon-btn" style="width:36px;height:36px;color:var(--pink)" data-a="structDel" data-id="${esc(tm.id)}" data-name="${esc(tm.name)}" aria-label="Видалити команду ${esc(tm.name)}">✕</button>` : ''}</div>`).join('')
             : '<div class="small muted" style="padding:8px 0">Команд ще немає</div>';
           if (a.canEditTeams) h += `<button type="button" class="btn sec2 sm" style="width:100%;margin-top:8px" data-a="structNewTeam" data-id="${esc(a.id)}" data-name="${esc(a.name)}">+ Нова команда</button>`;
           h += '</div>';
@@ -1014,6 +1016,23 @@
     h += '<div class="xs muted">Вимкнене сповіщення не зникає з застосунку: заявки, події й звіти так само видно тут.</div>';
     return h;
   };
+
+  function structDelView() {
+    const x = S.structDelS;
+    let h = `<div class="card col" style="border:2px solid var(--pink)"><h2>Видалити команду «${esc(x.name)}»</h2>`;
+    if (!x.info) return h + loading() + '</div>';
+    const u = x.info.usage;
+    if (x.info.empty) {
+      h += '<div class="small muted">Команда порожня — у ній немає людей і даних.</div>';
+      h += `<div class="row"><button type="button" class="btn sec2 sm" data-a="structDelCancel">Скасувати</button><button type="button" class="btn sm grow" style="background:var(--pink)" data-a="structDelGo">Видалити</button></div>`;
+    } else {
+      h += `<div class="small">У команді є дані: ${[u.people ? u.people + ' люд.' : '', u.reports ? u.reports + ' звітів' : '', u.known ? u.known + ' знаних' : '', u.finance ? u.finance + ' фін. звітів' : ''].filter(Boolean).join(', ')}.</div>
+        <div class="small muted">Щоб нічого не загубилось, обери команду, куди все перенести (людей, звіти, знаних, фінанси й події). Потім ця команда видалиться.</div>
+        <label class="f"><span>Перенести в</span><select class="in" data-bind="structDelS.into"><option value="">— обери команду —</option>${x.info.targets.map((t) => `<option value="${esc(t.id)}"${x.into === t.id ? ' selected' : ''}>${esc(t.name)} · ${esc(t.area)}</option>`).join('')}</select></label>
+        <div class="row"><button type="button" class="btn sec2 sm" data-a="structDelCancel">Скасувати</button><button type="button" class="btn sm grow" style="background:var(--pink)" data-a="structDelGo">Перенести й видалити</button></div>`;
+    }
+    return h + '</div>';
+  }
 
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
@@ -1415,6 +1434,24 @@
   A.structEditArea = (d) => { S.structEdit = { kind: 'area', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
   A.structNewTeam = (d) => { S.structEdit = { kind: 'team', parentId: d.id, parentName: d.name, name: '' }; S.structOpen[d.id] = true; render(); window.scrollTo(0, 0); };
   A.structEditTeam = (d) => { S.structEdit = { kind: 'team', id: d.id, name: d.name }; render(); window.scrollTo(0, 0); };
+  A.structDel = async (d) => {
+    S.structEdit = null; S.structDelS = { id: d.id, name: d.name, info: null, into: '' }; render(); window.scrollTo(0, 0);
+    const r = await run(() => api('teamDelete', { id: d.id, dry: true }));
+    if (!r) { S.structDelS = null; return render(); }
+    if (S.structDelS && S.structDelS.id === d.id) { S.structDelS.info = r; render(); }
+  };
+  A.structDelCancel = () => { S.structDelS = null; render(); };
+  A.structDelGo = () => {
+    const x = S.structDelS; if (!x || !x.info) return;
+    if (!x.info.empty && !x.into) return toast('Обери, куди перенести дані', 'error');
+    const target = x.into ? (x.info.targets.filter((t) => t.id === x.into)[0] || {}).name : '';
+    const msg = x.info.empty ? 'Видалити команду «' + x.name + '»?' : 'Перенести все з «' + x.name + '» у «' + target + '» і видалити «' + x.name + '»? Цю дію не можна скасувати.';
+    const doIt = async () => {
+      const r = await run(() => api('teamDelete', { id: x.id, mergeInto: x.into || '' }), x.info.empty ? 'Команду видалено' : 'Перенесено й видалено');
+      if (r) { S.structDelS = null; S.me = await api('me').catch(() => S.me); loadTree(); }
+    };
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
   A.structCancel = () => { S.structEdit = null; render(); };
   A.structSave = async () => {
     const e = S.structEdit;

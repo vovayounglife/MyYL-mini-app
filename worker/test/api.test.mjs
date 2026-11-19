@@ -459,6 +459,33 @@ ok(Math.abs(hrs(after) - hrs(before) - 3) < 0.01, 'КР: в ерії +3 год �
 const tA = (await api(VOVA, 'stats', { units: ['t:' + capTeam.id], cat: 'kr', period: 'week' })).data, tB = (await api(VOVA, 'stats', { units: ['t:' + teamId], cat: 'kr', period: 'week' })).data;
 ok(hrs(tA) >= 3 && hrs(tB) >= 3, 'КР: зараховано в обидві команди');
 
+
+// видалення команди / обʼєднання дубля
+r = await api(AD, 'teamSave', { areaId: 'a1', name: 'Порожня' });
+const emptyT = r.data.id;
+r = await api(AD, 'teamDelete', { id: emptyT, dry: true });
+ok(r.ok && r.data.empty && r.data.targets.length >= 2, 'видалення: порожня команда');
+r = await api(CAP, 'teamDelete', { id: emptyT });
+ok(!r.ok, 'видалення: капітан не може');
+r = await api(AD, 'teamDelete', { id: emptyT });
+ok(r.ok && !(await api(AD, 'structureTree')).data[0].areas[0].teams.some((x) => x.id === emptyT), 'видалення: порожню видалено');
+r = await api(AD, 'teamSave', { areaId: 'a1', name: 'Дубль' });
+const dup = r.data.id;
+await api({ id: 88, first_name: 'Д' }, 'register', { name: 'Дубль Капітан', roles: ['CAPTAIN'], teamId: dup, areaId: 'a1', email: 'd@gmail.com' });
+reqs = await api(AD, 'requests'); for (const p of reqs.data.filter((x) => x.tgId === '88')) await api(AD, 'decide', { roleIds: p.roles.map((x) => x.id), approve: true });
+await api({ id: 88, first_name: 'Д' }, 'saveReport', { type: 'club', teamId: dup, mode: 'week', teens: 4 });
+await api({ id: 88, first_name: 'Д' }, 'knownSave', { teamId: dup, item: { name: 'Дублів Підліток' } });
+r = await api(AD, 'teamDelete', { id: dup, dry: true });
+ok(r.ok && !r.data.empty && r.data.usage.people === 1 && r.data.usage.reports === 1 && r.data.usage.known === 1, 'видалення: дубль з даними');
+r = await api(AD, 'teamDelete', { id: dup });
+ok(!r.ok, 'видалення: з даними без перенесення — не можна');
+r = await api(AD, 'teamDelete', { id: dup, mergeInto: teamId });
+ok(r.ok && r.data.merged, 'обʼєднання виконано');
+const mm = await api({ id: 88, first_name: 'Д' }, 'me');
+ok(mm.data.myTeams[0].id === teamId && mm.data.week.items.find((x) => x.type === 'club').status === 'ok', 'обʼєднання: людина й звіт перейшли');
+r = await api(AD, 'knownList', { units: ['t:' + teamId] });
+ok(r.data.some((x) => x.name === 'Дублів Підліток'), 'обʼєднання: знані перейшли');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
