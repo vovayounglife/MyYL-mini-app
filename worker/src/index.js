@@ -35,6 +35,25 @@ const ROLES = [
   { key: 'AREA_OFFICE', label: 'Офіс ерії', rank: 14, level: 'area', viewOnly: true, titled: true },
 ];
 const RANK = { CLUB: 7, MG: 9, KR: 10, KNOWN: 10, FINANCE: 7, APPROVE: 6, EVENT: 9, GMAIL: 6 };
+// ── дозволи: типові значення = як було до налаштувань; вища ланка задає рамки, нижча може лише звузити ──
+const PERMS = [
+  { key: 'rep.club', group: 'rep', label: 'Вносити клуб', def: (r) => (r.level === 'team' ? r.rank <= RANK.CLUB : CLUB_UPPER.indexOf(r.key) >= 0), levels: ['team', 'area'] },
+  { key: 'rep.mg', group: 'rep', label: 'Вносити малу групу (за себе)', def: (r) => r.level !== 'team' || r.rank <= RANK.MG },
+  { key: 'rep.kr', group: 'rep', label: 'Вносити контактну роботу (за себе)', def: (r) => r.level !== 'team' || r.rank <= RANK.KR },
+  { key: 'rep.known', group: 'rep', label: 'Додавати знаних у команду', def: (r) => r.level === 'team' && r.rank <= RANK.KNOWN, levels: ['team'] },
+  { key: 'rep.fin', group: 'rep', label: 'Вносити фінанси команди', def: (r) => r.level === 'team' && r.rank <= RANK.FINANCE, levels: ['team'] },
+  { key: 'see.stats', group: 'see', label: 'Статистика', def: () => true },
+  { key: 'see.team', group: 'see', label: 'Склад команди', def: () => true },
+  { key: 'see.known', group: 'see', label: 'Знані команди', def: (r) => r.level !== 'team' || r.rank <= RANK.KNOWN },
+  { key: 'see.fin', group: 'see', label: 'Фінанси', def: (r) => r.level !== 'team' || r.rank <= RANK.FINANCE },
+  { key: 'see.myyl', group: 'see', label: 'Моя команда в MyYL', def: () => true },
+  { key: 'part.events', group: 'part', label: 'Бачити події календаря', def: () => true },
+  { key: 'part.tasks', group: 'part', label: 'Отримувати задачі', def: () => true },
+  { key: 'part.polls', group: 'part', label: 'Голосувати в опитуваннях', def: () => true },
+];
+const PERM = {};
+PERMS.forEach((x) => { PERM[x.key] = x; });
+const PERM_LV = { nat: 0, region: 1, area: 2, team: 3 };
 const ST = { PENDING: 'очікує', ACTIVE: 'активна', REJECTED: 'відхилена', REMOVED: 'знята' };
 const MODE = { event: 'подія', week: 'тиждень', none: 'не було' };
 const TYPE_LABEL = { club: 'Клуб', mg: 'Мала група', kr: 'Контактна робота' };
@@ -113,7 +132,7 @@ const NEEDS = {
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
-  audCount: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
+  audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
 };
 
@@ -204,9 +223,11 @@ class Store {
     const res = await this.db.batch([
       this.db.prepare('SELECT * FROM regions'), this.db.prepare('SELECT * FROM areas'), this.db.prepare('SELECT * FROM teams'),
       this.db.prepare('SELECT * FROM people'), this.db.prepare('SELECT * FROM roles'), this.db.prepare('SELECT * FROM settings'),
+      this.db.prepare('SELECT * FROM perms'),
     ]);
-    const [regions, areas, teams, people, roles, settings] = res.map((r) => r.results || []);
-    const b = { ver: ver, settings: {} };
+    const [regions, areas, teams, people, roles, settings, perms] = res.map((r) => r.results || []);
+    const b = { ver: ver, settings: {}, perms: {} };
+    perms.forEach((r) => { b.perms[r.unit + '|' + r.role_key + '|' + r.perm] = Number(r.val) ? 1 : 0; });
     b.regions = regions.map((r) => ({ id: r.id, name: r.name }));
     b.areas = areas.map((r) => ({ id: r.id, regionId: r.region_id, name: r.name }));
     b.teams = teams.map((r) => ({ id: r.id, areaId: r.area_id, name: r.name, state: r.state, active: r.state === 'active', known: Number(r.known) || 0, dir: r.dir || '' }));
@@ -551,9 +572,27 @@ function covers_(r, level, unitId) {
   return level === 'team' && unitId === r.unitId;
 }
 const upperRoles_ = (c) => c.roles.filter((r) => r.level !== 'team');
-const teamRoles_ = (c, teamId, maxRank) => c.roles.filter((r) => r.level === 'team' && r.unitId === teamId && r.rank <= maxRank);
-const canViewTeam_ = (c, teamId) => c.roles.some((r) => covers_(r, 'team', teamId));
-const canTeam_ = (c, teamId, maxRank) => teamRoles_(c, teamId, maxRank).length > 0 || upperRoles_(c).some((r) => covers_(r, 'team', teamId));
+// чи дозволено ролі r (з її місцем) дію perm: заборона на будь-якому рівні вище — остаточна
+function okR_(r, perm) {
+  const P = PERM[perm];
+  if (!P || r.key === 'SUPER') return true;
+  let v = P.def(r);
+  if (P.levels && P.levels.indexOf(r.level) < 0) return v;
+  const map = S.b.perms;
+  if (!map || !Object.keys(map).length) return v;
+  const chain = ancestors_(r.level, r.unitId);
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const x = map[unitKey_(chain[i].level, chain[i].unitId) + '|' + r.key + '|' + perm];
+    if (x === 0) return false;
+    if (x === 1) v = true;
+  }
+  return v;
+}
+// контекст лише з тими ролями, яким дозволено perm
+const P_ = (c, perm) => Object.assign({}, c, { roles: c.roles.filter((r) => okR_(r, perm)), active: (c.active || c.roles).filter((r) => okR_(r, perm)) });
+const teamRoles_ = (c, teamId, perm) => c.roles.filter((r) => r.level === 'team' && r.unitId === teamId && okR_(r, perm));
+const canViewTeam_ = (c, teamId) => c.roles.some((r) => covers_(r, 'team', teamId) && okR_(r, 'see.team'));
+const canTeam_ = (c, teamId, perm) => teamRoles_(c, teamId, perm).length > 0 || upperRoles_(c).some((r) => covers_(r, 'team', teamId) && okR_(r, perm));
 const isSugarOnly_ = (c) => c.roles.length > 0 && c.roles.every((r) => r.key === 'SUGAR');
 const isSuper_ = (c) => c.roles.some((r) => r.key === 'SUPER');
 
@@ -594,15 +633,16 @@ function clubTeams_(c) {
   const st = loadStruct_();
   const ids = {};
   c.roles.forEach((r) => {
-    if (r.level === 'team' && r.rank <= RANK.CLUB && st.team[r.unitId] && st.team[r.unitId].active) ids[r.unitId] = true;
-    if (CLUB_UPPER.indexOf(r.key) >= 0) st.teams.forEach((t) => { if (t.active && covers_(r, 'team', t.id)) ids[t.id] = true; });
+    if (!okR_(r, 'rep.club')) return;
+    if (r.level === 'team' && st.team[r.unitId] && st.team[r.unitId].active) ids[r.unitId] = true;
+    if (r.level !== 'team') st.teams.forEach((t) => { if (t.active && covers_(r, 'team', t.id)) ids[t.id] = true; });
   });
   return Object.keys(ids);
 }
 // команди, де людина сама має роль не нижчу за maxRank
-function ownTeams_(c, maxRank) {
+function ownTeams_(c, perm) {
   const st = loadStruct_();
-  return uniq_(c.roles.filter((r) => r.level === 'team' && r.rank <= maxRank && st.team[r.unitId] && st.team[r.unitId].active).map((r) => r.unitId));
+  return uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, perm) && st.team[r.unitId] && st.team[r.unitId].active).map((r) => r.unitId));
 }
 // вища роль без команди: особистий запис МГ/КР іде на рівень її одиниці (ерія / регіон / Україна)
 function upperSelfUnit_(c) {
@@ -611,7 +651,7 @@ function upperSelfUnit_(c) {
   const r = main || c.roles.filter((x) => x.level !== 'team').sort((a, b) => a.rank - b.rank)[0];
   return r ? { level: r.level, unitId: r.unitId } : null;
 }
-const canSelf_ = (c, rank) => ownTeams_(c, rank).length > 0 || !!upperSelfUnit_(c);
+const canSelf_ = (c, perm) => ownTeams_(c, perm).length > 0 || !!upperSelfUnit_(P_(c, perm));
 // записи без команди (вищі ролі) — враховуються в підсумках їхньої ерії / регіону / України
 function upperRowIn_(scope, r) {
   if (r.teamId) return false;
@@ -624,11 +664,12 @@ function upperRowIn_(scope, r) {
 // особисті записи (МГ/КР) зберігаються в кожній команді людини з одним pid — у підсумках рахуємо один раз
 function dd_(arr) { const seen = {}; return arr.filter((r) => { if (!r.pid) return true; if (seen[r.pid]) return false; seen[r.pid] = 1; return true; }); }
 
-function reportTeams_(c, maxRank) {
+function reportTeams_(c, perm) {
   const st = loadStruct_();
   const ids = {};
   c.roles.forEach((r) => {
-    if (r.level === 'team' && r.rank <= maxRank && st.team[r.unitId] && st.team[r.unitId].active) ids[r.unitId] = true;
+    if (!okR_(r, perm)) return;
+    if (r.level === 'team' && st.team[r.unitId] && st.team[r.unitId].active) ids[r.unitId] = true;
     if (r.level !== 'team') st.teams.forEach((t) => { if (t.active && covers_(r, 'team', t.id)) ids[t.id] = true; });
   });
   return Object.keys(ids);
@@ -664,12 +705,13 @@ API.me = function (c) {
   const myTeams = {};
   c.roles.forEach((r) => { if (r.level === 'team' && st.team[r.unitId]) myTeams[r.unitId] = true; });
   out.caps = {
-    report: { club: clubTeams_(c), mg: ownTeams_(c, RANK.MG), kr: ownTeams_(c, RANK.KR) },
-    reportSelf: { mg: canSelf_(c, RANK.MG), kr: canSelf_(c, RANK.KR), unit: (() => { const u = !ownTeams_(c, RANK.KR).length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
-    knownTeams: reportTeams_(c, RANK.KNOWN),
-    knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && r.rank <= RANK.KNOWN && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
+    report: { club: clubTeams_(c), mg: ownTeams_(c, 'rep.mg'), kr: ownTeams_(c, 'rep.kr') },
+    reportSelf: { mg: canSelf_(c, 'rep.mg'), kr: canSelf_(c, 'rep.kr'), unit: (() => { const u = !ownTeams_(c, 'rep.kr').length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
+    knownTeams: reportTeams_(c, 'see.known'),
+    knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.known') && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
     knownNoTeam: canNoTeam_(c),
-    financeTeams: reportTeams_(c, RANK.FINANCE),
+    financeTeams: reportTeams_(c, 'see.fin'),
+    financeEdit: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.fin')).map((r) => r.unitId)),
     viewTeams: st.teams.filter((t) => t.active && canViewTeam_(c, t.id)).map((t) => t.id),
     approve: canApproveAny_(c),
     eventUnits: eventUnits_(c),
@@ -677,7 +719,9 @@ API.me = function (c) {
     sugarOnly: isSugarOnly_(c),
     surveys: false,
     manage: c.roles.some((r) => MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0),
-    myyl: allowedScopes_(c).length > 0,
+    myyl: allowedScopes_(P_(c, 'see.myyl')).length > 0,
+    stats: P_(c, 'see.stats').roles.length > 0,
+    perms: permUnits_(c).length > 0,
     reportItems: reportItems_(c),
     broadcast: canBroadcast_(c),
     isSuper: isSuper_(c),
@@ -808,11 +852,11 @@ API.saveProfile = function (c, d) {
 // ── звіти ──
 API.saveReport = function (c, d) {
   const type = d.type;
-  const rank = { club: RANK.CLUB, mg: RANK.MG, kr: RANK.KR }[type];
-  if (!rank) bad_('Невідомий тип звіту.');
+  const perm = { club: 'rep.club', mg: 'rep.mg', kr: 'rep.kr' }[type];
+  if (!perm) bad_('Невідомий тип звіту.');
   const personal = type !== 'club';
-  let teams = personal ? ownTeams_(c, rank) : [str_(d.teamId)];
-  const upper = personal && !teams.length ? upperSelfUnit_(c) : null;
+  let teams = personal ? ownTeams_(c, perm) : [str_(d.teamId)];
+  const upper = personal && !teams.length ? upperSelfUnit_(P_(c, perm)) : null;
   if (personal && !teams.length && !upper) deny_(type === 'mg' ? 'Малу групу вносить сам лідер — для цього потрібна роль Лідера (або вища).' : 'Контактну роботу кожен вносить за себе — для цього потрібна роль.');
   if (upper) teams = [''];
   if (!personal && clubTeams_(c).indexOf(teams[0]) < 0) deny_('Клуб вносять Капітан, Адмін команди або Еріа Директор.');
@@ -842,14 +886,14 @@ API.saveReport = function (c, d) {
 };
 
 // ── знані по імені ──
-const canKnown_ = (c, teamId) => canTeam_(c, teamId, RANK.KNOWN);
+const canKnown_ = (c, teamId) => canTeam_(c, teamId, 'see.known');
 
 const STAGES = [['meet', 'Хочу познайомитись'], ['friends', 'Дружимо'], ['grow', 'Допомагаю зростати в вірі'], ['own', 'Йдуть самі']];
 const stageOk_ = (v) => STAGES.some((x) => x[0] === v);
 const stageSum_ = (teamIds, stage) => teamIds.reduce((a, id) => a + (Number(((S.knownStages || {})[id] || {})[stage]) || 0), 0);
 
 // бачать: команда (Помічник+) і вищі рівні; додають і змінюють — лише учасники цієї команди; «Без команди» — особистий список автора
-const canKnownEdit_ = (c, teamId) => teamRoles_(c, teamId, RANK.KNOWN).length > 0;
+const canKnownEdit_ = (c, teamId) => teamRoles_(c, teamId, 'rep.known').length > 0;
 const canNoTeam_ = (c) => c.roles.length > 0 && !isSugarOnly_(c);
 const canRowView_ = (c, r) => (r.team_id ? canKnown_(c, r.team_id) : r.author_id === c.id);
 const canRowEdit_ = (c, r) => (r.team_id ? canKnownEdit_(c, r.team_id) : r.author_id === c.id);
@@ -982,12 +1026,12 @@ API.teamMembers = function (c, d) {
 
 // ── фінанси ──
 // вносять лише Капітан і Адмін саме цієї команди; вищі рівні — тільки дивляться
-const canFinEdit_ = (c, teamId) => teamRoles_(c, teamId, RANK.FINANCE).length > 0;
+const canFinEdit_ = (c, teamId) => teamRoles_(c, teamId, 'rep.fin').length > 0;
 
 API.financeGet = function (c, d) {
   if (!isSingleTeam_(d)) return financeOverview_(c, d);
   const teamId = Array.isArray(d.units) && d.units.length ? String(d.units[0]).slice(2) : str_(d.teamId);
-  if (!canTeam_(c, teamId, RANK.FINANCE)) deny_();
+  if (!canTeam_(c, teamId, 'see.fin')) deny_();
   const rows = (S.finance[teamId] || []).map(finOut_).sort((a, b) => (a.month < b.month ? 1 : -1));
   const month = /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : kyivDay(new Date()).slice(0, 7);
   const cur = rows.filter((r) => r.month === month)[0];
@@ -1001,7 +1045,7 @@ API.financeGet = function (c, d) {
 };
 
 function financeOverview_(c, d) {
-  const teams = pickTeams_(c, d, (cc, id) => canTeam_(cc, id, RANK.FINANCE));
+  const teams = pickTeams_(c, d, (cc, id) => canTeam_(cc, id, 'see.fin'));
   if (!teams.length) deny_();
   const st = loadStruct_();
   const month = /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : kyivDay(new Date()).slice(0, 7);
@@ -1063,9 +1107,9 @@ function canSeeEvent_(c, ev) {
   const roles = ev.roles || [];
   if ((ev.aud && ev.aud.length) || roles.length) {
     const aud = (ev.aud && ev.aud.length ? ev.aud : [unitKey_(ev.level, ev.unitId)]).map(keyUnit_);
-    return (c.active || c.roles).some((r) => aud.some((u) => (!roles.length || roles.indexOf(r.key) >= 0) && (within_(u, r) || (!roles.length && covers_(r, u.level, u.unitId)))));
+    return (c.active || c.roles).some((r) => okR_(r, 'part.events') && aud.some((u) => (!roles.length || roles.indexOf(r.key) >= 0) && (within_(u, r) || (!roles.length && covers_(r, u.level, u.unitId)))));
   }
-  return (c.active || c.roles).some((r) => covers_(r, ev.level, ev.unitId) || ancestors_(r.level, r.unitId).some((a) => a.level === ev.level && a.unitId === ev.unitId));
+  return (c.active || c.roles).some((r) => okR_(r, 'part.events') && (covers_(r, ev.level, ev.unitId) || ancestors_(r.level, r.unitId).some((a) => a.level === ev.level && a.unitId === ev.unitId)));
 }
 function canManageEvent_(c, ev) {
   if (ev.authorId === c.id) return true;
@@ -1292,7 +1336,8 @@ API.teamSave = function (c, d) {
 };
 
 // ── Моя команда в MyYL: дерево людей у межах відповідальності ──
-API.myylTree = function (c) {
+API.myylTree = function (c0) {
+  const c = P_(c0, 'see.myyl');
   const st = loadStruct_();
   const scopes = allowedScopes_(c);
   if (!scopes.length) deny_();
@@ -1474,12 +1519,12 @@ function reportHtml_(r) {
 // ── розсилка від Раба Божого ──
 const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE);
 // хто потрапляє у вибір «де + які ролі» (без автора)
-function audience_(c, d) {
+function audience_(c, d, perm) {
   const p = pickScope_(c, Array.isArray(d.units) && d.units.length ? d.units : [allowedScopes_(c)[0] && allowedScopes_(c)[0].key]);
   if (!p.scope) deny_();
   const units = p.scope.level === 'multi' ? p.scope.members : [p.scope];
   const roles = uniq_((d.roles || []).map(String).filter((k) => roleDef_(k)));
-  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && (!roles.length || roles.indexOf(r.key) >= 0) && units.some((u) => within_(u, r)));
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && (!roles.length || roles.indexOf(r.key) >= 0) && units.some((u) => within_(u, r)) && (!perm || okR_(r, perm)));
   const LV = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
   const where = units.map((u) => LV[u.level] + (u.level === 'nat' ? 'Україна' : u.name)).join(', ');
   const who = roles.length ? roles.map((k) => roleDef_(k).label).join(', ') : 'усі';
@@ -1542,7 +1587,7 @@ function tpCounts_(c) {
 
 API.audCount = function (c, d) {
   if (!canBroadcast_(c)) deny_();
-  const a = audience_(c, d || {});
+  const a = audience_(c, d || {}, d && d.kind === 'poll' ? 'part.polls' : d && d.kind === 'task' ? 'part.tasks' : '');
   return { count: a.ids.length, label: a.label };
 };
 
@@ -1566,7 +1611,7 @@ API.taskSave = function (c, d) {
   const title = clip_(d.title).slice(0, 200);
   if (title.length < 2) bad_('Напиши, що треба зробити.');
   const due = /^\d{4}-\d{2}-\d{2}$/.test(d.due || '') ? d.due : '';
-  const a = audience_(c, d);
+  const a = audience_(c, d, 'part.tasks');
   if (!a.ids.length) bad_('За цим вибором ще нікого немає.');
   if (a.ids.length > 1500) bad_('Забагато людей — звузь вибір.');
   const t = { id: uid_(), title: title, desc: clip_(d.desc), due: due, units: a.units, roles: a.roles, audience: a.label, authorId: c.id, author: c.name, authorRank: topRank_(c), created: nowIso(), closed: '' };
@@ -1645,7 +1690,7 @@ API.pollSave = function (c, d) {
   const opts = uniq_((d.options || []).map((x) => clip_(x).slice(0, 120)).filter(Boolean));
   if (opts.length < 2) bad_('Додай щонайменше два варіанти.');
   if (opts.length > 12) bad_('Максимум 12 варіантів.');
-  const a = audience_(c, d);
+  const a = audience_(c, d, 'part.polls');
   if (!a.ids.length) bad_('За цим вибором ще нікого немає.');
   if (a.ids.length > 1500) bad_('Забагато людей — звузь вибір.');
   const p = { id: uid_(), question: q, options: opts, multi: !!d.multi, open: !!d.open, units: a.units, roles: a.roles, audience: a.label, people: a.ids, authorId: c.id, author: c.name, authorRank: topRank_(c), created: nowIso(), closed: '' };
@@ -1684,6 +1729,74 @@ API.pollDelete = function (c, d) {
   return { ok: true };
 };
 
+// ── «Дозволи й доступ»: кожна ланка (Капітан і вище) налаштовує ролі нижче у своїй одиниці ──
+function permUnits_(c) {
+  const by = {};
+  c.roles.forEach((r) => {
+    if (r.rank > RANK.APPROVE) return;
+    const k = unitKey_(r.level, r.unitId);
+    if (!by[k] || by[k].rank > r.rank) by[k] = { key: k, level: r.level, unitId: r.unitId, rank: r.rank, label: r.level === 'nat' ? 'Уся Україна' : levelLabel_(r.level, r.unitId).replace(/^Команда /, '') };
+  });
+  return Object.keys(by).map((k) => by[k]).sort((a, b) => PERM_LV[a.level] - PERM_LV[b.level] || a.label.localeCompare(b.label));
+}
+const permTargets_ = (u) => ROLES.filter((d) => !d.viewOnly && d.key !== 'SUPER' && d.rank > u.rank && PERM_LV[d.level] >= PERM_LV[u.level]);
+const permsFor_ = (d) => PERMS.filter((p) => !p.levels || p.levels.indexOf(d.level) >= 0);
+function permCell_(u, d, p) {
+  let v = p.def({ key: d.key, level: d.level, rank: d.rank });
+  let lockedBy = '';
+  const chain = ancestors_(u.level, u.unitId);
+  for (let i = chain.length - 1; i >= 1; i--) {
+    const x = S.b.perms[unitKey_(chain[i].level, chain[i].unitId) + '|' + d.key + '|' + p.key];
+    if (x === 0) { lockedBy = chain[i].level === 'nat' ? 'національний рівень' : levelLabel_(chain[i].level, chain[i].unitId); break; }
+    if (x === 1) v = true;
+  }
+  const own = S.b.perms[u.key + '|' + d.key + '|' + p.key];
+  return { on: !lockedBy && (own === 0 ? false : own === 1 ? true : v), base: !lockedBy && v, locked: lockedBy, custom: own != null };
+}
+API.permsGet = function (c, d) {
+  const units = permUnits_(c);
+  if (!units.length) deny_('Налаштовувати дозволи можуть Капітан і вищі ролі.');
+  const u = units.filter((x) => x.key === str_(d.unit))[0] || units[0];
+  const roles = permTargets_(u);
+  const cells = {};
+  roles.forEach((rd) => { cells[rd.key] = {}; permsFor_(rd).forEach((p) => { cells[rd.key][p.key] = permCell_(u, rd, p); }); });
+  return {
+    units: units.map((x) => ({ key: x.key, label: x.label })), unit: u.key, unitLabel: u.label,
+    roles: roles.map((x) => ({ key: x.key, label: x.label, level: x.level })),
+    perms: PERMS.map((p) => ({ key: p.key, label: p.label, group: p.group })), cells: cells,
+  };
+};
+function permEdit_(c, d) {
+  const u = permUnits_(c).filter((x) => x.key === str_(d.unit))[0];
+  if (!u) deny_();
+  const rd = permTargets_(u).filter((x) => x.key === str_(d.role))[0];
+  if (!rd) deny_('Цю роль налаштовує вища ланка.');
+  return { u: u, rd: rd };
+}
+API.permSet = function (c, d) {
+  const e = permEdit_(c, d);
+  const p = permsFor_(e.rd).filter((x) => x.key === str_(d.perm))[0];
+  if (!p) bad_('Невідомий дозвіл.');
+  const cell = permCell_(e.u, e.rd, p);
+  if (cell.locked) bad_('Це заборонено вище (' + cell.locked + ') — змінити може лише вища ланка.');
+  const k = e.u.key + '|' + e.rd.key + '|' + p.key;
+  if (!!d.on === cell.base) {
+    S.run('DELETE FROM perms WHERE unit = ? AND role_key = ? AND perm = ?', [e.u.key, e.rd.key, p.key], true);
+    delete S.b.perms[k];
+  } else {
+    S.run('INSERT INTO perms (unit, role_key, perm, val, by_name, updated) VALUES (?,?,?,?,?,?) ON CONFLICT (unit, role_key, perm) DO UPDATE SET val = excluded.val, by_name = excluded.by_name, updated = excluded.updated',
+      [e.u.key, e.rd.key, p.key, d.on ? 1 : 0, c.name, nowIso()], true);
+    S.b.perms[k] = d.on ? 1 : 0;
+  }
+  return API.permsGet(c, { unit: e.u.key });
+};
+API.permReset = function (c, d) {
+  const e = permEdit_(c, d);
+  S.run('DELETE FROM perms WHERE unit = ? AND role_key = ?', [e.u.key, e.rd.key], true);
+  Object.keys(S.b.perms).forEach((k) => { if (k.indexOf(e.u.key + '|' + e.rd.key + '|') === 0) delete S.b.perms[k]; });
+  return API.permsGet(c, { unit: e.u.key });
+};
+
 // ── вибір однієї або кількох одиниць ──
 function pickScope_(c, keys) {
   const scopes = allowedScopes_(c);
@@ -1704,7 +1817,9 @@ function pickTeams_(c, d, can) {
 }
 
 // ── статистика ──
-API.stats = function (c, d) {
+API.stats = function (c0, d) {
+  const c = P_(c0, 'see.stats');
+  if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
   const p = pickScope_(c, keysOf_(d));
   const scopes = p.scopes;
   const scope = p.scope || scopes[0];
@@ -1767,10 +1882,10 @@ function statCats_(c, scope) {
     return statCats_(c, scope.members[0]).filter((x) => lists.every((l) => l.indexOf(x.key) >= 0));
   }
   const cats = [{ key: 'overview', label: 'Огляд' }, { key: 'people', label: 'Команда' }, { key: 'club', label: 'Клуби' }, { key: 'mg', label: 'Малі групи' }, { key: 'kr', label: 'Контактна робота' }];
-  const upperCovers = upperRoles_(c).some((r) => covers_(r, scope.level, scope.unitId));
-  const teamOk = (rank) => scope.level === 'team' && teamRoles_(c, scope.unitId, rank).length > 0;
-  if (upperCovers || teamOk(RANK.KNOWN)) cats.push({ key: 'known', label: 'Знані' });
-  if (upperCovers || teamOk(RANK.FINANCE)) cats.push({ key: 'finance', label: 'Фінанси' });
+  const upperCovers = (perm) => upperRoles_(c).some((r) => covers_(r, scope.level, scope.unitId) && okR_(r, perm));
+  const teamOk = (perm) => scope.level === 'team' && teamRoles_(c, scope.unitId, perm).length > 0;
+  if (upperCovers('see.known') || teamOk('see.known')) cats.push({ key: 'known', label: 'Знані' });
+  if (upperCovers('see.fin') || teamOk('see.fin')) cats.push({ key: 'finance', label: 'Фінанси' });
   return cats;
 }
 
@@ -1901,7 +2016,7 @@ function weekReport_(scope, type, teamIds) {
   const st = loadStruct_();
   const rows = loadLog_().filter((r) => r.week === wk && r.type === type);
   if (scope.level === 'team' && type !== 'club') {
-    const people = eligiblePeople_(scope.unitId, type === 'mg' ? RANK.MG : RANK.KR);
+    const people = eligiblePeople_(scope.unitId, 'rep.' + type);
     let okN = 0, noneN = 0;
     const miss = [], missIds = [];
     people.forEach((p) => {
@@ -1925,16 +2040,15 @@ function weekReport_(scope, type, teamIds) {
 
 function missingFor_(scope, type) {
   const m = weekReport_(scope, type, scopeTeamIds_(scope));
-  const rank = { club: RANK.CLUB, mg: RANK.MG, kr: RANK.KR }[type];
   if (m.missingIds) return { people: m.missingIds };
   const ids = {};
-  (m.missingTeams || []).forEach((teamId) => eligiblePeople_(teamId, rank).forEach((p) => { ids[p.tgId] = true; }));
+  (m.missingTeams || []).forEach((teamId) => eligiblePeople_(teamId, 'rep.' + type).forEach((p) => { ids[p.tgId] = true; }));
   return { people: Object.keys(ids) };
 }
 
-function eligiblePeople_(teamId, maxRank) {
+function eligiblePeople_(teamId, perm) {
   const by = {};
-  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId && r.rank <= maxRank)
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId && okR_(r, perm))
     .forEach((r) => { by[r.tgId] = { tgId: r.tgId, name: (getPerson_(r.tgId) || {}).name || r.name }; });
   return Object.keys(by).map((k) => by[k]);
 }
@@ -1944,30 +2058,29 @@ function weekStatus_(c) {
   const wk = weekKey_(new Date());
   const rows = loadLog_().filter((r) => r.week === wk);
   const teams = {};
-  c.roles.filter((r) => r.level === 'team' && st.team[r.unitId] && st.team[r.unitId].active).forEach((r) => { teams[r.unitId] = Math.min(teams[r.unitId] || 99, r.rank); });
+  c.roles.filter((r) => r.level === 'team' && st.team[r.unitId] && st.team[r.unitId].active).forEach((r) => { (teams[r.unitId] = teams[r.unitId] || []).push(r); });
   const items = [];
   const many = Object.keys(teams).length > 1;
   Object.keys(teams).forEach((teamId) => {
-    const rank = teams[teamId];
     const add = (type, perTeam) => {
       const mine = rows.filter((r) => r.type === type && r.teamId === teamId && (perTeam || r.authorId === c.id));
       const status = mine.some((r) => r.mode !== MODE.none) ? 'ok' : mine.length ? 'none' : 'missing';
       const hours = type === 'kr' ? mine.reduce((a, r) => a + (Number(r.hours) || 0), 0) : 0;
       items.push({ type, teamId, label: TYPE_LABEL[type] + (many ? ' · ' + st.team[teamId].name : ''), status, hours });
     };
-    if (rank <= RANK.CLUB) add('club', true);
+    if (teams[teamId].some((r) => okR_(r, 'rep.club'))) add('club', true);
   });
   // МГ і КР — особисті: один пункт на людину, незалежно від кількості команд
   const own = Object.keys(teams);
-  const addOwn = (type, max) => {
-    const tid = own.filter((id) => teams[id] <= max)[0] || (!own.some((id) => teams[id] <= max) && c.roles && upperSelfUnit_(c) ? '' : null);
+  const addOwn = (type, perm) => {
+    const tid = own.filter((id) => teams[id].some((r) => okR_(r, perm)))[0] || (upperSelfUnit_(P_(c, perm)) ? '' : null);
     if (tid == null) return;
     const mine = dd_(rows.filter((r) => r.type === type && r.authorId === c.id));
     const status = mine.some((r) => r.mode !== MODE.none) ? 'ok' : mine.length ? 'none' : 'missing';
     items.push({ type: type, teamId: tid, label: TYPE_LABEL[type], status: status, hours: type === 'kr' ? mine.reduce((a, r) => a + (Number(r.hours) || 0), 0) : 0 });
   };
-  addOwn('mg', RANK.MG);
-  addOwn('kr', RANK.KR);
+  addOwn('mg', 'rep.mg');
+  addOwn('kr', 'rep.kr');
   return { key: wk, label: weekLabel_(wk), items };
 }
 

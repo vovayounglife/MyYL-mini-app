@@ -638,6 +638,41 @@ r = await api(AD, 'pollSave', { question: 'Відкрите?', options: ['Так
 r = await api(LEAD, 'pollVote', { id: r.data.id, opts: [0, 1] });
 ok(r.ok && r.data.mine.length === 2 && r.data.counts && !r.data.who, 'опитування: відкриті результати — кількість без імен; кілька варіантів');
 
+
+// ── дозволи й доступ ──
+r = await api(LEAD, 'permsGet', {});
+ok(!r.ok, 'дозволи: лідер не налаштовує');
+r = await api(RD, 'permsGet', {});
+ok(r.ok && r.data.unit === 'r:r0' && r.data.roles[0].key === 'REGIONAL_ADMIN' && r.data.cells.LEADER['rep.mg'].on && !r.data.cells.SUGAR['rep.kr'].on, 'дозволи: регіональний бачить ролі нижче з типовими значеннями');
+r = await api(AD, 'permSet', { unit: 'a:a1', role: 'LEADER', perm: 'rep.mg', on: false });
+ok(r.ok && r.data.cells.LEADER['rep.mg'].on === false && r.data.cells.LEADER['rep.mg'].custom, 'дозволи: ЕД заборонив лідерам МГ');
+me = await api(LEAD, 'me');
+ok(me.data.caps.report.mg.length === 0 && !me.data.caps.reportSelf.mg, 'дозволи: у лідера зникла МГ');
+r = await api(LEAD, 'saveReport', { type: 'mg', mode: 'week', count: 3 });
+ok(!r.ok, 'дозволи: сервер не приймає МГ від лідера');
+const capPerm = (await api(CAP, 'permsGet', {})).data;
+ok(capPerm.unit.indexOf('t:') === 0 && capPerm.cells.LEADER['rep.mg'].locked && !capPerm.roles.some((x) => x.key === 'CAPTAIN'), 'дозволи: капітан бачить замок від ерії, себе не налаштовує');
+r = await api(CAP, 'permSet', { unit: capPerm.unit, role: 'LEADER', perm: 'rep.mg', on: true });
+ok(!r.ok, 'дозволи: нижча ланка не знімає заборону вищої');
+r = await api(CAP, 'permSet', { unit: capPerm.unit, role: 'SUGAR', perm: 'rep.kr', on: true });
+me = await api(SUG, 'me');
+ok(r.ok && me.data.caps.report.kr.length === 1, 'дозволи: капітан дозволив сахаркам КР');
+r = await api(CAP, 'permSet', { unit: 'a:a1', role: 'SUGAR', perm: 'rep.kr', on: true });
+ok(!r.ok, 'дозволи: капітан не налаштовує ерію');
+r = await api(RD, 'permSet', { unit: 'r:r0', role: 'SUGAR', perm: 'part.polls', on: false });
+const pollN = (await api(AD, 'audCount', { units: ['a:a1'], kind: 'poll' })).data.count, allN = (await api(AD, 'audCount', { units: ['a:a1'] })).data.count;
+ok(r.ok && pollN === allN - 1, 'дозволи: сахарок не отримує опитувань');
+r = await api(AD, 'permSet', { unit: 'a:a1', role: 'CAPTAIN', perm: 'see.stats', on: false });
+me = await api(CAP, 'me');
+r = await api(CAP, 'stats', {});
+ok(me.data.caps.stats === false && !r.ok, 'дозволи: капітан без статистики');
+r = await api(AD, 'permReset', { unit: 'a:a1', role: 'CAPTAIN' });
+r = await api(AD, 'permReset', { unit: 'a:a1', role: 'LEADER' });
+me = await api(LEAD, 'me');
+ok(me.data.caps.report.mg.length === 1 && (await api(CAP, 'stats', {})).ok, 'дозволи: скинуто до типових');
+await api(RD, 'permReset', { unit: 'r:r0', role: 'SUGAR' });
+await api(CAP, 'permReset', { unit: capPerm.unit, role: 'SUGAR' });
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

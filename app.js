@@ -56,6 +56,7 @@
     send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
     task: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9',
     poll: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+    lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
     phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   };
@@ -97,6 +98,7 @@
     roleReq: null, profile: null,
     myyl: { data: null, at: null, open: null },
     rep: { units: {}, items: {}, preset: 'month', from: '', to: '', split: false, data: null, busy: false },
+    perms: { unit: '', role: '', data: null, busy: false },
     tasks: { data: null, tab: 'mine', open: null, form: null, note: '' },
     polls: { data: null, tab: 'open', form: null, sel: {}, showNot: {} },
     bc: { info: null, text: '', roles: [], pending: false, count: null, button: true, sending: false },
@@ -227,6 +229,7 @@
     if (screen === 'team') { S.team.open = null; ensurePick('team', ownTeamKeys('team')); loadTeam(); }
     if (screen === 'finance') { ensurePick('finance', ownTeamKeys('finance')); loadFin(); }
     if (screen === 'requests') loadReqs();
+    if (screen === 'perms') loadPerms();
     if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
     if (screen === 'polls') { S.polls.form = null; loadPolls(); }
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
@@ -356,15 +359,19 @@
   }
   async function loadAudCount(scr) {
     const f = audState(scr); if (!f) return;
-    const prm = { units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [] }, key = JSON.stringify(prm);
+    const prm = { units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [], kind: scr }, key = JSON.stringify(prm);
     f.count = null; render();
-    try { const r = await api('audCount', prm); if (audState(scr) === f && JSON.stringify({ units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [] }) === key) f.count = r.count; } catch (e) { toast(e.message); }
+    try { const r = await api('audCount', prm); if (audState(scr) === f && JSON.stringify({ units: (S.pick[scr] || { keys: [] }).keys, roles: f.roles || [], kind: scr }) === key) f.count = r.count; } catch (e) { toast(e.message); }
     if (S.screen === (scr === 'task' ? 'tasks' : 'polls')) render();
   }
   function refreshTodo() {
     const t = S.me.todo = S.me.todo || {};
     if (S.tasks.data) t.tasks = S.tasks.data.list.filter((x) => x.mine && !x.closed && x.mine.status !== 'done').length;
     if (S.polls.data) t.polls = S.polls.data.list.filter((x) => x.canVote && !x.mine.length).length;
+  }
+  async function loadPerms() {
+    try { S.perms.data = await api('permsGet', { unit: S.perms.unit }); S.perms.unit = S.perms.data.unit; if (!S.perms.data.roles.some((r) => r.key === S.perms.role)) S.perms.role = (S.perms.data.roles[0] || {}).key || ''; } catch (e) { toast(e.message); }
+    if (S.screen === 'perms') render();
   }
   async function loadTasks() {
     try { S.tasks.data = await api('tasks'); refreshTodo(); } catch (e) { S.tasks.data = S.tasks.data || { list: [], canCreate: false }; toast(e.message); }
@@ -407,7 +414,7 @@
     const canKnown = (c.knownTeams || []).length > 0 || !!c.knownNoTeam;
     // «Внести» — завжди; «Знані» — якщо є доступ; «Календар» — у «Ще»
     const tabs = [['home', 'Головна'], ['add', 'Внести'], ['known', 'Знані'], ['stats', 'Статистика'], ['more', 'Ще']]
-      .filter((t) => (t[0] !== 'known' || canKnown) && (t[0] !== 'stats' || (S.me.scopes || []).length));
+      .filter((t) => (t[0] !== 'known' || canKnown) && (t[0] !== 'stats' || ((S.me.scopes || []).length && c.stats !== false)));
     const active = TOP.indexOf(S.screen) >= 0 ? S.screen : 'more';
     return `<nav class="tabs" aria-label="Розділи"><div class="in-nav">${tabs.map((t) =>
       `<button type="button" class="${t[0] === active ? 'on' : ''}" data-a="tab" data-s="${t[0]}">${icon(t[0], 24)}${t[1]}${t[0] === 'more' && S.me.pendingCount ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></nav>`;
@@ -950,6 +957,32 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
   const fmtWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.getDate() + ' ' + MGEN[d.getMonth()] + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 
+  // ───────────── ДОЗВОЛИ Й ДОСТУП ─────────────
+  const PERM_GROUPS = [['rep', 'Які звіти заповнювати'], ['see', 'Що бачити'], ['part', 'У чому брати участь']];
+  VIEWS.perms = function () {
+    const P = S.perms, D = P.data;
+    let h = header('Дозволи й доступ', 'що можуть ланки нижче');
+    if (!D) return h + loading();
+    if (D.units.length > 1) h += `<div class="pills lvl" role="tablist">${D.units.map((u) => `<button type="button" class="pill${u.key === D.unit ? ' on' : ''}" data-a="permUnit" data-k="${esc(u.key)}">${esc(u.label)}</button>`).join('')}</div>`;
+    if (!D.roles.length) return h + '<div class="empty">Нижче за тебе тут немає ролей</div>';
+    h += `<div class="pills lvl" role="tablist" aria-label="Роль">${D.roles.map((r) => `<button type="button" class="pill${r.key === P.role ? ' on' : ''}" data-a="permRole" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>`;
+    const role = D.roles.filter((r) => r.key === P.role)[0] || D.roles[0];
+    const cells = D.cells[role.key] || {};
+    h += `<div class="small muted">Галочки діють на всіх «${esc(role.label)}» у межах: <b>${esc(D.unitLabel)}</b>. Те, що заборонила вища ланка, тут змінити не можна (🔒).</div>`;
+    PERM_GROUPS.forEach((g) => {
+      const items = D.perms.filter((p) => p.group === g[0] && cells[p.key]);
+      if (!items.length) return;
+      h += `<div class="sec">${g[1]}</div><div class="card list">${items.map((p) => {
+        const c = cells[p.key];
+        const note = c.locked ? `🔒 заборонено: ${esc(c.locked)}` : c.custom ? (c.on ? 'дозволено тут' : 'заборонено тут') : 'як типово';
+        return `<label class="toggle-row"${c.locked ? ' style="opacity:.6"' : ''}><span class="grow"><span style="display:block">${esc(p.label)}</span><span class="xs ${c.custom && !c.locked ? 'b' : 'muted'}"${c.custom && !c.locked ? ' style="color:var(--teal)"' : ''}>${note}</span></span>
+          <input type="checkbox" data-ch="permToggle" data-k="${p.key}"${c.on ? ' checked' : ''}${c.locked || P.busy ? ' disabled' : ''}></label>`;
+      }).join('')}</div>`;
+    });
+    if (Object.keys(cells).some((k) => cells[k].custom)) h += `<button type="button" class="btn ghost" data-a="permReset">Скинути «${esc(role.label)}» до типових</button>`;
+    return h;
+  };
+
   // ───────────── ЗАДАЧІ ─────────────
   const TASK_ST = [['todo', 'Не почато'], ['doing', 'В процесі'], ['done', 'Виконано']];
   const taskStLabel = (k) => (TASK_ST.filter((x) => x[0] === k)[0] || TASK_ST[0])[1];
@@ -1196,6 +1229,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       { k: 'tasks', label: 'Задачі до виконання', sub: c.broadcast ? 'доручити й стежити за виконанням' : 'що тобі доручили', icon: 'task', ic: 'ic-teal', badge: td.tasks },
       { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
     const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
+    if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
     const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
@@ -1580,6 +1614,23 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
 
+  // дозволи
+  A.permUnit = (d) => { S.perms.unit = d.k; S.perms.data = null; render(); loadPerms(); };
+  A.permRole = (d) => { S.perms.role = d.k; render(); };
+  A.permToggle = async (d, el) => {
+    const P = S.perms;
+    P.busy = true;
+    const res = await run(() => api('permSet', { unit: P.unit, role: P.role, perm: d.k, on: el.checked }), el.checked ? 'Дозволено' : 'Заборонено');
+    P.busy = false;
+    if (res) P.data = res; else el.checked = !el.checked;
+    render();
+  };
+  A.permReset = () => {
+    const P = S.perms, role = (P.data.roles.filter((r) => r.key === P.role)[0] || {}).label;
+    const doIt = async () => { const res = await run(() => api('permReset', { unit: P.unit, role: P.role }), 'Повернуто типові'); if (res) { P.data = res; render(); } };
+    const msg = 'Скинути всі зміни для «' + role + '» у межах ' + P.data.unitLabel + '?';
+    if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
+  };
   // задачі
   const curTask = () => ((S.tasks.data && S.tasks.data.list) || []).filter((x) => x.id === S.tasks.open)[0];
   const putTask = (t) => { const L = S.tasks.data.list; const i = L.findIndex((x) => x.id === t.id); if (i >= 0) L[i] = t; refreshTodo(); };
