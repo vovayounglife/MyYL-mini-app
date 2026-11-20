@@ -3115,6 +3115,14 @@ function mergeIds_(ids) {
   });
   return keep;
 }
+// усі записи цієї людини в будь-яких еріях (повне збігання з урахуванням коротких імен) — в один
+function mergeAll_(name) {
+  const ids = Object.keys(S.b.people).filter((id) => nameScore_(name, S.b.people[id].name).alike);
+  if (ids.length < 2) return { found: ids.length, error: 'немає дубля' };
+  if (ids.filter(isReal_).length > 1) return { found: ids.length, error: 'двоє зареєстрованих' };
+  mergeIds_(ids);
+  return { merged: ids.length };
+}
 // явне обʼєднання: [«Яна Ковальчук», «Яніна Ковальчук»] — кожне імʼя має відповідати рівно одному запису
 function mergeNames_(names) {
   const ids = [];
@@ -3300,7 +3308,7 @@ async function handleAdmin(req, env, ctx, url) {
     }));
     const ppl = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : (body.people || []);
     const auto = body.autoPeople ? use(S0, () => autoMergePeople_()) : null;
-    const people = use(S0, () => ppl.map((x) => (Array.isArray(x.names) ? mergeNames_(x.names.map(String)) : mergePeopleByName_(String(x.area), String(x.name)))));
+    const people = use(S0, () => ppl.map((x) => (x.all ? mergeAll_(String(x.all)) : Array.isArray(x.names) ? mergeNames_(x.names.map(String)) : mergePeopleByName_(String(x.area), String(x.name)))));
     await S0.flush();
     const res = { ok: true, merged: merged, renamed: renamed, people: people.map((x, i) => Object.assign({ n: i + 1 }, x)) };
     if (auto) { res.autoMerged = auto.length; res.autoEnc = await encryptOut_(JSON.stringify(auto), env.SYNC_KEY); }

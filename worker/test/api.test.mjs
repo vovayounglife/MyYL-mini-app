@@ -921,6 +921,10 @@ ok(r.data.filter((p) => /Дума/.test(p.name)).length === 1 && r.data.find((p)
 await api(VOVA, 'memberAdd', { teamId: 'tSv', names: 'Ковальчук Степанида\nКовальчук Віктор', role: 'HELPER' });
 r = await admin('teams', { people: [{ names: ['Ковальчук Степанида', 'Ковальчук Степанида'] }, { names: ['Невідома Людина', 'Ковальчук Віктор'] }], namesakes: true });
 ok(r.ok && r.people[0].error && r.people[1].error === 'не знайдено' && typeof r.namesakes === 'string', 'однофамільці: зашифрований список, явне обʼєднання перевіряє імена');
+await api(VOVA, 'memberAdd', { teamId: 'tSv', names: 'Панєва Настя', role: 'HELPER' });
+await api(VOVA, 'memberAdd', { teamId: capTeam.id, names: 'Анастасія Панєва', role: 'LEADER' });
+r = await admin('teams', { people: [{ all: 'Анастасія Панєва' }] });
+ok(r.ok && r.people[0].merged === 2, 'дублі: обʼєднання всіх записів людини');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
