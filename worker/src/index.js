@@ -144,7 +144,7 @@ const NEEDS = {
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
-  memberAdd: {}, claimFind: {},
+  memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
   dirStats: { log: 'stats' }, installStats: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
@@ -1034,6 +1034,23 @@ API.removeRole = function (c, d) {
   return { ok: true };
 };
 
+// видалити людину зі складу команди (усі її ролі в цій команді); запис без MyYL без інших ролей — видаляється повністю
+const canDrop_ = (c, r) => r.tgId !== c.id && (canDecide_(c, r) || (r.level === 'team' && canAssign_(c, r.unitId, r.key)));
+API.memberRemove = function (c, d) {
+  const ids = (Array.isArray(d.roleIds) ? d.roleIds : []).map(String);
+  const rs = loadRoles_().filter((x) => ids.indexOf(x.id) >= 0 && (x.status === ST.ACTIVE || x.status === ST.PENDING));
+  if (!rs.length) bad_('Людину вже прибрано зі складу.');
+  if (uniq_(rs.map((r) => r.tgId)).length !== 1) bad_('Обери одну людину.');
+  if (!rs.every((r) => canDrop_(c, r))) deny_('Ти не можеш прибрати цю людину зі складу.');
+  rs.forEach((r) => setRoleStatus_(r, ST.REMOVED, c.name));
+  const id = rs[0].tgId;
+  let deleted = false;
+  if (!isReal_(id) && !loadRoles_().some((r) => r.tgId === id && (r.status === ST.ACTIVE || r.status === ST.PENDING))) {
+    S.run('DELETE FROM people WHERE tg_id = ?', [id], true); delete S.b.people[id]; deleted = true;
+  }
+  return { removed: rs.length, deleted: deleted };
+};
+
 API.saveProfile = function (c, d) {
   if (!getPerson_(c.id)) bad_('Спершу зареєструйся.');
   if (d.main != null && d.main !== '' && !c.active.some((r) => r.id === String(d.main))) bad_('Обери одну зі своїх ролей.');
@@ -1210,6 +1227,7 @@ API.teamMembers = function (c, d) {
     const person = getPerson_(p.tgId);
     if (person) { p.name = person.name || p.name; p.username = person.username; p.profile = profileOf_(person); }
     p.registered = isReal_(p.tgId);
+    p.canDrop = p.roles.every((x) => { const r = loadRoles_().filter((y) => y.id === x.id)[0]; return r && canDrop_(c, r); });
     // усі ролі людини (у будь-яких командах і на будь-яких рівнях) — щоб бачити, хто де служить
     p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE).sort((a, b) => a.rank - b.rank)
       .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), titled: !!(roleDef_(r.key) || {}).titled, title: r.title || '', canRemove: r.tgId !== c.id && canDecide_(c, r) }));
@@ -3021,6 +3039,29 @@ function mergeTeamInto_(t, best) {
   activateTeam_(best.id);
   return { moved: moved, merged: merged };
 }
+// одна людина двома записами в межах ерії (напр. «Суботін Данило» і «Данило Субботін») — обʼєднати в один, ролі зберегти
+function mergePeopleByName_(areaName, name) {
+  const st = loadStruct_();
+  const a = st.areas.filter((x) => x.name === areaName)[0];
+  if (!a) return { name: '?', error: 'немає ерії' };
+  const units = [a.id].concat(st.teams.filter((x) => x.areaId === a.id).map((x) => x.id));
+  const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const ids = uniq_(live.filter((r) => units.indexOf(r.unitId) >= 0).map((r) => r.tgId)).filter((id) => nameScore_(name, (getPerson_(id) || {}).name || '').same);
+  const real = ids.filter(isReal_);
+  if (ids.length < 2 || real.length > 1) return { found: ids.length, error: ids.length < 2 ? 'немає дубля' : 'двоє зареєстрованих' };
+  const keep = real[0] || ids.slice().sort((x, y) => FILL_.filter((k) => (getPerson_(y) || {})[k]).length - FILL_.filter((k) => (getPerson_(x) || {})[k]).length)[0];
+  let moved = 0;
+  ids.filter((id) => id !== keep).forEach((id) => {
+    live.filter((r) => r.tgId === id).forEach((r) => {
+      const dup = loadRoles_().some((x) => x.tgId === keep && x.key === r.key && x.unitId === r.unitId && (x.status === ST.ACTIVE || x.status === ST.PENDING));
+      if (dup) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); return; }
+      r.tgId = keep; S.run('UPDATE roles SET tg_id = ?, name = ? WHERE id = ?', [keep, (getPerson_(keep) || {}).name || '', r.id], true); moved++;
+    });
+    fillPerson_(keep, getPerson_(id) || {}, false);
+    S.run('DELETE FROM people WHERE tg_id = ?', [id], true); delete S.b.people[id];
+  });
+  return { found: ids.length, moved: moved };
+}
 // латиниця/кирилиця: «Hlyna» = «Глина» = «Glyna», «Capernaum» = «Капернаум»
 const TR_ = { а: 'a', б: 'b', в: 'v', г: 'g', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sh', ь: '', ю: 'iu', я: 'ia' };
 function teamKey_(name) {
@@ -3163,8 +3204,17 @@ async function handleAdmin(req, env, ctx, url) {
       if (!a || !b || a.id === b.id || a.areaId !== b.areaId) return { from: m.from, into: m.into, error: !a ? 'немає from' : !b ? 'немає into' : 'не та ерія' };
       return Object.assign({ from: a.name, into: b.name }, mergeTeamInto_(a, b));
     }));
+    const renamed = use(S0, () => (Array.isArray(body.rename) ? body.rename : []).map((m) => {
+      const t = teamByFull_(String(m.team));
+      if (!t || !String(m.name || '').trim()) return { team: m.team, error: 'немає команди' };
+      const old = t.name; t.name = clip_(String(m.name).trim());
+      S.run('UPDATE teams SET name = ? WHERE id = ?', [t.name, t.id], true);
+      return { from: old, to: t.name };
+    }));
+    const ppl = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : (body.people || []);
+    const people = use(S0, () => ppl.map((x) => mergePeopleByName_(String(x.area), String(x.name))));
     await S0.flush();
-    const res = { ok: true, merged: merged };
+    const res = { ok: true, merged: merged, renamed: renamed, people: people.map((x, i) => Object.assign({ n: i + 1 }, x)) };
     if (body.audit) res.audit = await encryptOut_(JSON.stringify(use(S0, () => audit_())), env.SYNC_KEY);
     return json(res);
   }

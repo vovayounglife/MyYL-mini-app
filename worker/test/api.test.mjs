@@ -892,6 +892,25 @@ await admin('pray', { list: [{ name: 'Остап Латинський', unit: 't
 await admin('import', { teams: [{ id: 'tSv', area_id: 'a1', name: 'Світло Копія', state: 'active', known: 0 }] });
 r = await admin('teams', { merge: [{ from: 'Тернопіль · Svitlo Kopiya', into: 'Тернопіль · Svitlo Kopiya' }], audit: true });
 ok(r.ok && r.merged[0].into === 'Світло Копія' && r.merged[0].moved === 1 && typeof r.audit === 'string' && !/Остап/.test(JSON.stringify(r)), 'команди: обʼєднано за транслітом, звіт зашифровано');
+// видалити зі складу: лідер не може, капітан може; запис без MyYL зникає повністю
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+const zn = r.data.find((p) => /Зовсім Новенька/.test(p.name));
+ok(zn && zn.canDrop && !r.data.find((p) => p.tgId === '4').canDrop, 'склад: можна видалити інших, себе — ні');
+r = await api(LEAD, 'memberRemove', { roleIds: zn.roles.map((x) => x.id) });
+ok(!r.ok && r.error !== 'bad_action', 'склад: лідер не видаляє людей');
+r = await api(CAP, 'memberRemove', { roleIds: zn.roles.map((x) => x.id) });
+ok(r.ok && r.data.deleted === true, 'склад: капітан видалив запис без MyYL');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+ok(!r.data.some((p) => /Зовсім Новенька/.test(p.name)), 'склад: людини більше немає');
+// одна людина двома записами в різних командах ерії → один запис з обома ролями; перейменування команди
+await api(VOVA, 'memberAdd', { teamId: 'tSv', names: 'Суботін Данило', role: 'HELPER' });
+await api(VOVA, 'memberAdd', { teamId: capTeam.id, names: 'Данило Субботін', role: 'LEADER' });
+await admin('pray', { list: [{ name: 'Суботін Данило', unit: 'team', area: ['Тернопіль'], team: 'Світло Копія', key: 'HELPER', ig: '@ds' }] });
+r = await admin('teams', { people: [{ area: 'Тернопіль', name: 'Данило Субботін' }], rename: [{ team: 'Тернопіль · Світло Копія', name: 'Світло Друге' }] });
+ok(r.ok && r.people[0].found === 2 && r.people[0].moved === 1 && r.renamed[0].to === 'Світло Друге', 'дублі людей: обʼєднано, команду перейменовано');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+const dsb = r.data.find((p) => /Субот|Суббот/.test(p.name));
+ok(dsb && dsb.all.length === 2 && dsb.profile.ig === '@ds', 'дублі людей: обидві ролі й анкета в одному записі');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
