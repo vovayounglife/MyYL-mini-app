@@ -803,7 +803,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const byName = (a, b) => a.name.localeCompare(b.name);
 
   // ───────────── ЄДИНИЙ ВИБІР: регіон / ерія / команда (одна або кілька) ─────────────
-  const scopeBy = () => { const m = {}; (S.me.scopes || []).forEach((x) => { m[x.key] = x; }); return m; };
+  const scopeBy = () => { const m = {}; (S.me.statScopes || []).concat(S.me.scopes || []).forEach((x) => { m[x.key] = x; }); return m; };
   function teamsUnder(keys) {
     const by = scopeBy(), out = [];
     (S.me.scopes || []).forEach((x) => {
@@ -815,6 +815,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const PICK_TEAMS = { known: 'knownTeams', team: 'viewTeams', finance: 'financeTeams' };
   function unitsFor(scr) {
     const sc = S.me.scopes || [];
+    // статистика: директор ерії бачить увесь свій регіон
+    if ((scr === 'stats' || scr === 'dirs') && S.me.statScopes) return S.me.statScopes;
     if (scr === 'report') return caps().isSuper ? sc : sc.filter((x) => x.depth <= 1);
     if (scr === 'event') {
       const f = S.evForm, u = f && evUnits(f)[Number(f.unit) || 0];

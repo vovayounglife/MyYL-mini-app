@@ -620,6 +620,13 @@ const P_ = (c, perm) => Object.assign({}, c, { roles: c.roles.filter((r) => okR_
 const teamRoles_ = (c, teamId, perm) => c.roles.filter((r) => r.level === 'team' && r.unitId === teamId && okR_(r, perm));
 const canViewTeam_ = (c, teamId) => c.roles.some((r) => covers_(r, 'team', teamId) && okR_(r, 'see.team'));
 const canTeam_ = (c, teamId, perm) => teamRoles_(c, teamId, perm).length > 0 || upperRoles_(c).some((r) => covers_(r, 'team', teamId) && okR_(r, perm));
+// директор ерії бачить статистику всього свого регіону (лише перегляд статистики)
+const wideStats_ = (c) => {
+  const st = loadStruct_();
+  const extra = c.roles.filter((r) => r.key === 'AREA_DIRECTOR' && r.level === 'area' && st.area[r.unitId])
+    .map((r) => Object.assign({}, r, { id: r.id + ':r', level: 'region', unitId: st.area[r.unitId].regionId, virtual: true }));
+  return extra.length ? Object.assign({}, c, { roles: c.roles.concat(extra) }) : c;
+};
 const isSugarOnly_ = (c) => c.roles.length > 0 && c.roles.every((r) => r.key === 'SUGAR');
 const isSuper_ = (c) => c.roles.some((r) => r.key === 'SUPER');
 
@@ -756,6 +763,8 @@ API.me = function (c) {
   };
   out.myTeams = Object.keys(myTeams).map(teamOut_);
   out.scopes = allowedScopes_(c);
+  const wide = wideStats_(P_(c, 'see.stats'));
+  if (wide.roles.some((r) => r.virtual)) out.statScopes = allowedScopes_(wide);
   out.week = weekStatus_(c);
   out.todo = tpCounts_(c);
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
@@ -2252,7 +2261,7 @@ function pickTeams_(c, d, can) {
 
 // ── статистика ──
 API.stats = function (c0, d) {
-  const c = P_(c0, 'see.stats');
+  const c = wideStats_(P_(c0, 'see.stats'));
   if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
   const p = pickScope_(c, keysOf_(d));
   const scopes = p.scopes;
@@ -2371,7 +2380,7 @@ API.installStats = function (c0, d) {
 };
 
 API.dirStats = function (c0, d) {
-  const c = P_(c0, 'see.stats');
+  const c = wideStats_(P_(c0, 'see.stats'));
   if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
   const p = pickScope_(c, keysOf_(d));
   const scope = p.scope || p.scopes[0];

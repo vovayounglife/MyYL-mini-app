@@ -156,6 +156,12 @@ r = await api(RD, 'stats', { scope: 'r:r0', cat: 'finance', period: 'month' });
 ok(r.ok && /550/.test(r.data.kpis[0].v) && /250/.test(r.data.kpis[2].v), 'статистика фінансів регіону');
 r = await api(AD, 'stats', { scope: 'a:a1', cat: 'known', period: 'month' });
 ok(r.ok && r.data.kpis[0].v === '1', 'статистика знаних ерії');
+r = await api(AD, 'stats', { scope: 'r:r0', cat: 'finance', period: 'month' });
+ok(r.ok && /550/.test(r.data.kpis[0].v) && r.data.scope.key === 'r:r0', 'директор ерії: статистика всього регіону (і фінанси)');
+r = await api(AD, 'stats', { scope: 'r:r1', cat: 'club' });
+ok(!r.ok || r.data.scope.key !== 'r:r1', 'директор ерії: чужий регіон — ні');
+me = await api(AD, 'me');
+ok(me.data.statScopes && me.data.statScopes.some((x) => x.key === 'r:r0') && !me.data.scopes.some((x) => x.key === 'r:r0'), 'директор ерії: регіон лише у статистиці');
 r = await api(SUG, 'stats', {});
 ok(r.ok && r.data.cats.length === 1 && r.data.cats[0].key === 'club', 'сахарок — лише клуби');
 
