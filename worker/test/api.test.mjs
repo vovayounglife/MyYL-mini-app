@@ -875,6 +875,18 @@ ok(r.ok && r.people.found === 1 && r.roles.had === 1, 'YL Pray: повторни
 r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
 const vg = r.data.find((p) => /Гарань/.test(p.name));
 ok(vg && (vg.profile || {}).ig === '@vadym.h', 'YL Pray: Instagram у картці (посилання → @юзернейм)');
+// команда з іншою назвою: ті самі люди → переносимо в наявну
+r = await admin('pray', { list: [
+  { name: 'Вадим Гарань', unit: 'team', area: ['Тернопіль'], team: 'Glyna Інакше', key: 'LEADER' },
+  { name: 'Тарас Новенький', unit: 'team', area: ['Тернопіль'], team: 'Glyna Інакше', key: 'LEADER' },
+  { name: 'Зовсім Новенька', unit: 'team', area: ['Тернопіль'], team: 'Glyna Інакше', key: 'HELPER', ig: '@zn' },
+] });
+ok(r.teamsCreated.length === 1, 'YL Pray: створено команду з іншою назвою');
+r = await admin('prayFix', { teams: ['Тернопіль · Glyna Інакше'] });
+const pfx = r.teams[0];
+ok(r.ok && pfx.into === capTeam.name && pfx.merged === 2 && pfx.moved === 1, 'YL Pray: команду обʼєднано з наявною, дублі прибрано');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+ok(r.data.filter((p) => /Гарань/.test(p.name)).length === 1 && r.data.filter((p) => /Новенький/.test(p.name)).length === 1 && r.data.some((p) => /Зовсім Новенька/.test(p.name)), 'YL Pray: у складі без дублів, нова людина перенесена');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');

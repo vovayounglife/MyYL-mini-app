@@ -2992,6 +2992,50 @@ function importPray_(list) {
   return out;
 }
 
+// команди, створені імпортом, могли вже бути в MyYL під іншою назвою (Glyna / HLYNA, KAIROS / Кайрос…):
+// шукаємо в тій самій ерії команду, де вже є ці люди, і переносимо туди (дублікати людей обʼєднуємо)
+function prayFix_(names) {
+  const st = loadStruct_();
+  const out = [];
+  names.forEach((full) => {
+    const i = full.indexOf(' · ');
+    const area = st.areas.filter((a) => a.name === full.slice(0, i))[0];
+    const t = area && st.teams.filter((x) => x.areaId === area.id && x.name === full.slice(i + 3))[0];
+    if (!t) { out.push({ team: full, notFound: true }); return; }
+    const live = () => loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+    const mine = live().filter((r) => r.level === 'team' && r.unitId === t.id);
+    const ids = uniq_(mine.map((r) => r.tgId));
+    const nm = (id) => (getPerson_(id) || {}).name || '';
+    let best = null, bestN = 0;
+    st.teams.filter((x) => x.areaId === area.id && x.id !== t.id).forEach((x) => {
+      const theirs = uniq_(live().filter((r) => r.level === 'team' && r.unitId === x.id).map((r) => r.tgId));
+      const n = ids.filter((id) => theirs.some((o) => o === id || nameScore_(nm(id), nm(o)).same)).length;
+      if (n > bestN) { bestN = n; best = x; }
+    });
+    const row = { team: full, size: ids.length, best: best ? best.name : '', overlap: bestN };
+    if (!best || bestN < Math.max(2, Math.ceil(ids.length * 0.3))) { out.push(row); return; }
+    let moved = 0, merged = 0;
+    mine.forEach((r) => {
+      const theirs = live().filter((x) => x.level === 'team' && x.unitId === best.id);
+      const twin = uniq_(theirs.map((x) => x.tgId)).filter((o) => o === r.tgId || nameScore_(nm(r.tgId), nm(o)).same);
+      if (twin.length === 1 && twin[0] !== r.tgId && !isReal_(r.tgId) && !live().some((x) => x.tgId === r.tgId && x.id !== r.id)) {
+        // людина вже є в тій команді — дописуємо анкету й прибираємо дубль
+        fillPerson_(twin[0], getPerson_(r.tgId) || {}, false);
+        r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true);
+        S.run('DELETE FROM people WHERE tg_id = ?', [r.tgId], true); delete S.b.people[r.tgId];
+        merged++; return;
+      }
+      if (twin.length === 1 && twin[0] === r.tgId) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); merged++; return; }
+      r.unitId = best.id; S.run('UPDATE roles SET unit_id = ? WHERE id = ?', [best.id, r.id], true); moved++;
+    });
+    S.run('DELETE FROM teams WHERE id = ?', [t.id], true);
+    S.b.teams = S.b.teams.filter((x) => x.id !== t.id); delete S.b.team[t.id];
+    activateTeam_(best.id);
+    out.push(Object.assign(row, { into: best.name, moved: moved, merged: merged }));
+  });
+  return out;
+}
+
 async function handleAdmin(req, env, ctx, url) {
   const key = req.headers.get('x-sync-key') || url.searchParams.get('key');
   if (!env.SYNC_KEY || key !== env.SYNC_KEY) return json({ ok: false, error: 'forbidden' }, 403);
@@ -3032,6 +3076,14 @@ async function handleAdmin(req, env, ctx, url) {
     S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', [mk]);
     await S0.flush();
     return json(Object.assign({ ok: true, n: list.length, team: t.team, matched: team.name }, res));
+  }
+
+  if (action === 'prayFix') {
+    const S0 = new Store(env, ctx);
+    await S0.loadBase();
+    const res = use(S0, () => prayFix_(Array.isArray(body.teams) ? body.teams.map(String) : []));
+    await S0.flush();
+    return json({ ok: true, teams: res });
   }
 
   if (action === 'pray') {
