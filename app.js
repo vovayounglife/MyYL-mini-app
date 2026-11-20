@@ -1316,7 +1316,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
 
   // ───────────── ПІДГОТУВАТИ ЗВІТ ─────────────
-  const REP_ITEMS = { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота', known: 'Знані по імені', finance: 'Фінанси' };
+  const REP_ITEMS = { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота', known: 'Знані по імені (кількість)', finance: 'Фінанси', names: '🙏 Підлітки по іменах — список' };
   const REP_PRESETS = [['week', 'Цей тиждень'], ['lastweek', 'Минулий тиждень'], ['month', 'Цей місяць'], ['lastmonth', 'Минулий місяць'], ['q', '3 місяці'], ['year', 'З початку року'], ['custom', 'Свій період']];
   function presetRange(p) {
     const t = new Date(); t.setHours(12, 0, 0, 0);
@@ -1359,6 +1359,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
         ${d.rows.map((row) => `<tr class="${row.child ? 'ch' : 'top'}"><td>${row.child ? '↳ ' : ''}${esc(row.name)}</td>${sec.cols.map((c) => `<td>${esc(row.values[sec.key][c.key])}</td>`).join('')}</tr>`).join('')}
         ${d.total ? `<tr class="tot"><td>${esc(d.total.name)}</td>${sec.cols.map((c) => `<td>${esc(d.total.values[sec.key][c.key])}</td>`).join('')}</tr>` : ''}</tbody></table></div></div>`;
     });
+    if (d.names) {
+      h += `<div class="sec">Підлітки по іменах · ${d.names.length}</div>`;
+      h += d.names.length ? `<div class="card" style="padding:0"><div class="rtab-w"><table class="rtab nm"><thead><tr><th>Імʼя</th><th>Команда</th><th>Стадія</th><th>Хто веде</th></tr></thead><tbody>
+        ${d.names.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.team)}</td><td>${esc(p.stage)}</td><td>${esc(p.leader)}</td></tr>`).join('')}</tbody></table></div></div>
+        <div class="xs muted">Повний список з контактами — у файлі: «Файлом у Telegram».</div>` : '<div class="note small">У вибраних командах знаних поки немає.</div>';
+    }
     return h + '<div class="xs muted">«—» — немає доступу до цих даних. Файл у Telegram можна переслати або роздрукувати.</div>';
   }
   function repParams() {
@@ -1505,7 +1511,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const list = k.list;
     const multiTeam = new Set(list.map((p) => p.teamId)).size > 1;
     const word = (n) => n % 10 === 1 && n % 100 !== 11 ? 'підліток' : 'підлітків';
-    h += `<div class="small muted">${list.length} ${word(list.length)} · за них молимось${list.length ? ' · гортай колонки вбік →' : ''}</div>`;
+    h += `<div class="row" style="gap:8px;align-items:center"><div class="small muted grow">${list.length} ${word(list.length)} · за них молимось${list.length ? ' · гортай колонки вбік →' : ''}</div>
+      ${list.length ? `<button type="button" class="linkish small" data-a="knownExport"${k.exporting ? ' disabled' : ''}>📄 Витягти список</button>` : ''}</div>`;
     if (!list.length) return h + `<div class="note small">${k.mode === 'browse' ? 'Тут поки нікого немає.' : 'У твоєму списку ще нікого немає. Додай тих, кого знаєш по імені, — по одному або одразу списком.'}</div>`;
     h += `<div class="board" id="knownBoard">${STAGES.map((st) => {
       const col = list.filter((p) => (p.stage || 'meet') === st[0]);
@@ -2195,6 +2202,14 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.logout = () => { if (confirm('Вийти з MyYL на цьому пристрої?')) logout(false); };
   A.loginStart = () => loginStart();
   A.loginCancel = () => { S.login = null; clearTimeout(S.loginTimer); renderLogin(); };
+  A.knownExport = async () => {
+    const browse = S.known.mode === 'browse', P = S.pick.known;
+    if (browse && (!P || !P.keys.length)) return toast('Обери, чий список', 'error');
+    S.known.exporting = true; render();
+    const res = await run(() => api('knownExport', browse ? { units: P.keys } : { mine: true }));
+    S.known.exporting = false; render();
+    if (res) toast('Список (' + res.count + ') надіслано файлом у чат з ботом', 'success');
+  };
   A.repUnit = (d, el) => { S.rep.units[d.k] = el.checked; S.rep.data = null; render(); };
   A.repItem = (d, el) => { S.rep.items[d.k] = el.checked; S.rep.data = null; };
   A.repPreset = (d) => { const r = S.rep; r.preset = d.p; if (d.p !== 'custom') { const x = presetRange(d.p); r.from = x[0]; r.to = x[1]; } r.data = null; render(); };

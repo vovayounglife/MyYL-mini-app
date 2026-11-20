@@ -268,7 +268,7 @@ ok(r.data.scopes.find((x) => x.key === 't:' + capTeam.id).parent === 'a:a1' && r
 // звіт
 const today = T.kyivDay(new Date()), monthAgo = T.kyivDay(new Date(Date.now() - 30 * 864e5));
 me = await api(AD, 'me');
-ok(me.data.caps.reportItems.join() === 'club,mg,kr,known,finance', 'звіт: пункти для Еріа Директора');
+ok(me.data.caps.reportItems.join() === 'club,mg,kr,known,finance,names', 'звіт: пункти для Еріа Директора');
 r = await api(AD, 'report', { units: ['r:r0'], items: ['club'], from: monthAgo, to: today });
 ok(!r.ok, 'звіт: ЕД не може замовити регіон (вище за свій рівень)');
 r = await api(AD, 'report', { units: ['a:a1', 't:' + capTeam.id], items: ['club', 'finance', 'known'], from: monthAgo, to: today, split: true });
@@ -276,6 +276,17 @@ ok(r.ok && r.data.rows.length === 1 + 2 + 1 && r.data.total, 'звіт: ерія
 const capRow = r.data.rows.find((x) => x.child && x.name === 'Нова команда');
 ok(capRow && capRow.values.club.v === '12' && capRow.values.finance.inc === '550' && capRow.values.known.total === '1', 'звіт: цифри команди вірні');
 ok(r.data.total.values.club.v === '12', 'звіт: «Разом» без подвійного рахунку');
+r = await api(AD, 'report', { units: ['a:a1'], items: ['names'], from: monthAgo, to: today, send: true });
+ok(r.ok && r.data.names.length >= 1 && r.data.names[0].name && r.data.names[0].stage && r.data.sections.length === 0, 'звіт: підлітки по іменах (лише список)');
+let ndoc = sent.filter((x) => x.m === 'sendDocument').pop();
+ok(ndoc && /Підлітки по іменах/.test(ndoc.document.text) && /Стадія/.test(ndoc.document.text), 'звіт: список імен у файлі');
+r = await api(SUG, 'report', { units: ['t:' + capTeam.id], items: ['names'], from: monthAgo, to: today });
+ok(!r.ok, 'звіт: сахарок не витягує імена');
+r = await api(CAP, 'knownExport', { units: ['t:' + capTeam.id] });
+ndoc = sent.filter((x) => x.m === 'sendDocument').pop();
+ok(r.ok && r.data.count >= 1 && ndoc && ndoc.chat_id === String(CAP.id) && /Знані по імені/.test(ndoc.document.text), 'знані: витягти список файлом');
+r = await api(SUG, 'knownExport', { units: ['t:' + capTeam.id] });
+ok(!r.ok, 'знані: без доступу — не витягує');
 r = await api(VOVA, 'report', { units: ['nat', 'r:r0'], items: ['club', 'kr'], from: monthAgo, to: today });
 ok(r.ok, 'звіт: Раб Божий — Україна і регіон');
 r = await api(VOVA, 'report', { units: ['a:a1'], items: ['club'], from: monthAgo, to: today });

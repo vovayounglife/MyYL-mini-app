@@ -145,7 +145,7 @@ const NEEDS = {
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
-  myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report' },
+  myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
   dirStats: { log: 'stats' }, installStats: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
@@ -1722,8 +1722,44 @@ const reportScopes_ = (c) => (isSuper_(c) ? allowedScopes_(c) : allowedScopes_(c
 function reportItems_(c) {
   const ok = {};
   reportScopes_(c).forEach((s) => statCats_(c, s).forEach((x) => { if (REPORT_ITEMS[x.key]) ok[x.key] = true; }));
-  return Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
+  const out = Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
+  if (ok.known) out.push('names'); // підлітки по іменах
+  return out;
 }
+// список підлітків (знаних) по іменах: команда, стадія, контакти
+const NAME_COLS = [['name', 'Імʼя'], ['team', 'Команда'], ['stage', 'Стадія'], ['leader', 'Хто веде'], ['school', 'Школа'], ['grade', 'Клас'], ['bday', 'День народження'], ['phone', 'Телефон'], ['ig', 'Instagram'], ['added', 'Додано']];
+function namesOut_(rows) {
+  const st = loadStruct_();
+  const stg = {}; STAGES.forEach((x, i) => { stg[x[0]] = [i, x[1]]; });
+  const day = (k) => { const p = String(k || '').slice(0, 10).split('-'); return p.length === 3 ? Number(p[2]) + '.' + p[1] + '.' + p[0] : ''; };
+  return rows.filter((r) => r.active).map((r) => {
+    const o = knownOut_(r);
+    return { name: o.name, team: r.team_id ? (st.team[r.team_id] || {}).name || '' : NO_TEAM, stage: stg[o.stage][1], _s: stg[o.stage][0], leader: o.leader, school: o.school, grade: o.grade, bday: day(o.bday), phone: o.phone, ig: o.ig, added: day(r.added) };
+  }).sort((a, b) => a.team.localeCompare(b.team) || a._s - b._s || a.name.localeCompare(b.name)).map((x) => { delete x._s; return x; });
+}
+function namesHtml_(names) {
+  const e = esc_;
+  return '<h2>Підлітки по іменах · ' + names.length + '</h2><div class="w"><table class="nm"><thead><tr><th>№</th>' + NAME_COLS.map((c) => '<th>' + e(c[1]) + '</th>').join('') + '</tr></thead><tbody>' +
+    names.map((r, i) => '<tr><td>' + (i + 1) + '</td>' + NAME_COLS.map((c) => '<td>' + e(r[c[0]] || '') + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+}
+// знані: витягти поточний список файлом у Telegram
+API.knownExport = function (c, d) {
+  let rows, what;
+  if (d.mine) { rows = (S.knownMine || []).filter((r) => r.active && canRowView_(c, r)); what = 'Мій список'; }
+  else {
+    const teams = pickTeams_(c, d, canKnown_);
+    if (!teams.length) deny_();
+    rows = [].concat.apply([], teams.map((id) => S.known[id] || []));
+    const p = pickScope_(c, keysOf_(d));
+    what = p.scope ? (p.scope.label || p.scope.name) : '';
+  }
+  const names = namesOut_(rows);
+  if (!names.length) bad_('У цьому списку поки нікого немає.');
+  const day = kyivDay(new Date());
+  const doc = { title: 'Знані по імені', period: what + ' · станом на ' + day.split('-').reverse().join('.'), author: c.name, created: day, sections: [], rows: [], total: null, names: names };
+  S.sendDoc(c.id, 'YL-znani-' + day + '.html', reportHtml_(doc), '🙏 <b>Знані по імені</b>\n' + esc_(what) + ' · ' + names.length);
+  return { sent: true, count: names.length };
+};
 
 function reportRow_(teamIds, items, from, to, allowed, scope) {
   const st = loadStruct_();
@@ -1776,7 +1812,8 @@ API.report = function (c, d) {
   if (keys.length > 40) bad_('Забагато одиниць: максимум 40.');
   const avail = reportItems_(c);
   const items = Object.keys(REPORT_ITEMS).filter((k) => (d.items || []).indexOf(k) >= 0 && avail.indexOf(k) >= 0);
-  if (!items.length) bad_('Обери, що має бути у звіті.');
+  const wantNames = (d.items || []).indexOf('names') >= 0 && avail.indexOf('names') >= 0;
+  if (!items.length && !wantNames) bad_('Обери, що має бути у звіті.');
   const re = /^\d{4}-\d{2}-\d{2}$/;
   if (!re.test(d.from || '') || !re.test(d.to || '') || d.to < d.from) bad_('Перевір період: дата кінця має бути не раніше за дату початку.');
   if (d.from < addDaysKey_(d.to, -400)) bad_('Період — не довше року.');
@@ -1808,6 +1845,12 @@ API.report = function (c, d) {
     sections: items.map((it) => ({ key: it, label: REPORT_ITEMS[it].label, cols: REPORT_ITEMS[it].cols.map((x) => ({ key: x[0], label: x[1] })) })),
     rows, total,
   };
+  if (wantNames) {
+    // лише команди, де є право бачити знаних
+    const teamIds = uniq_([].concat.apply([], keys.filter((k) => allowedFor(byKey[k]).known).map((k) => scopeTeamIds_(byKey[k])))).filter((id) => canKnown_(c, id));
+    out.names = namesOut_([].concat.apply([], teamIds.map((id) => S.known[id] || [])));
+    out.nameCols = NAME_COLS.map((x) => ({ key: x[0], label: x[1] }));
+  }
   if (d.send) {
     const names = keys.map((k) => byKey[k].name).slice(0, 3).join(', ') + (keys.length > 3 ? ' та ін.' : '');
     S.sendDoc(c.id, 'YL-zvit-' + from + '_' + to + '.html', reportHtml_(out), '📊 <b>Звіт Young Life</b>\n' + esc_(names) + '\n' + esc_(out.period));
@@ -1828,10 +1871,11 @@ function reportHtml_(r) {
     'h2{font-size:17px;margin:26px 0 8px}.w{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:420px}' +
     'th,td{padding:8px 10px;border-bottom:1px solid #e6e6ea;text-align:right;white-space:nowrap}th{font-size:12px;color:#6b6b70;font-weight:600}' +
     'td:first-child,th:first-child{text-align:left;white-space:normal}tr.top td{font-weight:600}tr.ch td{color:#444}tr.ch td:first-child{padding-left:22px}' +
-    'tr.tot td{font-weight:700;border-top:2px solid #1d1d1f;background:#fff4ef}@media print{body{padding:0}}</style></head><body>' +
-    '<div class="hd"><h1>' + e(r.title) + '</h1><div class="m">Період: ' + e(r.period) + ' · сформував(ла): ' + e(r.author) + ' · ' + e(r.created) + '</div></div>' +
-    r.sections.map(table).join('') +
-    '<p class="m" style="margin-top:28px">«Звітували, тижнів» — скільки тижнів команди внесли звіт про клуб (разом з «не було») з усіх можливих. «—» — немає доступу до цих даних.</p></body></html>';
+    'tr.tot td{font-weight:700;border-top:2px solid #1d1d1f;background:#fff4ef}table.nm{min-width:760px}table.nm td,table.nm th{text-align:left;white-space:nowrap;font-weight:400}table.nm td:first-child{color:#6b6b70}@media print{body{padding:0}}</style></head><body>' +
+    '<div class="hd"><h1>' + e(r.title) + '</h1><div class="m">' + (r.sections.length ? 'Період: ' : '') + e(r.period) + ' · сформував(ла): ' + e(r.author) + ' · ' + e(r.created) + '</div></div>' +
+    r.sections.map(table).join('') + (r.names ? namesHtml_(r.names) : '') +
+    (r.sections.length ? '<p class="m" style="margin-top:28px">«Звітували, тижнів» — скільки тижнів команди внесли звіт про клуб (разом з «не було») з усіх можливих. «—» — немає доступу до цих даних.</p>' : '') +
+    (r.names ? '<p class="m">Особисті дані підлітків — лише для служіння. Не пересилай файл стороннім.</p>' : '') + '</body></html>';
 }
 
 // ── розсилка від Раба Божого ──

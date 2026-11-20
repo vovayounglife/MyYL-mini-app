@@ -248,3 +248,4 @@ input, select, textarea, .in { font-size: 16px !important; }
 .step-n { flex: 0 0 22px; height: 22px; border-radius: 11px; background: var(--accent, #ff6a1a); color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; margin-right: 10px; }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent-text, #e05a12); font-weight: 600; text-align: left; cursor: pointer; }
 .danger-t { color: #d93025 !important; border-color: rgba(217, 48, 37, .35) !important; }
+.rtab.nm th, .rtab.nm td { text-align: left; }
