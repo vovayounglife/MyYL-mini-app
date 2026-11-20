@@ -858,7 +858,7 @@ const NICK_ = [
   'наталія наталя ната наташа', 'василь вася', 'микола коля', 'петро петя', 'іван ваня іванко', 'михайло мишко міша', 'юрій юра юрко', 'богдан бодя', 'богдана бодя',
   'анна ганна аня ганя', 'надія надя', 'любов люба', 'роман рома', 'ярослав ярик ярко', 'ярослава яся ярина', 'станіслав стас', 'ростислав ростик', 'святослав свят',
   'валентин валік', 'валентина валя', 'артем тьома', 'оксана ксюша', 'ксенія ксюша', 'іванна іванка', 'олена лена альона', 'людмила люда міла', 'світлана світла свєта',
-  'вероніка ніка', 'валерія лєра лера', 'соломія соля', 'ангеліна ліна', 'поліна поля', 'віталіна віта', 'маріанна маряна марʼяна', 'антон тоша', 'андрій андрійко', 'тимофій тимко тіма',
+  'вероніка ніка', 'валерія лєра лера', 'соломія соля', 'ангеліна ліна', 'поліна поля', 'віталіна віта', 'маріанна маряна марʼяна', 'антон тоша', 'андрій андрійко', 'тимофій тимко тіма', 'яніна яна',
 ];
 const NICK_MAP_ = {};
 NICK_.forEach((g, i) => g.split(' ').forEach((w) => { (NICK_MAP_[w.replace(/[ʼ’']/g, '')] = NICK_MAP_[w.replace(/[ʼ’']/g, '')] || []).push(i); }));
@@ -3115,6 +3115,40 @@ function mergeIds_(ids) {
   });
   return keep;
 }
+// явне обʼєднання: [«Яна Ковальчук», «Яніна Ковальчук»] — кожне імʼя має відповідати рівно одному запису
+function mergeNames_(names) {
+  const ids = [];
+  for (const n of names) {
+    const m = Object.keys(S.b.people).filter((id) => nameScore_(n, S.b.people[id].name).exact);
+    if (m.length !== 1) return { names: names.length, error: m.length ? 'кілька записів з таким імʼям' : 'не знайдено' };
+    if (ids.indexOf(m[0]) < 0) ids.push(m[0]);
+  }
+  if (ids.length < 2) return { error: 'це вже один запис' };
+  if (ids.filter(isReal_).length > 1) return { error: 'двоє зареєстрованих' };
+  mergeIds_(ids);
+  return { merged: ids.length };
+}
+// однофамільці: пари людей з однаковим прізвищем (Степанов = Степанова, Вітовський = Вітовська)
+const FIRST_ = new Set(('тарас данило денис олег ілля марко назар віктор вікторія яна христина діана аліна каріна злата мирослава мирослав остап орест ігор ігорь павло ' +
+  'петро степан григорій георгій едуард кирило матвій давид даніїл даниїл адам вадим віталій вячеслав руслан артур ярема зіновій любомир лілія ліля маргарита рита ' +
+  'інна емілія еліна евеліна мілана міла софія анастасія олеся леся віра неля нелля жанна алла вадим максим олексій лука марта уляна ульяна ева єва').split(' '));
+function surKey_(t) {
+  return t.replace(/ська$/, 'ський').replace(/цька$/, 'цький').replace(/зька$/, 'зький').replace(/ова$/, 'ов').replace(/єва$/, 'єв').replace(/ева$/, 'ев').replace(/іна$/, 'ін').replace(/ина$/, 'ин').replace(/ая$/, 'ий');
+}
+function namesakes_() {
+  const st = loadStruct_();
+  const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const where = (id) => uniq_(live.filter((r) => r.tgId === id).map((r) => (r.level === 'team' ? (st.team[r.unitId] || {}).name + ' (' + ((st.area[(st.team[r.unitId] || {}).areaId] || {}).name || '') + ')' : unitName_(r.level, r.unitId)) + ' — ' + r.label)).join('; ');
+  const by = {};
+  uniq_(live.map((r) => r.tgId)).forEach((id) => {
+    const p = getPerson_(id); if (!p || !p.name) return;
+    const toks = nameToks_(p.name).filter((t) => !/(івна|ївна|овна|евна|ович|йович|євич|евич)$/.test(t));
+    let sur = toks.filter((t) => !NICK_MAP_[t] && !FIRST_.has(t));
+    if (sur.length > 1 && toks.length >= 2) sur = sur.slice(0, 2);
+    uniq_(sur.map(surKey_)).forEach((k) => { if (k.length >= 3) (by[k] = by[k] || []).push(id); });
+  });
+  return Object.keys(by).filter((k) => uniq_(by[k]).length > 1).sort().map((k) => ({ surname: k, people: uniq_(by[k]).map((id) => (isReal_(id) ? '✅ ' : '') + getPerson_(id).name + ' · ' + where(id)) }));
+}
 // латиниця/кирилиця: «Hlyna» = «Глина» = «Glyna», «Capernaum» = «Капернаум»
 const TR_ = { а: 'a', б: 'b', в: 'v', г: 'g', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sh', ь: '', ю: 'iu', я: 'ia' };
 function teamKey_(name) {
@@ -3266,10 +3300,11 @@ async function handleAdmin(req, env, ctx, url) {
     }));
     const ppl = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : (body.people || []);
     const auto = body.autoPeople ? use(S0, () => autoMergePeople_()) : null;
-    const people = use(S0, () => ppl.map((x) => mergePeopleByName_(String(x.area), String(x.name))));
+    const people = use(S0, () => ppl.map((x) => (Array.isArray(x.names) ? mergeNames_(x.names.map(String)) : mergePeopleByName_(String(x.area), String(x.name)))));
     await S0.flush();
     const res = { ok: true, merged: merged, renamed: renamed, people: people.map((x, i) => Object.assign({ n: i + 1 }, x)) };
     if (auto) { res.autoMerged = auto.length; res.autoEnc = await encryptOut_(JSON.stringify(auto), env.SYNC_KEY); }
+    if (body.namesakes) res.namesakes = await encryptOut_(JSON.stringify(use(S0, () => namesakes_())), env.SYNC_KEY);
     if (body.audit) res.audit = await encryptOut_(JSON.stringify(use(S0, () => audit_())), env.SYNC_KEY);
     return json(res);
   }

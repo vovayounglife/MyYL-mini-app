@@ -113,6 +113,7 @@ jobs:
           echo "$RES" | jq '{ok, error, merged, renamed, people, autoMerged}'
           echo "AUDIT_ENC $(echo "$RES" | jq -r '.audit // empty')"
           echo "AUTO_ENC $(echo "$RES" | jq -r '.autoEnc // empty')"
+          echo "NAMESAKES_ENC $(echo "$RES" | jq -r '.namesakes // empty')"
           echo "$RES" | jq -e .ok > /dev/null
 
       - name: Перенести людей з альбому YL Pray (один раз)
