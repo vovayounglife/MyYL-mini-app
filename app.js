@@ -143,19 +143,34 @@
   }
 
   // ───────────── API ─────────────
+  const READ_ACTIONS = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo)$/;
   async function api(action, data) {
     S.busy++; progress();
     try {
       const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
-      const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign(auth, { action: action, data: data || {} })) });
-      const j = await res.json();
+      const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }));
+      // перегляд даних — до 3 спроб (мережа в телефоні буває «засинає»); збереження — одна, щоб не задвоїти
+      const tries = READ_ACTIONS.test(action) ? 3 : 1;
+      let j, lastErr;
+      for (let k = 0; k < tries; k++) {
+        if (k) await new Promise((r) => setTimeout(r, k * 800));
+        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctl && setTimeout(() => ctl.abort(), 20000);
+        try {
+          const res = await fetch(API_URL, { method: 'POST', body: body, signal: ctl ? ctl.signal : undefined });
+          j = await res.json();
+          lastErr = null;
+          break;
+        } catch (e) { lastErr = e; } finally { if (timer) clearTimeout(timer); }
+      }
+      if (lastErr) throw lastErr;
       if (!j.ok) {
         if (!IN_TG && (j.error === 'auth' || j.error === 'auth_expired')) { logout(true); }
         const e = new Error(j.message || 'Помилка'); e.code = j.error; throw e;
       }
       return j.data;
     } catch (e) {
-      if (!e.code) e.message = 'Немає звʼязку із сервером. Перевір інтернет і спробуй ще раз.';
+      if (!e.code) e.message = e.name === 'AbortError' ? 'Сервер довго не відповідає. Спробуй ще раз за хвилинку.' : 'Немає звʼязку із сервером. Перевір інтернет і спробуй ще раз.';
       throw e;
     } finally { S.busy--; progress(); }
   }
