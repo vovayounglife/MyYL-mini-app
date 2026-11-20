@@ -110,7 +110,7 @@ jobs:
         run: |
           sleep 20
           RES=$(curl -s -X POST "$URL/admin/teams" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @"$GITHUB_WORKSPACE/worker/seed/teams.json")
-          echo "$RES" | jq '{ok, error, merged}'
+          echo "$RES" | jq '{ok, error, merged, renamed, people}'
           echo "AUDIT_ENC $(echo "$RES" | jq -r '.audit // empty')"
           echo "$RES" | jq -e .ok > /dev/null
 
