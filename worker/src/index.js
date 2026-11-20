@@ -850,11 +850,25 @@ function lev_(a, b) {
   for (let i = 0; i <= a.length; i++) { m[i] = [i]; for (let j = 1; j <= b.length; j++) m[i][j] = i ? Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)) : j; }
   return m[a.length][b.length];
 }
-const tokEq_ = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && lev_(a, b) <= 1);
+// повні й короткі форми імен: «Ольга» = «Оля», «Анастасія» = «Настя», «Галина» = «Галя»…
+const NICK_ = [
+  'ольга оля олька', 'анастасія настя настуся ася', 'галина галя', 'тетяна таня', 'ірина іра ірка', 'олександр саша сашко олекса', 'олександра саша сашка', 'володимир вова володя',
+  'дмитро діма дмитрик', 'юлія юля', 'катерина катя катруся', 'марія марічка маша маруся', 'софія соня софійка', 'вікторія віка', 'євген женя', 'євгенія женя',
+  'олексій льоша олесь', 'сергій сєрьожа серьожа', 'максим макс', 'владислав влад владик', 'владислава влада', 'єлизавета ліза лізa', 'дарина даша дарʼя дарья дарка', 'христина христя',
+  'наталія наталя ната наташа', 'василь вася', 'микола коля', 'петро петя', 'іван ваня іванко', 'михайло мишко міша', 'юрій юра юрко', 'богдан бодя', 'богдана бодя',
+  'анна ганна аня ганя', 'надія надя', 'любов люба', 'роман рома', 'ярослав ярик ярко', 'ярослава яся ярина', 'станіслав стас', 'ростислав ростик', 'святослав свят',
+  'валентин валік', 'валентина валя', 'артем тьома', 'оксана ксюша', 'ксенія ксюша', 'іванна іванка', 'олена лена альона', 'людмила люда міла', 'світлана світла свєта',
+  'вероніка ніка', 'валерія лєра лера', 'соломія соля', 'ангеліна ліна', 'поліна поля', 'віталіна віта', 'маріанна маряна марʼяна', 'антон тоша', 'андрій андрійко', 'тимофій тимко тіма',
+];
+const NICK_MAP_ = {};
+NICK_.forEach((g, i) => g.split(' ').forEach((w) => { (NICK_MAP_[w.replace(/[ʼ’']/g, '')] = NICK_MAP_[w.replace(/[ʼ’']/g, '')] || []).push(i); }));
+const nickEq_ = (a, b) => { const A = NICK_MAP_[a], B = NICK_MAP_[b]; return !!(A && B && A.some((x) => B.indexOf(x) >= 0)); };
+const tokEq_ = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && lev_(a, b) <= 1) || nickEq_(a, b);
 function nameScore_(a, b) {
   const A = nameToks_(a), B = nameToks_(b);
   const s = A.filter((x) => B.some((y) => tokEq_(x, y))).length;
-  return { s: s, exact: A.length > 0 && A.length === B.length && A.every((x) => B.indexOf(x) >= 0), same: A.length > 0 && s >= Math.min(A.length, B.length, 2) };
+  return { s: s, exact: A.length > 0 && A.length === B.length && A.every((x) => B.indexOf(x) >= 0), same: A.length > 0 && s >= Math.min(A.length, B.length, 2),
+    alike: A.length > 0 && A.length === B.length && A.every((x) => B.some((y) => tokEq_(x, y))) && B.every((y) => A.some((x) => tokEq_(x, y))) };
 }
 // чи може c дати роль key у команді teamId (капітан і вище — як підтвердження; адмін команди — ролі нижче себе)
 function canAssign_(c, teamId, key) {
@@ -3062,6 +3076,45 @@ function mergePeopleByName_(areaName, name) {
   });
   return { found: ids.length, moved: moved };
 }
+// у кожній ерії: записи, що збігаються повністю (з урахуванням «Оля» = «Ольга», «Суботін» = «Субботін») — обʼєднати
+function autoMergePeople_() {
+  const st = loadStruct_();
+  const done = [];
+  st.areas.forEach((a) => {
+    const units = [a.id].concat(st.teams.filter((x) => x.areaId === a.id).map((x) => x.id));
+    const live = loadRoles_().filter((r) => (r.status === ST.ACTIVE || r.status === ST.PENDING) && units.indexOf(r.unitId) >= 0);
+    const ids = uniq_(live.map((r) => r.tgId));
+    const nm = (id) => (getPerson_(id) || {}).name || '';
+    const seen = {};
+    ids.forEach((x) => {
+      if (seen[x] || !getPerson_(x)) return;
+      const grp = [x].concat(ids.filter((y) => y !== x && !seen[y] && getPerson_(y) && nameScore_(nm(x), nm(y)).alike));
+      if (grp.length < 2) return;
+      grp.forEach((y) => { seen[y] = 1; });
+      if (grp.filter(isReal_).length > 1) return;
+      const names = grp.map(nm);
+      const r = mergeIds_(grp);
+      done.push({ area: a.name, names: names, keep: nm(r) });
+    });
+  });
+  return done;
+}
+// обʼєднати кілька записів однієї людини: лишається зареєстрований або найповніший
+function mergeIds_(ids) {
+  const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const real = ids.filter(isReal_);
+  const keep = real[0] || ids.slice().sort((x, y) => FILL_.filter((k) => (getPerson_(y) || {})[k]).length - FILL_.filter((k) => (getPerson_(x) || {})[k]).length)[0];
+  ids.filter((id) => id !== keep).forEach((id) => {
+    live.filter((r) => r.tgId === id).forEach((r) => {
+      const dup = loadRoles_().some((x) => x.tgId === keep && x.key === r.key && x.unitId === r.unitId && (x.status === ST.ACTIVE || x.status === ST.PENDING));
+      if (dup) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); return; }
+      r.tgId = keep; S.run('UPDATE roles SET tg_id = ?, name = ? WHERE id = ?', [keep, (getPerson_(keep) || {}).name || '', r.id], true);
+    });
+    fillPerson_(keep, getPerson_(id) || {}, false);
+    S.run('DELETE FROM people WHERE tg_id = ?', [id], true); delete S.b.people[id];
+  });
+  return keep;
+}
 // латиниця/кирилиця: «Hlyna» = «Глина» = «Glyna», «Capernaum» = «Капернаум»
 const TR_ = { а: 'a', б: 'b', в: 'v', г: 'g', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sh', ь: '', ю: 'iu', я: 'ia' };
 function teamKey_(name) {
@@ -3212,9 +3265,11 @@ async function handleAdmin(req, env, ctx, url) {
       return { from: old, to: t.name };
     }));
     const ppl = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : (body.people || []);
+    const auto = body.autoPeople ? use(S0, () => autoMergePeople_()) : null;
     const people = use(S0, () => ppl.map((x) => mergePeopleByName_(String(x.area), String(x.name))));
     await S0.flush();
     const res = { ok: true, merged: merged, renamed: renamed, people: people.map((x, i) => Object.assign({ n: i + 1 }, x)) };
+    if (auto) { res.autoMerged = auto.length; res.autoEnc = await encryptOut_(JSON.stringify(auto), env.SYNC_KEY); }
     if (body.audit) res.audit = await encryptOut_(JSON.stringify(use(S0, () => audit_())), env.SYNC_KEY);
     return json(res);
   }

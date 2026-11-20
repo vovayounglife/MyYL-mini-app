@@ -911,6 +911,13 @@ ok(r.ok && r.people[0].found === 2 && r.people[0].moved === 1 && r.renamed[0].to
 r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
 const dsb = r.data.find((p) => /Субот|Суббот/.test(p.name));
 ok(dsb && dsb.all.length === 2 && dsb.profile.ig === '@ds', 'дублі людей: обидві ролі й анкета в одному записі');
+// «Оля Дума» і «Ольга Дума» — одна людина
+await api(VOVA, 'memberAdd', { teamId: 'tSv', names: 'Ольга Дума', role: 'HELPER' });
+await api(VOVA, 'memberAdd', { teamId: capTeam.id, names: 'Оля Дума\nОля Інша', role: 'LEADER' });
+r = await admin('teams', { autoPeople: true });
+ok(r.ok && r.autoMerged === 1 && typeof r.autoEnc === 'string', 'дублі: «Оля» = «Ольга» обʼєднано автоматично');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+ok(r.data.filter((p) => /Дума/.test(p.name)).length === 1 && r.data.find((p) => /Дума/.test(p.name)).all.length === 2 && r.data.some((p) => /Оля Інша/.test(p.name)), 'дублі: один запис з двома ролями, інші не зачеплено');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
