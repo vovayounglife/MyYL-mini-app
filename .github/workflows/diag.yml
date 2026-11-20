@@ -1,0 +1,28 @@
+# Діагностика сервера: чи відповідає і які помилки за останні години (без особистих даних)
+name: Діагностика сервера
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diag.yml']
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Запит до сервера
+        run: |
+          for i in 1 2 3; do
+            curl -s -o body.txt -w "HTTP %{http_code} за %{time_total}s\n" -X POST https://yl-mini-app.vova-younglife.workers.dev -H 'content-type: application/json' --data '{"action":"me","data":{},"initData":""}'
+            head -c 300 body.txt; echo
+          done
+          curl -s -o /dev/null -w "OPTIONS %{http_code}\n" -X OPTIONS https://yl-mini-app.vova-younglife.workers.dev
+      - name: Помилки воркера за 24 год (Cloudflare)
+        run: |
+          SINCE=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ); NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          Q=$(jq -n --arg acc "$CF_ACC" --arg s "$SINCE" --arg n "$NOW" '{query: "query($acc:String!,$s:Time!,$n:Time!){viewer{accounts(filter:{accountTag:$acc}){workersInvocationsAdaptive(limit:200,filter:{datetime_geq:$s,datetime_leq:$n,scriptName:\"yl-mini-app\"},orderBy:[datetimeHour_DESC]){sum{requests errors subrequests}quantiles{cpuTimeP50 cpuTimeP99}dimensions{datetimeHour status}}}}}", variables:{acc:$acc,s:$s,n:$n}}')
+          curl -s https://api.cloudflare.com/client/v4/graphql -H "Authorization: Bearer $CF_TOKEN" -H 'content-type: application/json' --data "$Q" | jq -c '.errors // (.data.viewer.accounts[0].workersInvocationsAdaptive[] | {h:.dimensions.datetimeHour,st:.dimensions.status,req:.sum.requests,err:.sum.errors,cpu50:.quantiles.cpuTimeP50,cpu99:.quantiles.cpuTimeP99})' | head -60
+          Q2=$(jq -n --arg acc "$CF_ACC" --arg s "$SINCE" --arg n "$NOW" '{query: "query($acc:String!,$s:Time!,$n:Time!){viewer{accounts(filter:{accountTag:$acc}){d1AnalyticsAdaptiveGroups(limit:50,filter:{datetime_geq:$s,datetime_leq:$n}){sum{readQueries writeQueries rowsRead rowsWritten}dimensions{datetimeHour}}}}}", variables:{acc:$acc,s:$s,n:$n}}')
+          curl -s https://api.cloudflare.com/client/v4/graphql -H "Authorization: Bearer $CF_TOKEN" -H 'content-type: application/json' --data "$Q2" | jq -c '.errors // (.data.viewer.accounts[0].d1AnalyticsAdaptiveGroups[] | {h:.dimensions.datetimeHour,r:.sum.readQueries,w:.sum.writeQueries,rowsRead:.sum.rowsRead,rowsWritten:.sum.rowsWritten})' | head -40
