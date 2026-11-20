@@ -93,6 +93,17 @@ jobs:
           echo "$RES" | jq '{ok, skipped, totals, missingAreas, teams: [.teams[]? | {area, team, matched, created, added, linked, dup, bad}]}'
           echo "$RES" | jq -e .ok > /dev/null
 
+      - name: Перенести людей з альбому YL Pray (один раз)
+        if: hashFiles('worker/seed/pray.enc') != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          sleep 20
+          jq -n --rawfile enc "$GITHUB_WORKSPACE/worker/seed/pray.enc" '{enc: ($enc | rtrimstr("\n"))}' > body.json
+          RES=$(curl -s -X POST "$URL/admin/pray" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @body.json)
+          echo "$RES" | jq '{ok, skipped, error, rows, people, roles, fields, teamsCreated, missing, linkedByTg}'
+          echo "$RES" | jq -e .ok > /dev/null
+
       - name: Перенести історію з командних табличок (один раз)
         if: hashFiles('worker/seed/history.enc') != ''
         env:

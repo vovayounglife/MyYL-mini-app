@@ -861,6 +861,25 @@ ok(r.ok && r.data.status === 'active' && me.data.status === 'active' && me.data.
 r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
 ok(r.data.filter((p) => /Гарань/.test(p.name)).length === 1 && r.data.find((p) => /Гарань/.test(p.name)).registered, 'обʼєднання: у складі один, з позначкою YL');
 
+// ── імпорт з YL Pray: склад, нові команди, анкета; привʼязка за юзернеймом Telegram ──
+r = await admin('pray', { list: [
+  { name: 'Тарас Новенький', unit: 'team', area: ['Тернопіль'], team: capTeam.name, key: 'LEADER', bday: '2001-05-03', ig: '@taras_n', tg: '@Taras_TG', phone: '0991112233' },
+  { name: 'Петро Зновуновий', unit: 'team', area: ['Львів'], team: 'Зовсім Нова', key: 'HELPER', title: 'Друг служіння' },
+  { name: 'Гарань Вадим', unit: 'team', area: ['Тернопіль'], team: capTeam.name, key: 'LEADER', ig: 'instagram.com/vadym.h' },
+  { name: 'Хтось Безерійний', unit: 'team', area: ['Нема'], team: 'X', key: 'LEADER' },
+] });
+ok(r.ok && r.people.created === 2 && r.people.found === 1 && r.roles.added === 2 && r.roles.had === 1 && r.teamsCreated.length === 1 && r.missing.indexOf('ерія Нема') >= 0, 'YL Pray: нові люди й команда, наявні — без дублів');
+ok(r.fields.ig === 2 && r.fields.bday === 1 && r.fields.username === 1 && r.fields.title === 1, 'YL Pray: анкета дописана');
+r = await admin('pray', { list: [{ name: 'Тарас Новенький', unit: 'team', area: ['Тернопіль'], team: capTeam.name, key: 'LEADER' }] });
+ok(r.ok && r.people.found === 1 && r.roles.had === 1, 'YL Pray: повторний імпорт нічого не дублює');
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+const vg = r.data.find((p) => /Гарань/.test(p.name));
+ok(vg && (vg.profile || {}).ig === '@vadym.h', 'YL Pray: Instagram у картці (посилання → @юзернейм)');
+const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
+r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
+me = await api(TN, 'me');
+ok(me.data.status === 'active' && me.data.roles.filter((x) => x.key === 'LEADER').length === 1 && me.data.profile.ig === '@taras_n' && me.data.profile.bday === '2001-05-03', 'YL Pray: юзернейм Telegram привʼязав людину й анкету');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

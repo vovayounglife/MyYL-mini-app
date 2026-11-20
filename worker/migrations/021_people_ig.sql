@@ -1,0 +1,2 @@
+ALTER TABLE people ADD COLUMN ig TEXT;
+ALTER TABLE people ADD COLUMN family TEXT;

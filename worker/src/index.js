@@ -429,7 +429,7 @@ function indexBase(b) {
 function personFromRow(r) {
   let notif = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
-  return { main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', notif: notif };
+  return { main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -534,8 +534,9 @@ function setRoleStatus_(r, status, by) {
 function savePerson_(c, d) {
   const p = getPerson_(c.id);
   const v = {};
-  const F = { name: 'name', phone: 'phone', bday: 'bday', repent: 'repent', baptism: 'baptism', lpyl: 'lpyl', resp: 'resp' };
+  const F = { name: 'name', phone: 'phone', bday: 'bday', repent: 'repent', baptism: 'baptism', lpyl: 'lpyl', resp: 'resp', ig: 'ig' };
   Object.keys(F).forEach((k) => { if (d[k] != null) v[F[k]] = clip_(d[k]); });
+  if (v.ig) v.ig = igNorm_(v.ig);
   if (d.email != null) v.email = clip_(String(d.email).trim().toLowerCase());
   if (d.title != null) v.title = clip_(String(d.title).slice(0, 60));
   if (d.main != null) v.main = clip_(d.main);
@@ -789,6 +790,9 @@ function linkPlaceholders_(onlyId) {
     const pname = (getPerson_(mid) || {}).name;
     if (!pname) return;
     const mine = roles.filter((r) => r.tgId === mid && r.status === ST.ACTIVE);
+    const un = String((getPerson_(mid) || {}).username || '').toLowerCase();
+    const byUser = un ? real.filter((id) => String(S.b.people[id].username || '').toLowerCase() === un) : [];
+    if (byUser.length === 1) { mergeMember_(mid, byUser[0]); n++; return; }
     const cands = real.filter((id) => {
       const sc = nameScore_(pname, S.b.people[id].name);
       if (!sc.same) return false;
@@ -800,6 +804,21 @@ function linkPlaceholders_(onlyId) {
     n++;
   });
   return n;
+}
+// дописати порожні поля анкети (нічого вже заповненого не перезаписуємо); повертає назви дописаних полів
+const FILL_ = ['phone', 'bday', 'ig', 'family', 'title', 'username'];
+function fillPerson_(id, src, keepUser) {
+  const p = S.b.people[id];
+  if (!p) return [];
+  const v = {};
+  FILL_.forEach((k) => {
+    if (!src[k] || p[k]) return;
+    if (k === 'username' && isReal_(id) && !keepUser) return; // юзернейм зареєстрованих — лише з Telegram
+    v[k] = clip_(String(src[k])).slice(0, 80);
+  });
+  const keys = Object.keys(v);
+  if (keys.length) { S.run('UPDATE people SET ' + keys.map((k) => k + ' = ?').join(', ') + ' WHERE tg_id = ?', keys.map((k) => v[k]).concat([id]), true); Object.assign(p, v); }
+  return keys;
 }
 function mergeMember_(mid, id) {
   const name = S.b.people[id].name;
@@ -813,6 +832,7 @@ function mergeMember_(mid, id) {
     S.run('UPDATE roles SET tg_id = ?, name = ? WHERE id = ?', [id, name, r.id], true);
     if (r.status === ST.ACTIVE) got.push(r);
   });
+  fillPerson_(id, S.b.people[mid] || {}, true);
   S.run('DELETE FROM people WHERE tg_id = ?', [mid], true);
   delete S.b.people[mid];
   if (got.length && wants_(id, 'requests')) sendApp_(id, '✅ Тебе вже внесли в склад: ' + got.map((r) => esc_(r.label + ' · ' + levelLabel_(r.level, r.unitId).replace(/^Команда /, ''))).join(', ') + '. Роль активна — заходь!', 'Відкрити');
@@ -1625,7 +1645,7 @@ API.myylTree = function (c0) {
     units[k].people = Object.keys(byUnit[k]).map((id) => {
       const p = byUnit[k][id];
       const person = getPerson_(id) || {};
-      return { tgId: id, name: person.name || p.name, username: person.username || '', title: person.title || '', rank: p.rank,
+      return { tgId: id, name: person.name || p.name, username: person.username || '', ig: person.ig || '', title: person.title || '', rank: p.rank,
         roles: p.roles.sort((a, b) => a.rank - b.rank).map((x) => x.label) };
     }).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   });
@@ -2910,6 +2930,68 @@ function importMembers_(list) {
   return { totals: totals, missingAreas: missingAreas, teams: teams };
 }
 
+// люди з альбому YL Pray: склад команд, ролі в еріях і регіоні + анкета (Instagram, Telegram, ДН, телефон, родина)
+// [{ name, unit: 'team'|'area'|'region', region: [..], area: [..], team, key, title, bday, ig, tg, phone, family, also: [{ unit, region, area, team, key }] }]
+function importPray_(list) {
+  const st = loadStruct_();
+  const out = { rows: list.length, people: { found: 0, created: 0 }, roles: { added: 0, had: 0, skipped: 0 }, fields: {}, teamsCreated: [], missing: [], linkedByTg: 0 };
+  const miss = (x) => { if (out.missing.indexOf(x) < 0) out.missing.push(x); };
+  const findRegion = (al) => { const a = [].concat(al || []).map(na_); return st.regions.filter((r) => a.indexOf(na_(r.name)) >= 0)[0] || (st.regions.length === 1 ? st.regions[0] : null); };
+  const areaOfUnit = (r) => (r.level === 'team' ? (st.team[r.unitId] || {}).areaId : r.level === 'area' ? r.unitId : '');
+  const place = (e) => {
+    const def = roleDef_(e.key);
+    if (!def) return null;
+    if (e.unit === 'region') { const rg = findRegion(e.region); if (!rg) { miss('регіон ' + [].concat(e.region)[0]); return null; } return { key: e.key, level: 'region', unitId: rg.id, areaId: '' }; }
+    const a = findArea_(e.area);
+    if (!a) { miss('ерія ' + [].concat(e.area)[0]); return null; }
+    if (e.unit === 'area') return def.level === 'area' ? { key: e.key, level: 'area', unitId: a.id, areaId: a.id } : null;
+    if (def.level !== 'team') return null;
+    let t = findTeamIn_(a.id, e.team);
+    if (!t) { t = st.team[createTeam_(a.id, e.team, true)]; out.teamsCreated.push(a.name + ' · ' + e.team); }
+    return { key: e.key, level: 'team', unitId: t.id, areaId: a.id };
+  };
+  const personIn = (name, pl) => {
+    const roles = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+    const here = uniq_(roles.filter((r) => r.level === pl.level && r.unitId === pl.unitId).map((r) => r.tgId)).filter((id) => nameScore_(name, (getPerson_(id) || {}).name || '').same);
+    if (here.length === 1) return here[0];
+    const exact = Object.keys(S.b.people).filter((id) => nameScore_(name, S.b.people[id].name).exact);
+    const near = exact.filter((id) => roles.some((r) => r.tgId === id && pl.areaId && areaOfUnit(r) === pl.areaId));
+    if (near.length === 1) return near[0];
+    if (exact.length === 1) return exact[0];
+    // те саме імʼя з незначною різницею — лише якщо людина вже в цій ерії
+    const sim = Object.keys(S.b.people).filter((id) => nameScore_(name, S.b.people[id].name).same && roles.some((r) => r.tgId === id && pl.areaId && areaOfUnit(r) === pl.areaId));
+    return sim.length === 1 ? sim[0] : null;
+  };
+  const giveRole = (id, pl) => {
+    const has = loadRoles_().filter((r) => r.tgId === id && r.level === pl.level && r.unitId === pl.unitId && (r.status === ST.ACTIVE || r.status === ST.PENDING));
+    if (has.some((r) => r.key === pl.key || r.status === ST.ACTIVE)) { out.roles.had++; return; }
+    insertRole_({ id: uid_(), tgId: id, name: (getPerson_(id) || {}).name || '', key: pl.key, level: pl.level, unitId: pl.unitId, status: ST.ACTIVE, decidedBy: 'YL Pray', decided: nowIso(), requested: nowIso() });
+    if (pl.level === 'team') activateTeam_(pl.unitId);
+    out.roles.added++;
+  };
+  list.forEach((row) => {
+    const name = clip_(String(row.name || '').replace(/\s+/g, ' ').trim()).slice(0, 80);
+    if (nameToks_(name).length < 2) { out.roles.skipped++; return; }
+    const main = place(row);
+    const alsoPl = (row.also || []).map(place).filter(Boolean);
+    const first = main || alsoPl[0];
+    if (!first) { out.roles.skipped++; return; }
+    let id = personIn(name, first);
+    if (id) out.people.found++;
+    else {
+      id = 'm:' + uid_();
+      S.run('INSERT INTO people (tg_id, name, registered) VALUES (?,?,?)', [id, name, ''], true);
+      S.b.people[id] = personFromRow({ tg_id: id, name: name });
+      out.people.created++;
+    }
+    [main].concat(alsoPl).filter(Boolean).forEach((pl) => giveRole(id, pl));
+    const got = fillPerson_(id, { phone: row.phone, bday: row.bday, ig: row.ig ? igNorm_(row.ig) : '', family: row.family, title: row.title, username: String(row.tg || '').replace(/^@/, '') }, false);
+    got.forEach((k) => { out.fields[k] = (out.fields[k] || 0) + 1; });
+  });
+  out.linkedByTg = linkPlaceholders_();
+  return out;
+}
+
 async function handleAdmin(req, env, ctx, url) {
   const key = req.headers.get('x-sync-key') || url.searchParams.get('key');
   if (!env.SYNC_KEY || key !== env.SYNC_KEY) return json({ ok: false, error: 'forbidden' }, 403);
@@ -2950,6 +3032,19 @@ async function handleAdmin(req, env, ctx, url) {
     S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', [mk]);
     await S0.flush();
     return json(Object.assign({ ok: true, n: list.length, team: t.team, matched: team.name }, res));
+  }
+
+  if (action === 'pray') {
+    const list = body.enc ? JSON.parse(await decryptSeed_(String(body.enc), env.SYNC_KEY)) : body.list;
+    if (!Array.isArray(list)) return json({ ok: false, error: 'bad_payload' }, 400);
+    const mk = 'pray:' + (await sha256hex_(JSON.stringify(list))).slice(0, 16);
+    if (!body.force && await db.prepare('SELECT 1 AS x FROM meta WHERE k = ?').bind(mk).first('x')) return json({ ok: true, skipped: 'вже перенесено раніше' });
+    const S0 = new Store(env, ctx);
+    await S0.loadBase();
+    const res = use(S0, () => importPray_(list));
+    S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', [mk]);
+    await S0.flush();
+    return json(Object.assign({ ok: true }, res));
   }
 
   if (action === 'members') {
@@ -3051,7 +3146,8 @@ function uid_() { return crypto.randomUUID().replace(/-/g, '').slice(0, 10); }
 function uniq_(a) { return a.filter((x, i) => x && a.indexOf(x) === i); }
 function fullName_(f) { return [f.first_name, f.last_name].filter(Boolean).join(' ') || f.username || String(f.id); }
 function nowIso() { return new Date().toISOString(); }
-function profileOf_(p) { return { main: p.main || '', name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
+const igNorm_ = (x) => { const m = String(x || '').trim().match(/(?:instagram\.com\/)?@?([A-Za-z0-9._]{1,30})/); return m ? '@' + m[1] : ''; };
+function profileOf_(p) { return { main: p.main || '', name: p.name, title: p.title, phone: p.phone, email: p.email, bday: p.bday, ig: p.ig || '', family: p.family || '', repent: p.repent, baptism: p.baptism, lpyl: p.lpyl, resp: p.resp, notif: notifOf_(p.tgId) }; }
 // bc — розсилки від інших; remind — нагадування про звіти; events — про події; requests — нові заявки
 const NOTIF = ['bc', 'remind', 'events', 'requests', 'tasks'];
 function notifOf_(tgId) {
