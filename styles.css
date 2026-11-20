@@ -249,3 +249,158 @@ input, select, textarea, .in { font-size: 16px !important; }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent-text, #e05a12); font-weight: 600; text-align: left; cursor: pointer; }
 .danger-t { color: #d93025 !important; border-color: rgba(217, 48, 37, .35) !important; }
 .rtab.nm th, .rtab.nm td { text-align: left; }
+
+/* ═══════════════ РІДКЕ СКЛО (Liquid Glass) ═══════════════ */
+:root {
+  --bg: #fff3ea;
+  --card: rgba(255, 255, 255, .78);
+  --text: #1a1622;
+  --muted: #5f5562;
+  --line: rgba(120, 80, 60, .14);
+  --soft: rgba(255, 255, 255, .5);
+  --accent: #e8552a;
+  --accent-text: #c2410c;
+  --glass: rgba(255, 255, 255, .52);
+  --glass-hi: rgba(255, 255, 255, .78);
+  --glass-brd: rgba(255, 255, 255, .85);
+  --glass-sh: 0 10px 30px -12px rgba(120, 50, 20, .30);
+  --glass-in: inset 0 1px 0 rgba(255, 255, 255, .95), inset 0 -1px 0 rgba(255, 255, 255, .35);
+  --grad: linear-gradient(135deg, #ff8547 0%, #ef5a2c 55%, #e2452a 100%);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --blur: blur(18px) saturate(1.7);
+  --radius: 24px;
+}
+html.dark {
+  --bg: #16121a;
+  --card: rgba(44, 38, 50, .82);
+  --text: #f5f0f2;
+  --muted: #b3a8b2;
+  --line: rgba(255, 255, 255, .10);
+  --soft: rgba(255, 255, 255, .08);
+  --accent-text: #ff9a6b;
+  --glass: rgba(48, 40, 54, .50);
+  --glass-hi: rgba(64, 54, 72, .72);
+  --glass-brd: rgba(255, 255, 255, .14);
+  --glass-sh: 0 12px 34px -12px rgba(0, 0, 0, .65);
+  --glass-in: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04);
+}
+html, body { background: var(--bg); }
+body { font-family: Inter, system-ui, -apple-system, sans-serif; }
+#app { position: relative; z-index: 1; }
+
+/* фон: помаранчеві плями, що повільно пливуть (градієнти — легко для телефона) */
+.bg-blobs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.bg-blobs i { position: absolute; border-radius: 50%; will-change: transform; }
+.bg-blobs i:nth-child(1) { width: 420px; height: 420px; top: -140px; left: -150px; background: radial-gradient(circle, rgba(255, 128, 60, .75), rgba(255, 128, 60, 0) 68%); animation: blob1 16s ease-in-out infinite; }
+.bg-blobs i:nth-child(2) { width: 380px; height: 380px; top: 34%; right: -170px; background: radial-gradient(circle, rgba(255, 196, 92, .7), rgba(255, 196, 92, 0) 68%); animation: blob2 19s ease-in-out infinite; }
+.bg-blobs i:nth-child(3) { width: 360px; height: 360px; bottom: -150px; left: -60px; background: radial-gradient(circle, rgba(244, 114, 182, .42), rgba(244, 114, 182, 0) 68%); animation: blob1 23s ease-in-out infinite reverse; }
+html.dark .bg-blobs i { opacity: .45; }
+@keyframes blob1 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(60px, 50px) scale(1.12); } }
+@keyframes blob2 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-50px, -60px) scale(1.08); } }
+
+/* скло */
+.card, .tile, .ev, .mini-stat, .seg, .col-st, .banner, .note, .week-item, .opt-ic, .det {
+  background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--glass-sh), var(--glass-in);
+}
+.card { border-radius: var(--radius); }
+.card .card, .card .tile, .card .ev { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--glass-hi); }
+.banner { background: rgba(255, 196, 92, .30); }
+.note { background: rgba(255, 196, 92, .24); }
+.week-item { border-radius: 18px; }
+.tile { border-radius: var(--radius); min-height: 96px; padding: 14px; }
+.ev { border-radius: 22px; }
+.mini-stat { border-radius: 20px; }
+.col-st { border-radius: var(--radius); border-top-width: 4px; }
+.kcard { background: var(--glass-hi); border: 1px solid var(--glass-brd); border-radius: 16px; box-shadow: 0 4px 14px -8px rgba(120, 50, 20, .35), var(--glass-in); }
+.kv, .li, .check, .stepper { border-color: var(--line); }
+
+/* кнопки */
+.btn { border-radius: 999px; background: var(--grad); border: 1px solid rgba(255, 255, 255, .45); box-shadow: 0 10px 26px -8px rgba(226, 85, 42, .6), inset 0 1px 0 rgba(255, 255, 255, .55); font-weight: 700; position: relative; overflow: hidden; }
+.btn::before { content: ''; position: absolute; left: 12px; right: 12px; top: 2px; height: 45%; border-radius: 999px; background: linear-gradient(180deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, 0)); pointer-events: none; }
+.btn.sec2, .btn.ghost { background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--text); border: 1px solid var(--glass-brd); box-shadow: var(--glass-sh), var(--glass-in); }
+.btn.sec2::before, .btn.ghost::before { opacity: .6; }
+.btn.teal { background: linear-gradient(135deg, #2dd4bf, #0f766e); box-shadow: 0 10px 26px -8px rgba(15, 118, 110, .55), inset 0 1px 0 rgba(255, 255, 255, .5); }
+.btn.sm { border-radius: 999px; }
+.icon-btn { border-radius: 50%; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-brd); box-shadow: var(--glass-sh), var(--glass-in); }
+.icon-btn.accent { background: var(--grad); border-color: rgba(255, 255, 255, .45); }
+.pill { background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: 0 4px 14px -8px rgba(120, 50, 20, .3), var(--glass-in); }
+.pill.on { background: var(--grad); border-color: rgba(255, 255, 255, .5); color: #fff; box-shadow: 0 8px 20px -8px rgba(226, 85, 42, .6), inset 0 1px 0 rgba(255, 255, 255, .5); }
+.pill.multi.on { background: var(--glass-hi); color: var(--text); border-color: var(--accent); }
+.tag { background: var(--glass-hi); border: 1px solid var(--glass-brd); }
+.badge { background: var(--grad); color: #fff; box-shadow: 0 4px 10px -4px rgba(226, 85, 42, .6); }
+.status.none { background: var(--glass-hi); border-color: var(--glass-brd); }
+.stepper .ctl button { border-radius: 50%; background: var(--glass-hi); border: 1px solid var(--glass-brd); box-shadow: var(--glass-in); }
+.in { background: var(--glass-hi); border: 1px solid var(--glass-brd); border-radius: 16px; box-shadow: inset 0 1px 3px rgba(120, 50, 20, .08); transition: box-shadow .2s, border-color .2s; }
+.card .in { background: var(--glass-hi); }
+.in:focus { outline: none; border-color: rgba(232, 85, 42, .55); box-shadow: 0 0 0 4px rgba(255, 133, 71, .2); }
+.avatar { background: var(--glass-hi); border: 1px solid var(--glass-brd); color: var(--accent-text); }
+.avatar.lg { background: var(--grad); color: #fff; border-color: rgba(255, 255, 255, .5); box-shadow: 0 10px 24px -8px rgba(226, 85, 42, .55); }
+.logo, .yl-logo { border-radius: 50% !important; box-shadow: 0 8px 22px -8px rgba(226, 85, 42, .5); border-color: var(--glass-brd) !important; }
+
+/* перемикачі з «бульбашкою», що перетікає */
+.seg { border-radius: 999px; position: relative; }
+.seg button { border-radius: 999px; position: relative; z-index: 1; transition: color .25s; }
+.seg button.on { background: transparent; box-shadow: none; color: var(--text); }
+.seg:not(.has-glide) button.on { background: var(--glass-hi); box-shadow: 0 4px 14px -6px rgba(120, 50, 20, .35); }
+.glide { position: absolute; z-index: 0; border-radius: 999px; pointer-events: none; transition: left .5s var(--spring), width .5s var(--spring), top .3s, height .3s; }
+.seg .glide { background: var(--glass-hi); border: 1px solid var(--glass-brd); box-shadow: 0 6px 16px -6px rgba(120, 50, 20, .35), var(--glass-in); }
+
+/* нижнє меню — плаваюча скляна панель */
+nav.tabs { left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 6px; max-width: 540px; margin: 0 auto; border-radius: 30px; border: 1px solid var(--glass-brd); background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 16px 40px -14px rgba(120, 50, 20, .45), var(--glass-in); }
+nav.tabs .in-nav { position: relative; }
+nav.tabs button { z-index: 1; min-height: 56px; padding: 6px 0 4px; border-radius: 24px; transition: color .25s; }
+nav.tabs button.on { color: var(--accent-text); }
+nav.tabs .glide { background: var(--glass-hi); border: 1px solid var(--glass-brd); box-shadow: 0 6px 18px -8px rgba(120, 50, 20, .4), var(--glass-in); }
+nav.tabs button svg { transition: transform .35s var(--spring); }
+nav.tabs button.on svg { transform: translateY(-1px) scale(1.12); }
+.main { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
+
+/* натискання: скло пружно стискається */
+.btn, .tile, .li, .ev, .pill, .icon-btn, .kcard, .mini-stat, .week-item .status, .stepper .ctl button, .opt, .thx-btn, .banner, nav.tabs button, .seg button {
+  transition: transform .3s var(--spring), filter .2s, box-shadow .3s, color .25s;
+}
+.btn:active, .tile:active, .ev:active, .pill:active, .icon-btn:active, .kcard:active, .mini-stat:active, .banner:active, .week-item .status:active, .stepper .ctl button:active { transform: scale(.95); filter: brightness(1.06); }
+.li:active { transform: scale(.98); background: var(--soft); }
+nav.tabs button:active, .seg button:active { transform: scale(.92); }
+.btn[disabled] { filter: saturate(.6); }
+
+/* поява екрана: розмиття → різкість, елементи по черзі */
+.main.enter > * { animation: glassIn .55s var(--ease) both; }
+.main.enter > :nth-child(2) { animation-delay: .04s; }
+.main.enter > :nth-child(3) { animation-delay: .08s; }
+.main.enter > :nth-child(4) { animation-delay: .12s; }
+.main.enter > :nth-child(5) { animation-delay: .16s; }
+.main.enter > :nth-child(6) { animation-delay: .20s; }
+.main.enter > :nth-child(7) { animation-delay: .24s; }
+.main.enter > :nth-child(n+8) { animation-delay: .28s; }
+@keyframes glassIn { from { opacity: 0; transform: translateY(14px) scale(.985); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* сповіщення, вікна */
+.toast { border-radius: 999px; background: rgba(30, 24, 34, .72); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid rgba(255, 255, 255, .18); box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .5); bottom: calc(96px + env(safe-area-inset-bottom)); animation: toastIn .55s var(--spring) both; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(30px) scale(.9); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+.modal-bg { background: rgba(30, 20, 30, .28); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.modal { background: var(--glass-hi); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-brd); border-radius: 30px; box-shadow: 0 30px 60px -20px rgba(0, 0, 0, .4), var(--glass-in); animation: pop .5s var(--spring); }
+.thx-btn { background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--glass-sh), var(--glass-in); }
+.spin { border-color: rgba(232, 85, 42, .18); border-top-color: var(--accent); }
+.progress { height: 3px; background: var(--grad); }
+.chart .bar i { background: var(--glass-hi); border: 1px solid var(--glass-brd); }
+.chart .bar.last i { background: var(--grad); border-color: rgba(255, 255, 255, .5); }
+.track { background: var(--glass-hi); }
+.rtab td:first-child, .rtab th:first-child { background: rgba(255, 248, 243, .96); }
+html.dark .rtab td:first-child, html.dark .rtab th:first-child { background: rgba(36, 30, 40, .96); }
+.opt-ic { border-radius: 50%; }
+.step-n { background: var(--grad); }
+.det { border-radius: var(--radius); }
+
+/* без скла там, де телефон не вміє розмивати */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --glass: rgba(255, 255, 255, .86); --glass-hi: rgba(255, 255, 255, .95); }
+  html.dark { --glass: rgba(44, 38, 50, .92); --glass-hi: rgba(58, 50, 66, .96); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-blobs i, .main.enter > *, .toast, .modal { animation: none !important; }
+  .glide { transition: none !important; }
+}
+html.dark .btn.sec2::before, html.dark .btn.ghost::before { opacity: .18; }

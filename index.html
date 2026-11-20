@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>MyYL · Young Life Україна</title>
 <link rel="manifest" href="manifest.webmanifest?v=6">
-<meta name="theme-color" content="#ff7a00">
+<meta name="theme-color" content="#fff3ea">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="MyYL">
@@ -15,16 +15,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=13">
+<link rel="stylesheet" href="styles.css?v=14">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
+<div class="bg-blobs" aria-hidden="true"><i></i><i></i><i></i></div>
 <div id="app"><div class="loader"><div class="spin"></div>Завантаження…</div></div>
 <script src="config.js?v=3"></script>
 <script>
   // свіжа версія без очікування кешу: номер беремо з version.json (не кешується), інакше — вбудований
   (function () {
-    var FALLBACK = { app: 51, css: 13 }, done = false;
+    var FALLBACK = { app: 52, css: 14 }, done = false;
     function go(v) {
       if (done) return; done = true;
       if (v.css && v.css !== FALLBACK.css) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'styles.css?v=' + v.css; document.head.appendChild(l); }

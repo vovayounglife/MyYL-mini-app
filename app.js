@@ -419,11 +419,15 @@
     $app.querySelectorAll(HS).forEach((el, i) => { if (el.scrollLeft) hsSaved[hsKey(el, i)] = el.scrollLeft; });
     const view = VIEWS[S.screen] ? VIEWS[S.screen]() : '';
     const nav = S.me.status === 'active' ? navHtml() : '';
-    $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
+    // новий екран (або інший заголовок у ньому) — плавна поява; звичайні оновлення — без анімації
+    const vKey = S.screen + '|' + ((view.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || '');
+    const enter = vKey !== S._vKey; S._vKey = vKey;
+    $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}${enter ? ' enter' : ''}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
       <div id="thxT" class="thx-text">Дякую тобі за вірність в малому</div>
       <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
     syncBack();
+    glide();
     $app.querySelectorAll(HS).forEach((p, i) => {
       const k = hsKey(p, i);
       if (hsSaved[k] != null) p.scrollLeft = hsSaved[k];
@@ -432,6 +436,28 @@
       if (!on) return;
       const l = on.offsetLeft - p.offsetLeft, r = l + on.offsetWidth;
       if (hsSaved[k] == null ? l > p.clientWidth - 40 : (l < p.scrollLeft || r > p.scrollLeft + p.clientWidth)) p.scrollLeft = l - (p.clientWidth - on.offsetWidth) / 2;
+    });
+  }
+  // «бульбашка», що перетікає між пунктами перемикача та нижнього меню
+  const GL = {};
+  function glide() {
+    $app.querySelectorAll('.seg, nav.tabs .in-nav').forEach((box, i) => {
+      const on = box.querySelector(':scope > button.on');
+      if (!on) return;
+      const key = box.classList.contains('in-nav') ? 'nav' : S.screen + '|' + i;
+      const g = document.createElement('i');
+      g.className = 'glide';
+      box.insertBefore(g, box.firstChild);
+      box.classList.add('has-glide');
+      const r = { l: on.offsetLeft, w: on.offsetWidth, t: on.offsetTop, h: on.offsetHeight };
+      const set = (x) => { g.style.left = x.l + 'px'; g.style.width = x.w + 'px'; g.style.top = x.t + 'px'; g.style.height = x.h + 'px'; };
+      const prev = GL[key];
+      GL[key] = r;
+      if (prev && (prev.l !== r.l || prev.w !== r.w)) {
+        g.style.transition = 'none'; set(prev);
+        void g.offsetWidth;
+        g.style.transition = ''; set(r);
+      } else set(r);
     });
   }
   function renderFatal() {
@@ -2466,8 +2492,16 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     tg.ready();
     tg.expand();
     if (tg.colorScheme === 'dark') document.documentElement.classList.add('dark');
-    tg.onEvent('themeChanged', () => document.documentElement.classList.toggle('dark', tg.colorScheme === 'dark'));
-    try { tg.setHeaderColor('secondary_bg_color'); } catch (e) { /* старий Telegram */ }
+    // шапка й фон Telegram — у тон скляного фону
+    const paint = () => {
+      const dark = tg.colorScheme === 'dark';
+      document.documentElement.classList.toggle('dark', dark);
+      try { tg.setHeaderColor(dark ? '#16121a' : '#fff3ea'); } catch (e) { try { tg.setHeaderColor('secondary_bg_color'); } catch (e2) { /* старий Telegram */ } }
+      try { tg.setBackgroundColor && tg.setBackgroundColor(dark ? '#16121a' : '#fff3ea'); } catch (e) { /* ок */ }
+      try { tg.setBottomBarColor && tg.setBottomBarColor(dark ? '#16121a' : '#fff3ea'); } catch (e) { /* ок */ }
+    };
+    paint();
+    tg.onEvent('themeChanged', paint);
     tg.BackButton.onClick(back);
     if (!IN_TG) { if (!API_URL) return; return loadMe(); }
     S.homeSt = '';
