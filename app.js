@@ -467,6 +467,8 @@
     const m = me(), c = caps();
     let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png?v=6" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
     const items = (m.week && m.week.items) || [];
+    const offer = installOffer(true);
+    if (offer) h += `<div class="card col" style="gap:10px">${offer}</div>`;
     if (m.pendingCount) {
       h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
@@ -1376,35 +1378,40 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
 
   // ───────────── ВСТАНОВИТИ ─────────────
-  VIEWS.install = function () {
-    let h = header('На головний екран', 'Іконка YL на телефоні');
-    if (IS_INSTALLED) return h + '<div class="card col"><h2>✅ Застосунок встановлено</h2><div class="muted">Ти зараз у ньому. Відкривай MyYL з іконки на головному екрані.</div></div>';
+  // два способи мати MyYL на телефоні — компактно, для головної, очікування і «Ще»
+  function installCards() {
     const added = S.homeSt === 'added';
-    h += `<div class="card col"><h2>📲 Іконка через Telegram</h2><div class="small muted">Найпростіше: іконка YL на головному екрані, яка одразу відкриває MyYL у Telegram.</div>
-      ${IN_TG ? `<button type="button" class="btn" data-a="installHome"${added ? ' disabled' : ''}>${added ? 'Іконку вже додано ✓' : 'Додати на головний екран'}</button>`
-        : `<button type="button" class="btn" data-a="openUrl" data-url="${HOME_LINK}">Відкрити в Telegram і додати</button>`}</div>
-      <div class="card rows small">
-        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Натисни кнопку вище — Telegram запропонує <b>«Додати на головний екран»</b></span></div>
-        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Або в MyYL натисни <b>⋯</b> вгорі праворуч → <b>«Add to Home Screen»</b> («На головний екран»)</span></div>
-        <div class="kv"><span>3</span><span style="text-align:left;flex:1">Нема такого пункту? Відкрий MyYL через профіль бота <b>@${BOT_NAME}</b> → «Відкрити» або за посиланням нижче і повтори</span></div>
-        <div class="kv"><span>4</span><span style="text-align:left;flex:1">Не виходить зовсім — онови Telegram в App Store / Google Play</span></div></div>
-      <button type="button" class="btn sec2 sm" data-a="copyHome">Скопіювати посилання для команди</button>
-      <div class="sec">Або окремий застосунок без Telegram</div>
-      <div class="card col"><div class="small muted">Відкривається з іконки на весь екран через браузер. Дані ті самі, вхід — один раз через Telegram.</div>`;
-    if (IN_TG) {
-      h += `<button type="button" class="btn sec2" data-a="openApp">Відкрити в браузері</button>
-        <button type="button" class="btn sec2 sm" data-a="copyApp">Скопіювати посилання</button>`;
-    } else if (S.installEvt) h += '<button type="button" class="btn" data-a="pwaInstall">Встановити</button>';
-    h += `</div>
-      <div class="sec">iPhone</div><div class="card rows small">
-        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Відкрий посилання в <b>Safari</b>${IN_TG ? ' (якщо відкрилось у Telegram — натисни значок компаса чи «Відкрити в Safari»)' : ''}</span></div>
-        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Натисни «Поділитися» <b>⎋</b> унизу екрана</span></div>
-        <div class="kv"><span>3</span><span style="text-align:left;flex:1">«На початковий екран» → «Додати»</span></div>
-        <div class="kv"><span>4</span><span style="text-align:left;flex:1">Відкрий MyYL з іконки → «Увійти через Telegram»</span></div></div>
-      <div class="sec">Android</div><div class="card rows small">
-        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Відкрий посилання в <b>Chrome</b></span></div>
-        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Меню <b>⋮</b> → «Встановити застосунок» або «Додати на головний екран»</span></div>
-        <div class="kv"><span>3</span><span style="text-align:left;flex:1">Відкрий MyYL з іконки → «Увійти через Telegram»</span></div></div>`;
+    const a = IN_TG ? `<button type="button" class="btn sm" data-a="installHome"${added ? ' disabled' : ''}>${added ? 'Додано ✓' : 'Додати'}</button>`
+      : `<button type="button" class="btn sm" data-a="openUrl" data-url="${HOME_LINK}">Додати</button>`;
+    const b = IN_TG ? '<button type="button" class="btn sec2 sm" data-a="openApp">У браузері</button>'
+      : S.installEvt ? '<button type="button" class="btn sm" data-a="pwaInstall">Встановити</button>'
+      : '<button type="button" class="btn sec2 sm" data-a="tabGo" data-s="install">Як це</button>';
+    return `<div class="grid2">
+      <div class="card opt"><div class="opt-ic">✈️</div><b>Іконка Telegram</b><span class="xs muted">Найпростіше: відкривається одразу в Telegram</span>${a}</div>
+      <div class="card opt"><div class="opt-ic">📱</div><b>Окремий застосунок</b><span class="xs muted">На весь екран, без Telegram</span>${b}</div></div>`;
+  }
+  const installOffer = (closable) => (IS_INSTALLED || S.homeSt === 'added' || (closable && LS.get('hideInstall'))) ? '' :
+    `<div class="row" style="margin-top:4px"><b class="grow">📲 MyYL на головний екран</b>${closable ? '<button type="button" class="btn ghost sm" style="min-height:30px;padding:0 10px" data-a="hideInstall" aria-label="Сховати">✕</button>' : ''}</div>
+     ${installCards()}<button type="button" class="linkish xs" data-a="tabGo" data-s="install">Детальніше про обидва способи →</button>`;
+  VIEWS.install = function () {
+    let h = header('MyYL на телефоні', 'Два способи — обери зручний');
+    if (IS_INSTALLED) return h + '<div class="card col"><h2>✅ Застосунок встановлено</h2><div class="muted">Ти зараз у ньому. Відкривай MyYL з іконки на головному екрані.</div></div>';
+    const step = (n, t) => `<div class="kv"><span class="step-n">${n}</span><span style="text-align:left;flex:1">${t}</span></div>`;
+    h += installCards();
+    h += `<details class="card det"${IN_TG ? ' open' : ''}><summary>✈️ Іконка Telegram — як додати</summary><div class="rows small">
+        ${step(1, 'Натисни <b>«Додати»</b> — Telegram запропонує «На головний екран»')}
+        ${step(2, 'Або в MyYL: <b>⋯</b> вгорі праворуч → <b>Add to Home Screen</b>')}
+        ${step(3, `Нема пункту? Відкрий MyYL через профіль <b>@${BOT_NAME}</b> → «Відкрити» і повтори. Не допомогло — онови Telegram`)}</div>
+        <button type="button" class="btn ghost sm" data-a="copyHome">Скопіювати посилання для команди</button></details>
+      <details class="card det"${IN_TG ? '' : ' open'}><summary>📱 Окремий застосунок — iPhone</summary><div class="rows small">
+        ${step(1, `Відкрий посилання в <b>Safari</b>${IN_TG ? ' (кнопка «У браузері» вище)' : ''}`)}
+        ${step(2, '«Поділитися» <b>⎋</b> → «На початковий екран» → «Додати»')}
+        ${step(3, 'Відкрий MyYL з іконки → «Увійти через Telegram»')}</div></details>
+      <details class="card det"><summary>📱 Окремий застосунок — Android</summary><div class="rows small">
+        ${step(1, 'Відкрий посилання в <b>Chrome</b>')}
+        ${step(2, 'Меню <b>⋮</b> → «Встановити застосунок»')}
+        ${step(3, 'Відкрий MyYL з іконки → «Увійти через Telegram»')}</div></details>
+      ${IN_TG ? '<button type="button" class="btn ghost sm" data-a="copyApp">Скопіювати посилання на окремий застосунок</button>' : ''}`;
     return h;
   };
 
@@ -1754,7 +1761,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <div style="width:72px;height:72px;border-radius:36px;background:rgba(20,184,166,.16);color:var(--teal);display:flex;align-items:center;justify-content:center;margin-top:16px">${icon('check', 36)}</div>
       <h1>Заявку надіслано</h1><p class="muted" style="margin:0">Її розгляне ${esc(m.approvers || 'керівництво')}. Щойно доступ відкриють — бот напише тобі в Telegram.</p>
       <div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span><span class="tag warn">очікує</span></div>`).join('')}</div>
-      <button type="button" class="btn sec2" data-a="reload">Оновити</button>`;
+      <button type="button" class="btn sec2" data-a="reload">Оновити</button>
+      ${installOffer(false) ? `<div class="card col" style="gap:10px">${installOffer(false)}</div>` : ''}`;
   };
 
   // ───────────── ДІЇ ─────────────
@@ -2177,7 +2185,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     try { tg.addToHomeScreen(); } catch (e) { viaLink(); }
   };
   A.copyHome = async () => { try { await navigator.clipboard.writeText(HOME_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(HOME_LINK); } };
-  A.hideInstall = () => { LS.set('hideInstall', 1); render(); };
+  A.hideInstall = () => { LS.set('hideInstall', 1); render(); toast('Сховано. Знайдеш у «Ще» → «Додати на головний екран»'); };
   A.openApp = () => { try { tg.openLink(APP_LINK, { try_browser: IS_IOS ? 'safari' : 'chrome' }); } catch (e) { tg.openLink(APP_LINK); } };
   A.copyApp = async () => { try { await navigator.clipboard.writeText(APP_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(APP_LINK); } };
   A.pwaInstall = async () => { const ev = S.installEvt; if (!ev) return; ev.prompt(); try { await ev.userChoice; } catch (e) { /* ок */ } S.installEvt = null; render(); };

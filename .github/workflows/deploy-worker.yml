@@ -93,6 +93,16 @@ jobs:
           echo "$RES" | jq '{ok, skipped, totals, missingAreas, teams: [.teams[]? | {area, team, matched, created, added, linked, dup, bad}]}'
           echo "$RES" | jq -e .ok > /dev/null
 
+      - name: Обʼєднати команди з YL Pray з наявними (один раз)
+        if: hashFiles('worker/seed/prayfix.json') != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          sleep 20
+          RES=$(curl -s -X POST "$URL/admin/prayFix" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @"$GITHUB_WORKSPACE/worker/seed/prayfix.json")
+          echo "$RES" | jq '{ok, error, teams}'
+          echo "$RES" | jq -e .ok > /dev/null
+
       - name: Перенести людей з альбому YL Pray (один раз)
         if: hashFiles('worker/seed/pray.enc') != ''
         env:
