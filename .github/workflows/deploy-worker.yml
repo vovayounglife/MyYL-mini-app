@@ -103,6 +103,17 @@ jobs:
           echo "$RES" | jq '{ok, error, teams}'
           echo "$RES" | jq -e .ok > /dev/null
 
+      - name: Обʼєднати команди й перевірити дублі (один раз)
+        if: hashFiles('worker/seed/teams.json') != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          sleep 20
+          RES=$(curl -s -X POST "$URL/admin/teams" -H "x-sync-key: $SYNC_KEY" -H "content-type: application/json" --data @"$GITHUB_WORKSPACE/worker/seed/teams.json")
+          echo "$RES" | jq '{ok, error, merged}'
+          echo "AUDIT_ENC $(echo "$RES" | jq -r '.audit // empty')"
+          echo "$RES" | jq -e .ok > /dev/null
+
       - name: Перенести людей з альбому YL Pray (один раз)
         if: hashFiles('worker/seed/pray.enc') != ''
         env:

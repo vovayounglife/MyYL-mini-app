@@ -887,6 +887,11 @@ const pfx = r.teams[0];
 ok(r.ok && pfx.into === capTeam.name && pfx.merged === 2 && pfx.moved === 1, 'YL Pray: команду обʼєднано з наявною, дублі прибрано');
 r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
 ok(r.data.filter((p) => /Гарань/.test(p.name)).length === 1 && r.data.filter((p) => /Новенький/.test(p.name)).length === 1 && r.data.some((p) => /Зовсім Новенька/.test(p.name)), 'YL Pray: у складі без дублів, нова людина перенесена');
+// обʼєднання за назвою (латиниця ↔ кирилиця) і зашифрований звіт про дублі
+await admin('pray', { list: [{ name: 'Остап Латинський', unit: 'team', area: ['Тернопіль'], team: 'Svitlo Kopiya', key: 'HELPER' }] });
+await admin('import', { teams: [{ id: 'tSv', area_id: 'a1', name: 'Світло Копія', state: 'active', known: 0 }] });
+r = await admin('teams', { merge: [{ from: 'Тернопіль · Svitlo Kopiya', into: 'Тернопіль · Svitlo Kopiya' }], audit: true });
+ok(r.ok && r.merged[0].into === 'Світло Копія' && r.merged[0].moved === 1 && typeof r.audit === 'string' && !/Остап/.test(JSON.stringify(r)), 'команди: обʼєднано за транслітом, звіт зашифровано');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');

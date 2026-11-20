@@ -2992,6 +2992,98 @@ function importPray_(list) {
   return out;
 }
 
+// перенести склад команди t у best (лише ролі: команди без звітів), дублі людей обʼєднати, t видалити
+function mergeTeamInto_(t, best) {
+  const live = () => loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const nm = (id) => (getPerson_(id) || {}).name || '';
+  let moved = 0, merged = 0;
+  live().filter((r) => r.level === 'team' && r.unitId === t.id).forEach((r) => {
+    const theirs = live().filter((x) => x.level === 'team' && x.unitId === best.id);
+    const twin = uniq_(theirs.map((x) => x.tgId)).filter((o) => o === r.tgId || nameScore_(nm(r.tgId), nm(o)).same);
+    if (twin.length === 1 && twin[0] !== r.tgId && !isReal_(r.tgId) && !live().some((x) => x.tgId === r.tgId && x.id !== r.id)) {
+      fillPerson_(twin[0], getPerson_(r.tgId) || {}, false);
+      r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true);
+      S.run('DELETE FROM people WHERE tg_id = ?', [r.tgId], true); delete S.b.people[r.tgId];
+      merged++; return;
+    }
+    if (twin.length === 1 && twin[0] === r.tgId) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); merged++; return; }
+    r.unitId = best.id; S.run('UPDATE roles SET unit_id = ? WHERE id = ?', [best.id, r.id], true); moved++;
+  });
+  // звіти, знані, фінанси й події — теж у цільову команду (у створених імпортом їх немає, але про всяк випадок)
+  const reg = loadStruct_().teamRegion(best.id);
+  S.run('UPDATE reports SET team_id = ?, area_id = ?, region_id = ? WHERE team_id = ?', [best.id, best.areaId, reg, t.id]);
+  S.run('UPDATE known SET team_id = ? WHERE team_id = ?', [best.id, t.id]);
+  S.run('UPDATE OR IGNORE finance SET team_id = ? WHERE team_id = ?', [best.id, t.id]);
+  S.run('DELETE FROM finance WHERE team_id = ?', [t.id]);
+  S.run("UPDATE events SET unit_id = ? WHERE level = 'team' AND unit_id = ?", [best.id, t.id]);
+  S.run('DELETE FROM teams WHERE id = ?', [t.id], true);
+  S.b.teams = S.b.teams.filter((x) => x.id !== t.id); delete S.b.team[t.id];
+  activateTeam_(best.id);
+  return { moved: moved, merged: merged };
+}
+// латиниця/кирилиця: «Hlyna» = «Глина» = «Glyna», «Capernaum» = «Капернаум»
+const TR_ = { а: 'a', б: 'b', в: 'v', г: 'g', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sh', ь: '', ю: 'iu', я: 'ia' };
+function teamKey_(name) {
+  const t = String(name || '').toLowerCase().split('').map((ch) => (TR_[ch] != null ? TR_[ch] : ch)).join('')
+    .replace(/\b(young|life|wyld|wild|yl|wl|teens|new|team|kids)\b/g, ' ').replace(/[^a-z0-9]/g, '')
+    .replace(/h/g, 'g').replace(/c/g, 'k').replace(/y/g, 'i').replace(/w/g, 'v');
+  return t || na_(name);
+}
+// одна команда за назвою «Ерія · Команда» (точно або за ключем назви)
+function teamByFull_(full, notId) {
+  const st = loadStruct_();
+  const i = full.indexOf(' · ');
+  const area = st.areas.filter((a) => a.name === full.slice(0, i))[0];
+  if (!area) return null;
+  const nm = full.slice(i + 3), inA = st.teams.filter((x) => x.areaId === area.id && x.id !== notId);
+  const ex = inA.filter((x) => x.name === nm);
+  if (ex.length === 1) return ex[0];
+  const k = inA.filter((x) => teamKey_(x.name) === teamKey_(nm));
+  return k.length === 1 ? k[0] : null;
+}
+// перевірка дублів: схожі назви команд в ерії; люди з однаковим імʼям у межах ерії
+function audit_() {
+  const st = loadStruct_();
+  const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const nm = (id) => (getPerson_(id) || {}).name || '';
+  const out = { areas: [], teamDupes: [], peopleDupes: [] };
+  st.areas.forEach((a) => {
+    const teams = st.teams.filter((x) => x.areaId === a.id);
+    const cnt = (id) => uniq_(live.filter((r) => r.level === 'team' && r.unitId === id).map((r) => r.tgId)).length;
+    out.areas.push({ area: a.name, teams: teams.map((x) => x.name + ' (' + cnt(x.id) + ')') });
+    for (let i = 0; i < teams.length; i++) for (let j = i + 1; j < teams.length; j++) {
+      const A = teamKey_(teams[i].name), B = teamKey_(teams[j].name);
+      if (A === B || (Math.min(A.length, B.length) >= 4 && (A.indexOf(B) >= 0 || B.indexOf(A) >= 0)) || (A.length >= 5 && B.length >= 5 && lev2_(A, B) <= 2))
+        out.teamDupes.push(a.name + ': ' + teams[i].name + ' (' + cnt(teams[i].id) + ') ≈ ' + teams[j].name + ' (' + cnt(teams[j].id) + ')');
+    }
+    const unitsA = [a.id].concat(teams.map((x) => x.id));
+    const ids = uniq_(live.filter((r) => unitsA.indexOf(r.unitId) >= 0).map((r) => r.tgId));
+    const where = (id) => uniq_(live.filter((r) => r.tgId === id && unitsA.indexOf(r.unitId) >= 0).map((r) => (r.level === 'team' ? (st.team[r.unitId] || {}).name : 'ерія') + ' — ' + r.label)).join(', ');
+    const seen = {};
+    ids.forEach((x) => {
+      if (seen[x]) return;
+      const grp = ids.filter((y) => y !== x && !seen[y] && nameScore_(nm(x), nm(y)).same);
+      if (!grp.length) return;
+      [x].concat(grp).forEach((y) => { seen[y] = 1; });
+      out.peopleDupes.push({ area: a.name, people: [x].concat(grp).map((y) => (isReal_(y) ? '✅ ' : '— ') + nm(y) + ' · ' + where(y)) });
+    });
+  });
+  return out;
+}
+function lev2_(a, b) {
+  const m = [];
+  for (let i = 0; i <= a.length; i++) { m[i] = [i]; for (let j = 1; j <= b.length; j++) m[i][j] = i ? Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)) : j; }
+  return m[a.length][b.length];
+}
+async function encryptOut_(text, secret) {
+  const k = await crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret)), 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, new TextEncoder().encode(text)));
+  const all = new Uint8Array(12 + c.length); all.set(iv); all.set(c, 12);
+  let bin = ''; all.forEach((x) => { bin += String.fromCharCode(x); });
+  return btoa(bin);
+}
+
 // команди, створені імпортом, могли вже бути в MyYL під іншою назвою (Glyna / HLYNA, KAIROS / Кайрос…):
 // шукаємо в тій самій ерії команду, де вже є ці люди, і переносимо туди (дублікати людей обʼєднуємо)
 function prayFix_(names) {
@@ -3014,24 +3106,8 @@ function prayFix_(names) {
     });
     const row = { team: full, size: ids.length, best: best ? best.name : '', overlap: bestN };
     if (!best || bestN < Math.max(2, Math.ceil(ids.length * 0.3))) { out.push(row); return; }
-    let moved = 0, merged = 0;
-    mine.forEach((r) => {
-      const theirs = live().filter((x) => x.level === 'team' && x.unitId === best.id);
-      const twin = uniq_(theirs.map((x) => x.tgId)).filter((o) => o === r.tgId || nameScore_(nm(r.tgId), nm(o)).same);
-      if (twin.length === 1 && twin[0] !== r.tgId && !isReal_(r.tgId) && !live().some((x) => x.tgId === r.tgId && x.id !== r.id)) {
-        // людина вже є в тій команді — дописуємо анкету й прибираємо дубль
-        fillPerson_(twin[0], getPerson_(r.tgId) || {}, false);
-        r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true);
-        S.run('DELETE FROM people WHERE tg_id = ?', [r.tgId], true); delete S.b.people[r.tgId];
-        merged++; return;
-      }
-      if (twin.length === 1 && twin[0] === r.tgId) { r.status = ST.REMOVED; S.run('UPDATE roles SET status = ? WHERE id = ?', [ST.REMOVED, r.id], true); merged++; return; }
-      r.unitId = best.id; S.run('UPDATE roles SET unit_id = ? WHERE id = ?', [best.id, r.id], true); moved++;
-    });
-    S.run('DELETE FROM teams WHERE id = ?', [t.id], true);
-    S.b.teams = S.b.teams.filter((x) => x.id !== t.id); delete S.b.team[t.id];
-    activateTeam_(best.id);
-    out.push(Object.assign(row, { into: best.name, moved: moved, merged: merged }));
+    const mv = mergeTeamInto_(t, best);
+    out.push(Object.assign(row, { into: best.name }, mv));
   });
   return out;
 }
@@ -3076,6 +3152,21 @@ async function handleAdmin(req, env, ctx, url) {
     S0.run('INSERT OR IGNORE INTO meta (k, v) VALUES (?, 1)', [mk]);
     await S0.flush();
     return json(Object.assign({ ok: true, n: list.length, team: t.team, matched: team.name }, res));
+  }
+
+  if (action === 'teams') {
+    // обʼєднати команди [{ from: 'Ерія · Назва', into: 'Ерія · Назва' }] і/або перевірити дублі (звіт зашифровано — у логах лише шифр)
+    const S0 = new Store(env, ctx);
+    await S0.loadBase();
+    const merged = use(S0, () => (Array.isArray(body.merge) ? body.merge : []).map((m) => {
+      const a = teamByFull_(String(m.from)), b = a && teamByFull_(String(m.into), a.id);
+      if (!a || !b || a.id === b.id || a.areaId !== b.areaId) return { from: m.from, into: m.into, error: !a ? 'немає from' : !b ? 'немає into' : 'не та ерія' };
+      return Object.assign({ from: a.name, into: b.name }, mergeTeamInto_(a, b));
+    }));
+    await S0.flush();
+    const res = { ok: true, merged: merged };
+    if (body.audit) res.audit = await encryptOut_(JSON.stringify(use(S0, () => audit_())), env.SYNC_KEY);
+    return json(res);
   }
 
   if (action === 'prayFix') {
