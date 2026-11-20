@@ -389,10 +389,11 @@ ok(!r.ok, 'редагування: лідер не змінює чужу под�
 sent.length = 0;
 await req('/tg', { message: { chat: { id: 9, type: 'private' }, from: { id: 9, first_name: 'Гість' }, text: '/start' } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
 const wel = sent.find((x) => x.m === 'sendMessage');
-ok(wel && wel.reply_markup.inline_keyboard[1][0].url === 'https://vovayounglife.github.io/MyYL-mini-app/?app=1', 'бот: кнопка «Встановити на телефон»');
+ok(wel && /^https:\/\/t\.me\/\w+\?startapp=home$/.test(wel.reply_markup.inline_keyboard[0][0].url), 'бот: «Відкрити MyYL» — головний застосунок');
+ok(wel && /\?startapp=home&addToHomeScreen$/.test(wel.reply_markup.inline_keyboard[1][0].url), 'бот: кнопка «Додати на головний екран»');
 sent.length = 0;
 await req('/tg', { message: { chat: { id: 9, type: 'private' }, from: { id: 9, first_name: 'Гість' }, text: '/app' } }, { 'X-Telegram-Bot-Api-Secret-Token': sw.secret_token });
-ok(sent.some((x) => /окремий застосунок/.test(x.text || '')), 'бот: /app з інструкцією');
+ok(sent.some((x) => /Окремий застосунок/i.test(x.text || '') && x.reply_markup.inline_keyboard[1][0].url === 'https://vovayounglife.github.io/MyYL-mini-app/?app=1'), 'бот: /app з інструкцією');
 
 
 // подія: де (одиниці) + ролі

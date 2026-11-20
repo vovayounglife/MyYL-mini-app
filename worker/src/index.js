@@ -2692,20 +2692,22 @@ function claimAdmin_(m, code) {
 }
 
 const appLink_ = () => (S.env.APP_URL || '').replace(/\?.*$/, '') + '?app=1';
+// головний застосунок бота (BotFather → Configure Mini App): лише з нього Telegram дає «Додати на головний екран»
+const BOT_NAME_ = () => S.env.BOT_USERNAME || 'MyYL_mini_app';
+const mainLink_ = (screen) => 'https://t.me/' + BOT_NAME_() + '?startapp=' + (screen || 'home');
+const homeLink_ = () => mainLink_() + '&addToHomeScreen';
 function sendWelcome_(chatId) {
-  S.send(chatId, 'Привіт! Це застосунок Young Life Україна 💙💛\nЗвіти, знані по імені, календар і статистика — тут 👇\n\n📲 Хочеш окрему іконку на телефоні? Натисни «Встановити на телефон».', { reply_markup: { inline_keyboard: [
-    [{ text: 'Відкрити Young Life', web_app: { url: (S.env.APP_URL || '').replace(/\?.*$/, '') } }],
-    [{ text: '📲 Встановити на телефон', url: appLink_() }],
+  S.send(chatId, 'Привіт! Це MyYL — застосунок Young Life Україна 💙💛\nЗвіти, знані по імені, календар і статистика — тут 👇\n\n📲 Хочеш іконку YL на головному екрані телефону? Натисни «Додати на головний екран».', { reply_markup: { inline_keyboard: [
+    [{ text: 'Відкрити MyYL', url: mainLink_() }],
+    [{ text: '📲 Додати на головний екран', url: homeLink_() }],
   ] } });
 }
 function sendInstall_(chatId) {
-  S.send(chatId, '📲 <b>MyYL як окремий застосунок</b>\n\n<b>iPhone:</b> відкрий посилання в Safari → «Поділитися» → «На початковий екран» → «Додати».\n<b>Android:</b> відкрий у Chrome → меню ⋮ → «Встановити застосунок».\n\nПотім відкрий MyYL з іконки й натисни «Увійти через Telegram».', { reply_markup: { inline_keyboard: [[{ text: '📲 Відкрити посилання', url: appLink_() }]] } });
+  S.send(chatId, '📲 <b>Іконка MyYL на головному екрані</b>\n\nНайпростіше: натисни кнопку нижче — Telegram відкриє MyYL і запропонує «Додати на головний екран». Або в MyYL натисни ⋯ вгорі праворуч → «Add to Home Screen».\n\n<b>Окремий застосунок без Telegram</b>\n<b>iPhone:</b> відкрий посилання в Safari → «Поділитися» → «На початковий екран» → «Додати».\n<b>Android:</b> відкрий у Chrome → меню ⋮ → «Встановити застосунок».\n\nПотім відкрий MyYL з іконки й натисни «Увійти через Telegram».', { reply_markup: { inline_keyboard: [[{ text: '📲 Додати на головний екран', url: homeLink_() }], [{ text: '🌐 Окремий застосунок (браузер)', url: appLink_() }]] } });
 }
 
 function sendApp_(chatId, text, button, screen) {
-  const base = (S.env.APP_URL || '').replace(/\?.*$/, '');
-  const url = base + (screen ? '?screen=' + screen : '');
-  S.send(chatId, text, { reply_markup: { inline_keyboard: [[{ text: button || 'Відкрити', web_app: { url: url } }]] } });
+  S.send(chatId, text, { reply_markup: { inline_keyboard: [[{ text: button || 'Відкрити', url: mainLink_(screen) }]] } });
 }
 
 async function tg(env, method, params) {

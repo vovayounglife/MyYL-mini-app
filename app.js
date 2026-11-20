@@ -6,6 +6,11 @@
   const IN_TG = !!(realTg && realTg.initData);
   const SESSION_KEY = 'yl:session';
   const APP_LINK = 'https://vovayounglife.github.io/MyYL-mini-app/?app=1';
+  const BOT_NAME = 'MyYL_mini_app';
+  const MAIN_LINK = 'https://t.me/' + BOT_NAME + '?startapp=home';
+  const HOME_LINK = MAIN_LINK + '&addToHomeScreen';
+  // відкрито як головний застосунок бота (лише тоді Telegram дозволяє іконку на головному екрані)
+  const IS_MAIN = !!(realTg && realTg.initDataUnsafe && realTg.initDataUnsafe.start_param);
   let SESSION = null;
   try { SESSION = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { SESSION = null; }
   const IS_INSTALLED = !IN_TG && ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true);
@@ -257,12 +262,17 @@
     if (S.me.status === 'pending') { S.screen = 'pending'; return true; }
     return false;
   }
+  function wantScreen() {
+    const q = new URLSearchParams(location.search).get('screen');
+    if (q) return q;
+    try { return (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || ''; } catch (e) { return ''; }
+  }
   async function loadMe() {
     const cached = LS.get('me');
     if (cached && cached.status === 'active') {
       // миттєвий старт з останніх даних
       S.me = cached; S.events = cached.events || null;
-      const want = new URLSearchParams(location.search).get('screen');
+      const want = wantScreen();
       S.screen = 'home';
       if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') go(want); else render();
       try {
@@ -280,7 +290,7 @@
     if (S.me.status === 'new') { S.reg.name = S.reg.name || S.me.user.name; S.screen = 'onboarding'; }
     else if (S.me.status === 'pending') S.screen = 'pending';
     else {
-      const want = new URLSearchParams(location.search).get('screen');
+      const want = wantScreen();
       S.screen = 'home';
       enter('home', {});
       if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') { go(want); return; }
@@ -1367,11 +1377,22 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // ───────────── ВСТАНОВИТИ ─────────────
   VIEWS.install = function () {
-    let h = header('Встановити MyYL', 'Окремий застосунок на телефоні');
+    let h = header('На головний екран', 'Іконка YL на телефоні');
     if (IS_INSTALLED) return h + '<div class="card col"><h2>✅ Застосунок встановлено</h2><div class="muted">Ти зараз у ньому. Відкривай MyYL з іконки на головному екрані.</div></div>';
-    h += `<div class="card col"><h2>Окремий застосунок</h2><div class="small muted">Відкривається з іконки YL на весь екран, без Telegram. Дані ті самі. Вхід — один раз через Telegram.</div>`;
+    const added = S.homeSt === 'added';
+    h += `<div class="card col"><h2>📲 Іконка через Telegram</h2><div class="small muted">Найпростіше: іконка YL на головному екрані, яка одразу відкриває MyYL у Telegram.</div>
+      ${IN_TG ? `<button type="button" class="btn" data-a="installHome"${added ? ' disabled' : ''}>${added ? 'Іконку вже додано ✓' : 'Додати на головний екран'}</button>`
+        : `<button type="button" class="btn" data-a="openUrl" data-url="${HOME_LINK}">Відкрити в Telegram і додати</button>`}</div>
+      <div class="card rows small">
+        <div class="kv"><span>1</span><span style="text-align:left;flex:1">Натисни кнопку вище — Telegram запропонує <b>«Додати на головний екран»</b></span></div>
+        <div class="kv"><span>2</span><span style="text-align:left;flex:1">Або в MyYL натисни <b>⋯</b> вгорі праворуч → <b>«Add to Home Screen»</b> («На головний екран»)</span></div>
+        <div class="kv"><span>3</span><span style="text-align:left;flex:1">Нема такого пункту? Відкрий MyYL через профіль бота <b>@${BOT_NAME}</b> → «Відкрити» або за посиланням нижче і повтори</span></div>
+        <div class="kv"><span>4</span><span style="text-align:left;flex:1">Не виходить зовсім — онови Telegram в App Store / Google Play</span></div></div>
+      <button type="button" class="btn sec2 sm" data-a="copyHome">Скопіювати посилання для команди</button>
+      <div class="sec">Або окремий застосунок без Telegram</div>
+      <div class="card col"><div class="small muted">Відкривається з іконки на весь екран через браузер. Дані ті самі, вхід — один раз через Telegram.</div>`;
     if (IN_TG) {
-      h += `<button type="button" class="btn" data-a="openApp">Відкрити в браузері</button>
+      h += `<button type="button" class="btn sec2" data-a="openApp">Відкрити в браузері</button>
         <button type="button" class="btn sec2 sm" data-a="copyApp">Скопіювати посилання</button>`;
     } else if (S.installEvt) h += '<button type="button" class="btn" data-a="pwaInstall">Встановити</button>';
     h += `</div>
@@ -1384,10 +1405,6 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
         <div class="kv"><span>1</span><span style="text-align:left;flex:1">Відкрий посилання в <b>Chrome</b></span></div>
         <div class="kv"><span>2</span><span style="text-align:left;flex:1">Меню <b>⋮</b> → «Встановити застосунок» або «Додати на головний екран»</span></div>
         <div class="kv"><span>3</span><span style="text-align:left;flex:1">Відкрий MyYL з іконки → «Увійти через Telegram»</span></div></div>`;
-    if (IN_TG && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
-      h += `<div class="sec">Або ярлик Telegram</div><div class="card col"><div class="small muted">Іконка на головному екрані, яка відкриває MyYL через Telegram.</div>
-        <button type="button" class="btn sec2" data-a="installHome"${S.homeSt === 'added' ? ' disabled' : ''}>${S.homeSt === 'added' ? 'Ярлик уже додано ✓' : 'Додати ярлик Telegram'}</button></div>`;
-    }
     return h;
   };
 
@@ -1435,7 +1452,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
     if ((S.me.scopes || []).length) manage.push({ k: 'inst', label: 'Встановили MyYL', sub: 'хто вже в застосунку — по регіонах, еріях, командах', icon: 'phoneApp', ic: 'ic-teal' });
     if (c.stats !== false && (S.me.scopes || []).length) manage.splice((c.reportItems || []).length ? 1 : 0, 0, { k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-teal' });
-    const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Встановити на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : 'окремий застосунок з іконкою YL', icon: 'phoneApp', ic: 'ic-teal' }];
+    const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Додати на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : (S.homeSt === 'added' ? 'іконку додано ✓' : 'іконка YL на телефоні — як це зробити'), icon: 'phoneApp', ic: 'ic-teal' }];
     const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
     if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
     mine.push({ k: 'notif', label: 'Сповіщення', sub: 'що бот надсилає тобі', icon: 'bell', ic: 'ic-yellow' });
@@ -2147,12 +2164,19 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // склад
   const homeOk = () => !!(tg && tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0'));
+  const viaLink = () => { try { tg.openTelegramLink(HOME_LINK); } catch (e) { try { tg.openLink(HOME_LINK); } catch (e2) { location.href = HOME_LINK; } } };
   A.installHome = () => {
-    if (S.homeSt === 'added') return toast('Застосунок уже є на головному екрані');
-    if (homeOk()) { try { tg.addToHomeScreen(); } catch (e) { toast('Не вдалося. Спробуй ще раз.'); } return; }
-    const msg = 'Твоя версія Telegram ще не вміє додавати застосунки на головний екран. Онови Telegram в App Store / Google Play і спробуй знову.';
-    if (tg && tg.showAlert) tg.showAlert(msg); else toast(msg);
+    if (S.homeSt === 'added') return toast('Іконка вже є на головному екрані');
+    if (!IN_TG) return viaLink();
+    if (!homeOk()) {
+      const msg = 'Твоя версія Telegram ще не вміє додавати застосунки на головний екран. Онови Telegram в App Store / Google Play і спробуй знову.';
+      return tg.showAlert ? tg.showAlert(msg) : toast(msg);
+    }
+    if (!IS_MAIN || S.homeSt === 'unsupported') return viaLink();
+    S.homeWait = Date.now();
+    try { tg.addToHomeScreen(); } catch (e) { viaLink(); }
   };
+  A.copyHome = async () => { try { await navigator.clipboard.writeText(HOME_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(HOME_LINK); } };
   A.hideInstall = () => { LS.set('hideInstall', 1); render(); };
   A.openApp = () => { try { tg.openLink(APP_LINK, { try_browser: IS_IOS ? 'safari' : 'chrome' }); } catch (e) { tg.openLink(APP_LINK); } };
   A.copyApp = async () => { try { await navigator.clipboard.writeText(APP_LINK); toast('Посилання скопійовано', 'success'); } catch (e) { toast(APP_LINK); } };
@@ -2418,7 +2442,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     S.homeSt = '';
     if (tg.addToHomeScreen && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
       try { tg.checkHomeScreenStatus((st) => { S.homeSt = st; if (S.screen === 'more' || S.screen === 'install') render(); }); } catch (e) { /* ок */ }
-      tg.onEvent('homeScreenAdded', () => { S.homeSt = 'added'; toast('Готово! Іконка YL тепер на головному екрані', 'success'); if (S.screen === 'more') render(); });
+      tg.onEvent('homeScreenAdded', () => { S.homeSt = 'added'; toast('Готово! Іконка YL тепер на головному екрані', 'success'); if (S.screen === 'more' || S.screen === 'install') render(); });
+      // цей запуск не вміє додати іконку (відкрито не як головний застосунок бота) — відкриваємо головний з пропозицією
+      tg.onEvent('homeScreenFailed', () => { if (S.homeWait && Date.now() - S.homeWait < 15000) { S.homeWait = 0; viaLink(); } });
     } else S.homeSt = 'unsupported';
     if (!API_URL) {
       $app.innerHTML = '<main class="main no-nav"><div class="card col"><h2>Застосунок ще налаштовується</h2><div class="muted">Адресу сервера не вказано в config.js.</div></div></main>';
