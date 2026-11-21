@@ -146,7 +146,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
   me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
-  saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
+  saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
@@ -1144,7 +1144,7 @@ API.saveReport = function (c, d) {
   S.run('INSERT INTO reports (' + keys.join(', ') + ') VALUES (' + keys.map(() => '?').join(',') + ')', keys.map((k) => row[k]));
   S.log.push(logFromRow(row));
   });
-  return { week: weekStatus_(c) };
+  return { week: weekStatus_(c), myWeek: myWeek_(c) };
 };
 
 // ── мій тиждень: відмітки члена команди (клуб, МГ, КР) ──
@@ -1154,18 +1154,22 @@ function myWeek_(c) {
   const wk = weekKey_(new Date());
   const rows = loadLog_().filter((r) => r.week === wk);
   const ck = S.ck || {};
-  const att = rows.some((r) => r.type === 'club' && (',' + (r.attendees || '') + ',').indexOf(',' + c.id + ',') >= 0);
-  const rep = (t) => rows.some((r) => r.type === t && r.authorId === c.id && r.mode !== MODE.none);
+  // присутність на клубі: відмітка в звіті клубу або сам вніс звіт (капітан, адмін) і клуб був
+  const att = rows.some((r) => r.type === 'club' && r.mode !== MODE.none && ((',' + (r.attendees || '') + ',').indexOf(',' + c.id + ',') >= 0 || r.authorId === c.id));
+  // мала група й КР — це звіти, їх може бути кілька за тиждень: рахуємо
+  const mine = (t) => dd_(rows.filter((r) => r.type === t && r.authorId === c.id && r.mode !== MODE.none));
+  const mg = mine('mg'), kr = mine('kr');
+  const krH = Math.round(kr.reduce((a, r) => a + (Number(r.hours) || 0), 0) * 10) / 10;
   const items = [
     { key: 'club', label: 'Був(ла) на клубі', on: !!ck.club || att, locked: att },
-    { key: 'mg', label: 'Провів(ла) малу групу', on: !!ck.mg || rep('mg'), locked: rep('mg') },
-    { key: 'kr', label: 'Контактна робота', on: !!ck.kr || rep('kr'), locked: rep('kr') },
+    { key: 'mg', label: 'Мала група', n: mg.length, on: mg.length > 0 },
+    { key: 'kr', label: 'Контактна робота', n: kr.length, hours: krH, on: kr.length > 0 },
   ];
   return { key: wk, label: weekLabel_(wk), items: items, done: items.filter((x) => x.on).length };
 }
 API.checkin = function (c, d) {
   const kind = String(d.kind || '');
-  if (CK_KINDS.indexOf(kind) < 0) bad_('Невідома відмітка.');
+  if (kind !== 'club') bad_('Невідома відмітка.');
   if (!c.roles.some((r) => r.level === 'team' && r.status === ST.ACTIVE)) deny_('Відмічати тиждень можуть члени команди.');
   const wk = weekKey_(new Date());
   const cur = Object.assign({ club: 0, mg: 0, kr: 0 }, S.ck || {});

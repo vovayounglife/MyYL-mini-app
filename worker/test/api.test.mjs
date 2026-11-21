@@ -948,8 +948,11 @@ ok(me.data.myWeek && me.data.myWeek.items.length === 3, 'мій тиждень: 
 r = await api(LEAD, 'checkin', { kind: 'club', on: true });
 ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: відмітив клуб');
 r = await api(LEAD, 'checkin', { kind: 'kr', on: true });
-r = await api(LEAD, 'checkin', { kind: 'kr', on: false });
-ok(r.ok && !r.data.myWeek.items.find((x) => x.key === 'kr').on && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: зняв КР, клуб лишився');
+ok(!r.ok, 'мій тиждень: КР — не галочка, а звіт');
+const mwKr0 = (await api(LEAD, 'me')).data.myWeek.items.find((x) => x.key === 'kr').n;
+await api(LEAD, 'saveReport', { type: 'kr', mode: 'event', hours: 1.5 });
+r = await api(LEAD, 'saveReport', { type: 'kr', mode: 'event', hours: 2 });
+ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'kr').n === mwKr0 + 2 && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: КР кілька разів за тиждень рахується');
 r = await api(LEAD, 'checkin', { kind: 'zzz', on: true });
 ok(!r.ok, 'мій тиждень: невідома відмітка');
 r = await api(LEAD, 'myStats', { period: 'all' });

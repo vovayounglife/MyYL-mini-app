@@ -1187,12 +1187,27 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const MW_IC = { club: 'club', mg: 'mg', kr: 'kr' };
   function myWeekCard(w) {
     const all = w.done === 3;
-    return `<div class="card col mw${all ? ' mw-full' : ''}" style="gap:12px">
-      <div class="row between"><div><b>Мій тиждень</b><div class="xs muted">${esc(w.label)} · відміть, що було</div></div>
-        <span class="mw-count">${w.done}<span class="muted">/3</span></span></div>
-      <div class="mw-row">${w.items.map((x) => `<button type="button" class="mw-btn${x.on ? ' on' : ''}" data-a="checkin" data-k="${x.key}" data-on="${x.on ? '' : 1}"${x.locked ? ' disabled' : ''} aria-pressed="${x.on ? 'true' : 'false'}">
-        <span class="mw-ic">${x.on ? icon('check', 20) : icon(MW_IC[x.key], 20)}</span><span>${esc(x.label)}</span>${x.locked ? '<span class="xs" style="opacity:.8">зі звіту</span>' : ''}</button>`).join('')}</div>
-      <button type="button" class="linkish small" data-a="tabGo" data-s="mystats">${all ? '🔥 Повний тиждень! ' : ''}Моя статистика й ачівки →</button></div>`;
+    const it = (k) => w.items.find((x) => x.key === k) || {};
+    const club = it('club'), mg = it('mg'), kr = it('kr');
+    const canClub = canType('club'), canMg = canType('mg'), canKr = canType('kr');
+    const cs = ((me().week || {}).items || []).find((x) => x.type === 'club');
+    const btn = (x, inner, attrs) => `<button type="button" class="mw-btn${x.on ? ' on' : ''}" ${attrs}>${inner}</button>`;
+    let h = `<div class="card col mw${all ? ' mw-full' : ''}" style="gap:12px">
+      <div class="row between"><div><b>Мій тиждень</b><div class="xs muted">${esc(w.label)}</div></div><span class="mw-count">${w.done}<span class="muted">/3</span></span></div><div class="mw-row">`;
+    // клуб — просто галочка
+    h += btn(club, `<span class="mw-ic">${club.on ? icon('check', 20) : icon('club', 20)}</span><span>${esc(club.label)}</span><span class="xs mw-sub">${club.locked ? 'зі звіту клубу' : club.on ? 'так ✓' : 'натисни'}</span>`,
+      `data-a="checkin" data-k="club" data-on="${club.on ? '' : 1}"${club.locked ? ' disabled' : ''} aria-pressed="${club.on ? 'true' : 'false'}"`);
+    // мала група й КР — статистика: кожен дотик відкриває внесення, можна кілька разів на тиждень
+    h += btn(mg, `<span class="mw-ic">${mg.n ? '<b>' + mg.n + '</b>' : icon('mg', 20)}</span><span>${esc(mg.label)}</span><span class="xs mw-sub">${mg.n ? 'за тиждень · ＋ ще' : '＋ внести'}</span>`,
+      canMg ? 'data-a="openAdd" data-type="mg"' : 'disabled');
+    h += btn(kr, `<span class="mw-ic">${kr.n ? '<b>' + fmtNum(kr.hours) + '</b>' : icon('kr', 20)}</span><span>${esc(kr.label)}</span><span class="xs mw-sub">${kr.n ? 'год · ＋ ще' : '＋ внести'}</span>`,
+      canKr ? 'data-a="openAdd" data-type="kr"' : 'disabled');
+    h += '</div>';
+    // капітан / адмін команди: звіт за клуб усієї команди
+    if (canClub) h += `<button type="button" class="mw-club${cs && cs.status !== 'missing' ? ' ok' : ''}" data-a="openAdd" data-type="club"${cs ? ` data-team="${esc(cs.teamId)}"` : ''}>
+      <span class="grow"><b>Звіт за клуб команди</b><br><span class="xs muted">${cs && cs.status === 'ok' ? 'цього тижня внесено ✓' : cs && cs.status === 'none' ? 'відмічено «клубу не було»' : 'ще не внесено — скільки підлітків, хто з лідерів був'}</span></span>${icon('chev')}</button>`;
+    h += `<button type="button" class="linkish small" data-a="tabGo" data-s="mystats">${all ? '🔥 Повний тиждень! ' : ''}Моя статистика й ачівки →</button></div>`;
+    return h;
   }
   function confetti() {
     const box = document.createElement('div'); box.className = 'confetti'; box.setAttribute('aria-hidden', 'true');
@@ -1993,7 +2008,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const backup = { add: JSON.parse(JSON.stringify(a)), week: JSON.parse(JSON.stringify(S.me.week)) };
     weekMark(a.type, a.teamId, 'ok', a.type === 'kr' ? Number(a.hours) || 0 : 0);
     go('home'); thank();
-    try { const res = await api('saveReport', payload); S.me.week = res.week; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
+    try { const res = await api('saveReport', payload); S.me.week = res.week; if (res.myWeek) S.me.myWeek = res.myWeek; S.myStats = null; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
     catch (e) { S.me.week = backup.week; S.add = backup.add; S.thanks = false; S.screen = 'add'; render(); toast('Не вдалося зберегти: ' + e.message, 'error'); }
   };
   A.markNone = async (d) => {
@@ -2001,7 +2016,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     weekMark(d.type, d.team, 'none', 0);
     if (S.screen === 'add') go('home');
     thank();
-    try { const res = await api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }); S.me.week = res.week; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
+    try { const res = await api('saveReport', { type: d.type, teamId: d.team, mode: 'none' }); S.me.week = res.week; if (res.myWeek) S.me.myWeek = res.myWeek; S.myStats = null; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
     catch (e) { S.me.week = backup; S.thanks = false; render(); toast('Не вдалося зберегти: ' + e.message, 'error'); }
   };
   function weekMark(type, teamId, status, hours) {

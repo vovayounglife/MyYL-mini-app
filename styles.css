@@ -441,3 +441,9 @@ html.dark .btn.sec2::before, html.dark .btn.ghost::before { opacity: .18; }
 .ach.got .ach-ic { animation: mwPop .6s var(--spring); }
 .ach .track i { background: var(--grad); }
 .ach-ok { color: var(--accent-text); font-weight: 700; }
+.mw-btn .mw-ic b { font-size: 18px; }
+.mw-sub { opacity: .75; font-weight: 600; }
+.mw-btn[disabled]:not(.on) { opacity: .55; }
+.mw-club { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 12px 14px; border-radius: 18px; background: rgba(255, 196, 92, .22); border: 1px solid var(--glass-brd); color: var(--text); transition: transform .3s var(--spring); }
+.mw-club.ok { background: rgba(45, 212, 191, .16); }
+.mw-club:active { transform: scale(.97); }
