@@ -143,6 +143,15 @@
   }
 
   // ───────────── API ─────────────
+  // збій запиту — коротко на сервер для діагностики (без особистих даних)
+  function clog(o) {
+    try {
+      const d = JSON.stringify(Object.assign({ v: ((document.querySelector('script[src*="app.js"]') || {}).src || '').split('v=')[1], tg: IN_TG ? (tg.platform || '') + ' ' + (tg.version || '') : 'pwa', ua: navigator.userAgent.slice(0, 140), on: navigator.onLine }, o));
+      const u = API_URL.replace(/\/$/, '') + '/clog';
+      if (navigator.sendBeacon && navigator.sendBeacon(u, d)) return;
+      fetch(u, { method: 'POST', body: d, keepalive: true }).catch(() => {});
+    } catch (e) { /* ок */ }
+  }
   const READ_ACTIONS = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo)$/;
   async function api(action, data) {
     S.busy++; progress();
@@ -156,12 +165,18 @@
         if (k) await new Promise((r) => setTimeout(r, k * 800));
         const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timer = ctl && setTimeout(() => ctl.abort(), 20000);
+        let st = 0, ct = '', txt = '';
         try {
           const res = await fetch(API_URL, { method: 'POST', body: body, signal: ctl ? ctl.signal : undefined });
-          j = await res.json();
+          st = res.status; ct = res.headers.get('content-type') || '';
+          txt = await res.text();
+          j = JSON.parse(txt);
           lastErr = null;
           break;
-        } catch (e) { lastErr = e; } finally { if (timer) clearTimeout(timer); }
+        } catch (e) {
+          lastErr = e;
+          clog({ a: action, try: k + 1, err: (e && e.name) + ': ' + (e && e.message), st: st, ct: ct, len: txt.length, head: txt.slice(0, 160), bytes: body.length });
+        } finally { if (timer) clearTimeout(timer); }
       }
       if (lastErr) throw lastErr;
       if (!j.ok) {

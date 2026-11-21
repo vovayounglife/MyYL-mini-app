@@ -91,6 +91,13 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     try {
+      if (url.pathname === '/clog' && req.method === 'POST') {
+        // збій запиту на телефоні: що саме не вдалося (без особистих даних), останні 300 записів
+        const t = (await req.text()).slice(0, 1500);
+        ctx.waitUntil(env.DB.batch([env.DB.prepare('INSERT INTO client_log (ts, data) VALUES (?, ?)').bind(new Date().toISOString(), t),
+          env.DB.prepare('DELETE FROM client_log WHERE rowid NOT IN (SELECT rowid FROM client_log ORDER BY ts DESC LIMIT 300)')]).catch(() => {}));
+        return cors(new Response('ok'));
+      }
       if (url.pathname === '/tg' && req.method === 'POST') return await handleTelegram(req, env, ctx);
       if (url.pathname === '/upload' && req.method === 'POST') return await handleUpload(req, env, ctx);
       if (url.pathname.indexOf('/f/') === 0 && req.method === 'GET') return await handleFile(req, env, url);
@@ -3307,6 +3314,10 @@ async function handleAdmin(req, env, ctx, url) {
   const body = await req.json().catch(() => ({}));
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
+  if (action === 'clog') {
+    const r = await env.DB.prepare('SELECT ts, data FROM client_log ORDER BY ts DESC LIMIT 40').all();
+    return json({ ok: true, rows: r.results || [] });
+  }
 
   if (action === 'history') {
     // історія з командних табличок — по одній команді за запит (index)

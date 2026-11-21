@@ -74,3 +74,6 @@ CREATE INDEX IF NOT EXISTS resources_created ON resources (created);
 INSERT OR IGNORE INTO resources (id, title, url, file_id, file_name, fkey, note, aud, status, author_id, author, created, decided_by, decided)
 VALUES ('res0budni', 'Подкаст «Будні лідера»', 'https://youtube.com/playlist?list=PLGGHZ9uQYlQ22KKPNudLa9BWr7_jVwPjs&si=xofEqmFRe7jKhu_b', '', '', '', 'Плейлист на YouTube', 'all', 'активний', '', 'Раб Божий', '2026-11-19T16:10:00.000Z', 'Раб Божий', '2026-11-19T16:10:00.000Z');
 
+
+-- 022: збої на телефонах (для діагностики)
+CREATE TABLE IF NOT EXISTS client_log (ts TEXT, data TEXT);
