@@ -991,6 +991,15 @@ r = await api(AD, 'decide', { roleIds: [prr.id], approve: true });
 me = await api({ id: 290, first_name: 'Помил' }, 'me');
 ok(me.data.roles.some((x) => x.key === 'LEADER' && x.unitId === 'tSv' && x.status === 'активна'), 'заявка: підтверджено з виправленням');
 ok((await api(CAP, 'me')).data.editRoles.some((x) => x.key === 'HELPER'), 'заявка: список ролей для виправлення');
+// додати роль людині нижче
+r = await api(AD, 'roleGrant', { tgId: '290', key: 'HELPER', unit: 't:' + capTeam.id });
+ok(r.ok && (await api({ id: 290, first_name: 'Помил' }, 'me')).data.roles.some((x) => x.key === 'HELPER' && x.unitId === capTeam.id && x.status === 'активна'), 'роль: директор ерії додав роль людині');
+r = await api(AD, 'roleGrant', { tgId: '290', key: 'HELPER', unit: 't:' + capTeam.id });
+ok(!r.ok, 'роль: без дублів');
+r = await api(CAP, 'roleGrant', { tgId: '290', key: 'AREA_ADMIN', unit: 'a:a1' });
+ok(!r.ok, 'роль: капітан не дає ролей ерії');
+r = await api(LEAD, 'roleGrant', { tgId: '290', key: 'SUGAR', unit: 't:' + capTeam.id });
+ok(!r.ok, 'роль: лідер не додає ролей');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');

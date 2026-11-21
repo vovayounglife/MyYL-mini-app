@@ -18,7 +18,8 @@ const INITDATA_MAX_AGE_SEC = 7 * 24 * 3600;
 // rank: менше число = вища роль. level: до чого привʼязана роль.
 const ROLES = [
   { key: 'SUPER', label: 'Раб Божий', rank: 0, level: 'nat' },
-  { key: 'NATIONAL_ADMIN', label: 'Національний Адмін', rank: 1, level: 'nat' },
+  // окремо не обирається: «Національний адмін» — посада в Національному офісі; роль лишається для тих, хто її вже має
+  { key: 'NATIONAL_ADMIN', label: 'Національний Адмін', rank: 1, level: 'nat', hidden: true },
   { key: 'REGIONAL_DIRECTOR', label: 'Регіональний Директор', rank: 2, level: 'region' },
   { key: 'REGIONAL_ADMIN', label: 'Регіональний Адмін', rank: 3, level: 'region' },
   { key: 'AREA_DIRECTOR', label: 'Еріа Директор', rank: 4, level: 'area' },
@@ -37,7 +38,7 @@ const ROLES = [
 ];
 // посади в національному офісі (як в альбомі «Офіс» / «Експерти»)
 const OFFICE_TITLES = [
-  { group: 'Офіс', items: ['Операційний директор', 'Фінансовий директор', 'Голова навчального відділу', 'Голова медіа відділу', 'Керівник Young Life продукції',
+  { group: 'Офіс', items: ['Національний адмін', 'Операційний директор', 'Фінансовий директор', 'Голова навчального відділу', 'Голова медіа відділу', 'Керівник Young Life продукції',
     'Регіональний директор Young Life Україна', 'Регіональний адміністратор', 'HR', 'Фандрейзер', 'Координатор EP/DGL', 'Перекладач', 'MEA DGL адміністратор',
     'Фінансовий асистент', 'Діловод', 'Офісний працівник'] },
   { group: 'Експерти', items: ['Експерт Young Moms', 'Експерт Capernaum', 'Експерт College', 'Експерт WyldLife'] },
@@ -145,7 +146,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -616,7 +617,7 @@ const VIEW_OK = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|t
 function viewRoles_(c) {
   if (!c.roles.length) return [];
   const top = Math.min.apply(null, c.roles.map((r) => r.rank));
-  return ROLES.filter((r) => r.key !== 'SUPER' && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
+  return ROLES.filter((r) => r.key !== 'SUPER' && !r.hidden && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
 }
 function viewCtx_(c, v) {
   const def = roleDef_(String(v.key || ''));
@@ -784,7 +785,7 @@ API.me = function (c) {
       teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name, dir: t.dir })),
       dirs: DIRS,
     },
-    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, titled: !!r.titled, titles: r.key === 'OFFICE' ? OFFICE_TITLES : undefined })),
+    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, hidden: !!r.hidden, titled: !!r.titled, titles: r.key === 'OFFICE' ? OFFICE_TITLES : undefined })),
     roles: c.allRoles.filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING).map(roleOut_),
   };
   if (!c.active.length) {
@@ -1029,7 +1030,7 @@ function requestRoles_(c, d) {
   let teamId = str_(d.teamId);
   const areaId = str_(d.areaId);
   const regionId = str_(d.regionId) || (st.area[areaId] || {}).regionId || '';
-  const keys = (d.roles || []).map(String).filter((k) => roleDef_(k) && k !== 'SUPER');
+  const keys = (d.roles || []).map(String).filter((k) => roleDef_(k) && k !== 'SUPER' && !roleDef_(k).hidden);
   if (!keys.length) bad_('Обери хоча б одну роль.');
   const needTeam = keys.some((k) => roleDef_(k).level === 'team');
   if (needTeam && teamId && !st.team[teamId]) bad_('Команду не знайдено.');
@@ -1079,7 +1080,7 @@ API.requests = function (c) {
 // ролі, на які можна виправити заявку (нижчі за свою; остаточно перевіряє roleEdit)
 function editRoles_(c) {
   const top = isSuper_(c) ? 0 : Math.min.apply(null, c.roles.map((r) => r.rank).concat([99]));
-  return ROLES.filter((r) => r.key !== 'SUPER' && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
+  return ROLES.filter((r) => r.key !== 'SUPER' && !r.hidden && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
 }
 
 function setRoleTitle_(r, title) {
@@ -1115,13 +1116,37 @@ API.decide = function (c, d) {
   return { done: done.length };
 };
 
+// додати роль конкретній людині в нижчій структурі (одразу активна — додає той, хто має право підтверджувати)
+API.roleGrant = function (c, d) {
+  const id = str_(d.tgId);
+  const person = getPerson_(id);
+  if (!person) bad_('Людину не знайдено.');
+  const def = roleDef_(str_(d.key));
+  if (!def || def.key === 'SUPER' || def.hidden) bad_('Обери роль.');
+  const u = str_(d.unit);
+  const level = u === 'nat' ? 'nat' : { r: 'region', a: 'area', t: 'team' }[u.slice(0, 1)];
+  const unitId = u === 'nat' ? '' : u.slice(2);
+  if (level !== def.level) bad_('Для ролі «' + def.label + '» обери ' + ({ nat: 'Україну', region: 'регіон', area: 'ерію', team: 'команду' }[def.level]) + '.');
+  const st = loadStruct_();
+  if ((level === 'region' && !st.region[unitId]) || (level === 'area' && !st.area[unitId]) || (level === 'team' && !st.team[unitId])) bad_('Такої ланки немає.');
+  const target = { key: def.key, level: level, unitId: unitId, tgId: id };
+  if (!canDecide_(c, target)) deny_('Таку роль у цій ланці ти не можеш додавати.');
+  const dup = loadRoles_().filter((x) => x.tgId === id && x.key === def.key && x.level === level && x.unitId === unitId && (x.status === ST.ACTIVE || x.status === ST.PENDING))[0];
+  if (dup && dup.status === ST.ACTIVE) bad_('У людини вже є ця роль.');
+  if (dup) { setRoleStatus_(dup, ST.ACTIVE, c.name); }
+  else insertRole_({ id: uid_(), tgId: id, name: person.name || '', key: def.key, level: level, unitId: unitId, status: ST.ACTIVE, decidedBy: c.name, decided: nowIso(), requested: nowIso() });
+  if (level === 'team') activateTeam_(unitId);
+  if (isReal_(id)) sendApp_(id, '🎉 Тобі додали роль: <b>' + esc_(def.label + ' · ' + unitName_(level, unitId)) + '</b>', 'Відкрити застосунок');
+  return { ok: true };
+};
+
 // заявка з помилкою: той, хто підтверджує, міняє роль і/або ланку (регіон, ерію, команду) до підтвердження
 API.roleEdit = function (c, d) {
   const r = loadRoles_().filter((x) => x.id === str_(d.roleId) && x.status === ST.PENDING)[0];
   if (!r) bad_('Заявку вже розглянуто.');
   if (!canDecide_(c, r)) deny_();
   const def = roleDef_(str_(d.key));
-  if (!def || def.key === 'SUPER') bad_('Обери роль.');
+  if (!def || def.key === 'SUPER' || def.hidden) bad_('Обери роль.');
   const u = str_(d.unit);
   const level = u === 'nat' ? 'nat' : { r: 'region', a: 'area', t: 'team' }[u.slice(0, 1)];
   const unitId = u === 'nat' ? '' : u.slice(2);
@@ -2428,7 +2453,7 @@ function permUnits_(c) {
   });
   return Object.keys(by).map((k) => by[k]).sort((a, b) => PERM_LV[a.level] - PERM_LV[b.level] || a.label.localeCompare(b.label));
 }
-const permTargets_ = (u) => ROLES.filter((d) => !d.viewOnly && d.key !== 'SUPER' && d.rank > u.rank && PERM_LV[d.level] >= PERM_LV[u.level]);
+const permTargets_ = (u) => ROLES.filter((d) => !d.viewOnly && !d.hidden && d.key !== 'SUPER' && d.rank > u.rank && PERM_LV[d.level] >= PERM_LV[u.level]);
 const permsFor_ = (d) => PERMS.filter((p) => !p.levels || p.levels.indexOf(d.level) >= 0);
 function permCell_(u, d, p) {
   let v = p.def({ key: d.key, level: d.level, rank: d.rank });

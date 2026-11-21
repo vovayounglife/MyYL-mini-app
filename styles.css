@@ -471,3 +471,10 @@ html.dark .ach-ring .ach-ic { background: #2a2230; }
 html.dark .ach-c.got .ach-ic { background: #2a2230; }
 .ach-n { font-size: 11px; font-weight: 700; line-height: 1.15; color: var(--text); }
 .ach-c:not(.got) .ach-n { color: var(--muted); font-weight: 600; }
+
+/* повноекранний Telegram: вміст і плашка режиму перегляду — під системними кнопками */
+.main { padding-top: calc(18px + var(--top-safe, 0px)); }
+.viewbar { top: var(--top-safe, 0px); }
+.progress { top: var(--top-safe, 0px); }
+.viewbar { margin-top: var(--top-safe, 0px); }
+.main.has-viewbar { padding-top: 18px; }
