@@ -405,14 +405,3 @@ html.dark .rtab td:first-child, html.dark .rtab th:first-child { background: rgb
 }
 html.dark .btn.sec2::before, html.dark .btn.ghost::before { opacity: .18; }
 
-
-/* ── легша версія скла: iPhone не тягнув десятки розмитих шарів (WebView обривав запити) ── */
-:root { --glass: rgba(255, 255, 255, .74); --glass-hi: rgba(255, 255, 255, .9); }
-html.dark { --glass: rgba(46, 40, 52, .86); --glass-hi: rgba(60, 52, 68, .94); }
-.card, .tile, .ev, .mini-stat, .seg, .col-st, .banner, .note, .week-item, .opt-ic, .det, .btn.sec2, .btn.ghost, .icon-btn, .thx-btn {
-  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
-}
-.bg-blobs i { animation: none !important; will-change: auto; }
-@keyframes glassIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-@keyframes toastIn { from { opacity: 0; transform: translateY(24px) scale(.94); } to { opacity: 1; transform: none; } }
-.modal-bg { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(30, 20, 30, .4); }
