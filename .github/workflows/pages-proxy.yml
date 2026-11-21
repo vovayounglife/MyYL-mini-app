@@ -1,0 +1,30 @@
+# Запасна адреса сервера на Cloudflare Pages (якщо в мережі не відкривається workers.dev)
+name: Запасна адреса сервера
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['pages-proxy/**', '.github/workflows/pages-proxy.yml']
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pages-proxy
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Проєкт
+        run: npx -y wrangler@3 pages project create myyl-api --production-branch main || true
+      - name: Викласти
+        run: npx -y wrangler@3 pages deploy public --project-name myyl-api --branch main --commit-dirty=true
+      - name: Перевірка
+        run: |
+          sleep 20
+          curl -s -w "\nHTTP %{http_code}\n" https://myyl-api.pages.dev/
+          curl -s -X POST https://myyl-api.pages.dev/ --data '{"action":"me","data":{},"initData":""}'
