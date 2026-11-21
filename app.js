@@ -572,18 +572,21 @@
     else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика й ачівки</b><br><span class="small muted">клуби, малі групи, КР, знані — і нагороди за служіння</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     // вище капітана звіт за клуб на головній не вносять (лише «Був на клубі»)
-    const quick = TYPES.filter((t) => canType(t.k) && (t.k !== 'club' || teamRole()));
+    // без дублів: що вже є в «Мій тиждень» (клуб, МГ, КР) чи нижче в розділах — у «Швидко внести» не повторюємо
+    const inCard = (k) => !!m.myWeek && (k === 'mg' || k === 'kr' || (k === 'club' && teamRole()));
+    const quick = TYPES.filter((t) => canType(t.k) && (t.k !== 'club' || teamRole()) && !inCard(t.k));
     const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
     const qt = quick.map((t) => `<button type="button" class="tile" style="position:relative" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}${doneT(t.k) ? '<span class="tile-ok" aria-label="цього тижня внесено">✓</span>' : ''}</button>`);
-    if (canKnownAdd()) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
-    if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 4 ? '2' : '3'}">${qt.join('')}</div>`;
+    const knownTile = (c.knownTeams || []).length || c.knownNoTeam;
+    if (canKnownAdd() && !knownTile) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
+    if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 3 ? '3' : '2'}">${qt.join('')}</div>`;
     // головні розділи: моя команда, знані, корисні ресурси, задачі
     const home = [];
     if ((c.viewTeams || []).length) home.push({ k: 'team', label: 'Моя команда', sub: 'склад, ролі й анкети', icon: 'club', ic: 'ic-teal' });
     else if (c.myyl) home.push({ k: 'myyl', label: 'Моя команда', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-teal' });
     if ((c.knownTeams || []).length || c.knownNoTeam) home.push({ k: 'known', label: 'Знані', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
     home.push({ k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання', icon: 'res', ic: 'ic-yellow' });
-    home.push({ k: 'tasks', label: 'Задачі до виконання', sub: todo.tasks ? 'не виконано: ' + todo.tasks : 'доручені тобі й тобою', icon: 'task', ic: 'ic-purple', badge: todo.tasks });
+    if (!todo.tasks) home.push({ k: 'tasks', label: 'Задачі до виконання', sub: todo.tasks ? 'не виконано: ' + todo.tasks : 'доручені тобі й тобою', icon: 'task', ic: 'ic-purple', badge: todo.tasks });
     h += `<div class="grid2">${home.map((t) =>
       `<button type="button" class="tile h" style="position:relative" data-a="tabGo" data-s="${t.k}"><span class="ic ${t.ic}">${icon(t.icon, 18)}</span><span class="grow"><span style="display:block">${esc(t.label)}</span><span class="xs muted" style="font-weight:400">${esc(t.sub)}</span></span>${t.badge ? `<span class="badge" style="position:absolute;top:8px;right:8px">${t.badge}</span>` : ''}</button>`).join('')}</div>`;
     h += `<div class="row between" style="margin:8px 4px -4px"><span class="sec" style="margin:0">Найближчі події</span><button type="button" class="link-btn" data-a="tab" data-s="calendar">Усі</button></div>`;
