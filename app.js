@@ -206,7 +206,8 @@
         } catch (e) {
           lastErr = e;
           // адреса не відповіла двічі поспіль — переходимо на запасну
-          if (!st) { HOST_FAIL[host] = (HOST_FAIL[host] || 0) + 1; if (HOST_FAIL[host] >= 2 && API_URL === host) { switchHost(); HOST_FAIL[host] = 0; } }
+          // адреса не відповіла — наступна спроба йде на іншу (обидві ведуть на той самий сервер)
+          if (!st && API_URL === host) switchHost();
           clog({ a: action, try: k + 1, err: (e && e.name) + ': ' + (e && e.message), st: st, ct: ct, len: txt.length, head: txt.slice(0, 160), bytes: body.length, host: host.replace(/^https:\/\//, '').slice(0, 30), vis: document.visibilityState });
         }
       }
@@ -2694,6 +2695,25 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 
   // ───────────── ВХІД В ОКРЕМИЙ ЗАСТОСУНОК ─────────────
   const AUTH_URL = (p) => API_URL.replace(/\/+$/, '') + '/auth/' + p;
+  // вхід поза Telegram: питаємо обидві адреси сервера одночасно, береться перша, що відповіла; кілька спроб
+  async function authCall(p, body) {
+    const hosts = [API_URL].concat(API_HOSTS.filter((h) => h !== API_URL));
+    const one = (h) => Promise.race([
+      fetch(h.replace(/\/+$/, '') + '/auth/' + p, { method: 'POST', body: JSON.stringify(body || {}), cache: 'no-store' }).then((r) => r.json()).then((j) => ({ h: h, j: j })),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000)),
+    ]);
+    const anyOf = (ps) => new Promise((res, rej) => { let n = ps.length; ps.forEach((x) => x.then(res, () => { if (--n === 0) rej(new Error('net')); })); });
+    let last;
+    for (let t = 0; t < 3; t++) {
+      try {
+        const r = await anyOf(hosts.map(one));
+        if (r.h !== API_URL) { API_URL = r.h; try { localStorage.setItem('yl:apiHost', API_URL); } catch (e) { /* ок */ } }
+        return r.j;
+      } catch (e) { last = e; await new Promise((res) => setTimeout(res, 800 * (t + 1))); }
+    }
+    try { clog({ a: 'auth/' + p, err: String(last && last.message || last), tg: 'pwa' }); } catch (e) { /* ок */ }
+    throw last;
+  }
   function logout(expired) {
     try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ок */ }
     SESSION = null; S.me = null;
@@ -2710,14 +2730,16 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
           <div class="small muted">У чаті з ботом натисни <b>«Старт»</b> (або «Запустити»), а потім повернись сюди.</div>
           <a class="btn sec2 sm" href="${esc(L.link)}" target="_blank" rel="noopener">Не відкрився Telegram? Натисни тут</a>
           <button type="button" class="link-btn" data-a="loginCancel">Скасувати</button></div>`
-        : `<button type="button" class="btn" data-a="loginStart">${icon('tg', 20)} Увійти через Telegram</button>
+        : `<button type="button" class="btn" data-a="loginStart"${S.loginBusy ? ' disabled' : ''}>${S.loginBusy ? 'Зʼєднуюсь із сервером…' : icon('tg', 20) + ' Увійти через Telegram'}</button>
           <div class="small muted" style="text-align:center">Відкриється наш бот у Telegram — підтвердь вхід одним натисканням. Пароль не потрібен.</div>`}
       ${!IS_INSTALLED ? `<div class="xs muted" style="text-align:center;margin-top:8px">Порада: додай MyYL на головний екран — ${IS_IOS ? 'Safari → «Поділитися» → «На початковий екран»' : 'меню браузера → «Встановити застосунок»'}.</div>` : ''}
     </div></main>`;
   }
   async function loginStart() {
     let r;
-    try { r = await (await fetch(AUTH_URL('start'), { method: 'POST', body: '{}' })).json(); } catch (e) { return renderLogin('Немає звʼязку із сервером. Перевір інтернет.'); }
+    S.loginBusy = true; renderLogin();
+    try { r = await authCall('start', {}); } catch (e) { S.loginBusy = false; return renderLogin('Не вдалося зʼєднатися з сервером. Перевір інтернет (або вимкни VPN / «Допомога Wi‑Fi») і спробуй ще раз.'); }
+    S.loginBusy = false;
     if (!r || !r.ok) return renderLogin('Не вдалося почати вхід. Спробуй ще раз.');
     S.login = { nonce: r.nonce, link: r.link, until: Date.now() + 10 * 60 * 1000 };
     renderLogin();
@@ -2731,7 +2753,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (!L) return;
     if (Date.now() > L.until) { S.login = null; return renderLogin('Час на вхід минув. Спробуй ще раз.'); }
     try {
-      const r = await (await fetch(AUTH_URL('poll'), { method: 'POST', body: JSON.stringify({ nonce: L.nonce }) })).json();
+      const r = await authCall('poll', { nonce: L.nonce });
       if (r.ok && r.session) {
         SESSION = { token: r.session, user: r.user };
         try { localStorage.setItem(SESSION_KEY, JSON.stringify(SESSION)); } catch (e) { /* ок */ }
