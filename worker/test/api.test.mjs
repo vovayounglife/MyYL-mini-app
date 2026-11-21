@@ -1095,6 +1095,13 @@ r = await api(VOVA, 'broadcast', { units: ['a:a1'], text: 'Привіт ерії
 const bcA = ob(/Привіт ерії/);
 ok(r.ok && bcA.length && bcA.every((t) => /📣 <b>Вова/.test(t) && !/Раб Божий/.test(t)), 'розсилка: Раб Божий у межах регіону — підпис його роллю ' + (bcA[0] || '').slice(0, 80));
 
+// ── останній внесений клуб над формою ──
+me = await api(CAP, 'me');
+ok(me.data.lastClubs && me.data.lastClubs[capTeam.id] && me.data.lastClubs[capTeam.id].date, 'клуб: останній внесений клуб у «me» ' + JSON.stringify(me.data.lastClubs && me.data.lastClubs[capTeam.id]));
+r = await api(CAP, 'saveReport', { type: 'club', teamId: capTeam.id, mode: 'week', teens: 5, leaders: 2 });
+const wkRow = env.DB.raw.prepare("SELECT mode FROM reports WHERE type = 'club' ORDER BY seq DESC LIMIT 1").get();
+ok(r.ok && wkRow.mode === 'подія', 'клуб: «підсумок тижня» для клубу не приймається — лише подія');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

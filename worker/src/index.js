@@ -146,7 +146,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true, ck: true, bugCount: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true, bugCount: true, lastClubs: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -186,6 +186,7 @@ async function runAs_(S, tgUser, action, d, viewAs) {
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
     if (need.clubs) await S.loadClubs();
+    if (need.lastClubs) S.lastClubRows = ((await S.db.prepare("SELECT r.* FROM reports r JOIN (SELECT team_id, MAX(date) AS d FROM reports WHERE type = 'club' GROUP BY team_id) m ON r.team_id = m.team_id AND r.date = m.d WHERE r.type = 'club' ORDER BY r.seq").all()).results || []).map(logFromRow);
     if (need.bugCount) S.bugOpen = (await S.db.prepare("SELECT COUNT(*) AS n FROM bugs WHERE COALESCE(done, '') = ''").first('n')) || 0;
     if (need.bugs) S.bugs = ((await S.db.prepare('SELECT * FROM bugs ORDER BY created DESC LIMIT 200').all()).results || []);
     if (need.events) await S.loadEvents();
@@ -840,6 +841,11 @@ API.me = function (c) {
   out.todo = tpCounts_(c);
   if (out.caps.approve) out.editRoles = editRoles_(c);
   if (out.caps.isSuper) out.bugsOpen = S.bugOpen || 0;
+  // останній внесений клуб — для команд, де людина вносить клуб (показуємо над формою)
+  const lc = {};
+  (S.lastClubRows || []).forEach((r) => { lc[r.teamId] = { date: r.date, none: r.mode === MODE.none, teens: r.count, leaders: r.leaders }; });
+  out.lastClubs = {};
+  out.caps.report.club.forEach((id) => { if (lc[id]) out.lastClubs[id] = lc[id]; });
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
@@ -1230,7 +1236,8 @@ API.saveReport = function (c, d) {
   if (personal && !teams.length && !upper) deny_(type === 'mg' ? 'Малу групу вносить сам лідер — для цього потрібна роль Лідера (або вища).' : 'Контактну роботу кожен вносить за себе — для цього потрібна роль.');
   if (upper) teams = [''];
   if (!personal && clubTeams_(c).indexOf(teams[0]) < 0) deny_('Клуб вносять Капітан, Адмін команди або Еріа Директор.');
-  const mode = MODE[d.mode] ? d.mode : 'event';
+  // клуб — лише окрема подія (або «не було»), без підсумку тижня
+  const mode = MODE[d.mode] && !(type === 'club' && d.mode === 'week') ? d.mode : 'event';
   const today = kyivDay(new Date());
   const date = mode === 'event' && /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') ? d.date : today;
   const week = weekKey_(date);

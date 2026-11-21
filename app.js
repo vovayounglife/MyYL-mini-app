@@ -655,9 +655,15 @@
         <button type="button" class="link-btn" data-a="tabGo" data-s="known">Відкрити мій список знаних →</button></div>`;
     }
     if (!a || !a.type) return h + '<div class="empty">Для твоєї ролі немає звітів</div>';
-    if (a.type === 'club') h += teamSelect(c.report[a.type], a.teamId, 'addTeam');
+    if (a.type === 'club') {
+      h += teamSelect(c.report[a.type], a.teamId, 'addTeam');
+      const lc = (me().lastClubs || {})[a.teamId];
+      h += `<div class="xs muted" style="margin-top:-4px">${lc ? 'Останній внесений клуб: ' + esc(fmtDay(lc.date)) + (lc.none ? ' · клубу не було' : ' · ' + lc.leaders + ' л · ' + lc.teens + ' п') : 'Клубів цієї команди ще не вносили'}</div>`;
+    }
     else { const ts = c.report[a.type] || []; h += `<div class="small muted">Вносиш за себе · зараховується ${ts.length ? (ts.length > 1 ? 'всім твоїм командам: ' : 'команді ') + '<b>' + esc(ts.map(teamName).join(', ')) + '</b>' : '<b>' + esc((c.reportSelf || {}).unit || '') + '</b>'}</div>`; }
-    h += `<div class="pills">${[['event', 'Окрема подія'], ['week', 'Підсумок тижня']].map((m) => `<button type="button" class="pill${a.mode === m[0] ? ' on' : ''}" data-a="addMode" data-m="${m[0]}">${m[1]}</button>`).join('')}</div>`;
+    // клуб — лише окремою подією з датою, коли він відбувся
+    if (a.type === 'club') a.mode = 'event';
+    else h += `<div class="pills">${[['event', 'Окрема подія'], ['week', 'Підсумок тижня']].map((m) => `<button type="button" class="pill${a.mode === m[0] ? ' on' : ''}" data-a="addMode" data-m="${m[0]}">${m[1]}</button>`).join('')}</div>`;
     h += '<div class="card rows">';
     h += a.mode === 'event'
       ? `<div class="stepper"><label for="addDate" style="font-weight:500">Дата</label><input id="addDate" class="in" style="width:auto;min-height:40px" type="date" value="${esc(a.date)}" max="${ymd(new Date())}" data-bind="add.date"></div>`
@@ -2197,6 +2203,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     // одразу дякуємо й позначаємо як здане, а зберігаємо у фоні
     const backup = { add: JSON.parse(JSON.stringify(a)), week: JSON.parse(JSON.stringify(S.me.week)) };
     weekMark(a.type, a.teamId, 'ok', a.type === 'kr' ? Number(a.hours) || 0 : 0);
+    if (a.type === 'club') { S.me.lastClubs = S.me.lastClubs || {}; const prev = S.me.lastClubs[a.teamId]; if (!prev || a.date >= prev.date) S.me.lastClubs[a.teamId] = { date: a.date, none: false, teens: Number(a.teens) || 0, leaders: Number(a.leaders) || 0 }; }
     go('home'); thank();
     try { const res = await api('saveReport', payload); S.me.week = res.week; if (res.myWeek) S.me.myWeek = res.myWeek; S.myStats = null; LS.set('me', S.me); if (S.screen === 'home' && !S.thanks) render(); }
     catch (e) { S.me.week = backup.week; S.add = backup.add; S.thanks = false; S.screen = 'add'; render(); toast('Не вдалося зберегти: ' + e.message, 'error'); }
