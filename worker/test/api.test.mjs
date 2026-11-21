@@ -944,7 +944,7 @@ r = await admin('teams', { people: [{ all: 'Анастасія Панєва' }] 
 ok(r.ok && r.people[0].merged === 2, 'дублі: обʼєднання всіх записів людини');
 // ── мій тиждень і моя статистика ──
 me = await api(LEAD, 'me');
-ok(me.data.myWeek && me.data.myWeek.items.length === 3, 'мій тиждень: три відмітки для члена команди');
+ok(me.data.myWeek && me.data.myWeek.items.length === 3 && (await api(AD, 'me')).data.myWeek, 'мій тиждень: у членів команди і вищих ролей');
 r = await api(LEAD, 'checkin', { kind: 'club', on: true });
 ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: відмітив клуб');
 r = await api(LEAD, 'checkin', { kind: 'kr', on: true });

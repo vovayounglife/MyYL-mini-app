@@ -1180,7 +1180,7 @@ API.saveReport = function (c, d) {
 // ── мій тиждень: відмітки члена команди (клуб, МГ, КР) ──
 const CK_KINDS = ['club', 'mg', 'kr'];
 function myWeek_(c) {
-  if (!c.roles.some((r) => r.level === 'team' && r.status === ST.ACTIVE)) return null;
+  if (!c.roles.length) return null;
   const wk = weekKey_(new Date());
   const rows = loadLog_().filter((r) => r.week === wk);
   const ck = S.ck || {};
@@ -1200,7 +1200,7 @@ function myWeek_(c) {
 API.checkin = function (c, d) {
   const kind = String(d.kind || '');
   if (kind !== 'club') bad_('Невідома відмітка.');
-  if (!c.roles.some((r) => r.level === 'team' && r.status === ST.ACTIVE)) deny_('Відмічати тиждень можуть члени команди.');
+  if (!c.roles.length) deny_('Відмічати тиждень можна після підтвердження ролі.');
   const wk = weekKey_(new Date());
   const cur = Object.assign({ club: 0, mg: 0, kr: 0 }, S.ck || {});
   cur[kind] = d.on ? 1 : 0;

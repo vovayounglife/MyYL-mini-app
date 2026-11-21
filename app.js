@@ -571,7 +571,8 @@
     if (m.myWeek) h += myWeekCard(m.myWeek);
     else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика й ачівки</b><br><span class="small muted">клуби, малі групи, КР, знані — і нагороди за служіння</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
-    const quick = TYPES.filter((t) => canType(t.k));
+    // вище капітана звіт за клуб на головній не вносять (лише «Був на клубі»)
+    const quick = TYPES.filter((t) => canType(t.k) && (t.k !== 'club' || teamRole()));
     const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
     const qt = quick.map((t) => `<button type="button" class="tile" style="position:relative" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}${doneT(t.k) ? '<span class="tile-ok" aria-label="цього тижня внесено">✓</span>' : ''}</button>`);
     if (canKnownAdd()) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
@@ -1192,11 +1193,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const pctOf = (a, b) => (b ? Math.round(a / b * 100) : 0);
   // ── мій тиждень: відмітки одним дотиком ──
   const MW_IC = { club: 'club', mg: 'mg', kr: 'kr' };
+  const teamRole = () => activeRoles().some((r) => r.level === 'team');
   function myWeekCard(w) {
     const all = w.done === 3;
     const it = (k) => w.items.find((x) => x.key === k) || {};
     const club = it('club'), mg = it('mg'), kr = it('kr');
-    const canClub = canType('club'), canMg = canType('mg'), canKr = canType('kr');
+    const canClub = canType('club') && teamRole(), canMg = canType('mg'), canKr = canType('kr');
     const cs = ((me().week || {}).items || []).find((x) => x.type === 'club');
     const btn = (x, inner, attrs) => `<button type="button" class="mw-btn${x.on ? ' on' : ''}" ${attrs}>${inner}</button>`;
     let h = `<div class="card col mw${all ? ' mw-full' : ''}" style="gap:12px">
