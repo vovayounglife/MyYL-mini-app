@@ -163,32 +163,47 @@
     } catch (e) { /* ок */ }
   }
   const READ_ACTIONS = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo)$/;
+  const INFLIGHT = {};
+  const HOST_FAIL = {};
   async function api(action, data) {
+    const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
+    const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }));
+    // однакові запити перегляду, що вже в дорозі, не дублюємо
+    const read = READ_ACTIONS.test(action);
+    if (read && INFLIGHT[body]) return INFLIGHT[body];
+    const p = apiRun(action, body, read);
+    if (read) { INFLIGHT[body] = p; p.then(() => { delete INFLIGHT[body]; }, () => { delete INFLIGHT[body]; }); }
+    return p;
+  }
+  async function apiRun(action, body, read) {
     S.busy++; progress();
     try {
-      const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
-      const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }));
-      // перегляд даних — до 3 спроб (мережа в телефоні буває «засинає»); збереження — одна, щоб не задвоїти
-      const tries = READ_ACTIONS.test(action) ? 3 : 1;
+      // перегляд даних — до 5 спроб із паузами (слабкий Wi‑Fi, перемикання мережі в iPhone); збереження — одна, щоб не задвоїти
+      const tries = read ? 5 : 1;
+      const PAUSE = [0, 700, 1500, 2500, 4000];
       let j, lastErr;
       for (let k = 0; k < tries; k++) {
-        if (k) await new Promise((r) => setTimeout(r, k * 800));
-        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timer = ctl && setTimeout(() => ctl.abort(), 20000);
+        if (k) await new Promise((r) => setTimeout(r, PAUSE[k]));
         let st = 0, ct = '', txt = '';
+        const host = API_URL;
         try {
-          const res = await fetch(API_URL, { method: 'POST', body: body, signal: ctl ? ctl.signal : undefined });
+          // без AbortController: у WebView iPhone запити з «сигналом» інколи обриваються самі
+          const res = await Promise.race([
+            fetch(host, { method: 'POST', body: body }),
+            new Promise((_, rej) => setTimeout(() => { const e = new Error('timeout'); e.name = 'TimeoutError'; rej(e); }, 25000)),
+          ]);
           st = res.status; ct = res.headers.get('content-type') || '';
           txt = await res.text();
           j = JSON.parse(txt);
           lastErr = null;
+          HOST_FAIL[host] = 0;
           break;
         } catch (e) {
           lastErr = e;
-          // відповіді не було зовсім — наступна спроба (і наступні запити) підуть на іншу адресу сервера
-          if (!st) switchHost();
-          clog({ a: action, try: k + 1, err: (e && e.name) + ': ' + (e && e.message), st: st, ct: ct, len: txt.length, head: txt.slice(0, 160), bytes: body.length });
-        } finally { if (timer) clearTimeout(timer); }
+          // адреса не відповіла двічі поспіль — переходимо на запасну
+          if (!st) { HOST_FAIL[host] = (HOST_FAIL[host] || 0) + 1; if (HOST_FAIL[host] >= 2 && API_URL === host) { switchHost(); HOST_FAIL[host] = 0; } }
+          clog({ a: action, try: k + 1, err: (e && e.name) + ': ' + (e && e.message), st: st, ct: ct, len: txt.length, head: txt.slice(0, 160), bytes: body.length, host: host.replace(/^https:\/\//, '').slice(0, 30), vis: document.visibilityState });
+        }
       }
       if (lastErr) throw lastErr;
       if (!j.ok) {
@@ -197,7 +212,7 @@
       }
       return j.data;
     } catch (e) {
-      if (!e.code) e.message = e.name === 'AbortError' ? 'Сервер довго не відповідає. Спробуй ще раз за хвилинку.' : 'Немає звʼязку із сервером. Перевір інтернет і спробуй ще раз.';
+      if (!e.code) e.message = e.name === 'TimeoutError' ? 'Сервер довго не відповідає. Спробуй ще раз за хвилинку.' : 'Немає звʼязку із сервером. Перевір інтернет і спробуй ще раз.';
       throw e;
     } finally { S.busy--; progress(); }
   }
