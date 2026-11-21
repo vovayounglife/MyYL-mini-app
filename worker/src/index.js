@@ -145,7 +145,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -827,6 +827,7 @@ API.me = function (c) {
   out.myWeek = myWeek_(c);
   if (c.view) out.viewAs = c.view; else out.viewRoles = viewRoles_(c);
   out.todo = tpCounts_(c);
+  if (out.caps.approve) out.editRoles = editRoles_(c);
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
@@ -1075,6 +1076,11 @@ API.requests = function (c) {
   });
   return Object.keys(byPerson).map((k) => byPerson[k]).sort((a, b) => (b.primary - a.primary));
 };
+// ролі, на які можна виправити заявку (нижчі за свою; остаточно перевіряє roleEdit)
+function editRoles_(c) {
+  const top = isSuper_(c) ? 0 : Math.min.apply(null, c.roles.map((r) => r.rank).concat([99]));
+  return ROLES.filter((r) => r.key !== 'SUPER' && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
+}
 
 function setRoleTitle_(r, title) {
   const t = clip_(title).slice(0, 120);
@@ -1107,6 +1113,28 @@ API.decide = function (c, d) {
   if (approve) sendApp_(tgId, '🎉 Доступ відкрито!\nРолі: <b>' + esc_(done.map((r) => r.label + ' · ' + unitName_(r.level, r.unitId)).join(', ')) + '</b>', 'Відкрити застосунок');
   else S.send(tgId, 'Заявку на роль «' + esc_(done.map((r) => r.label).join(', ')) + '» не підтверджено. Якщо це помилка — звернись до свого керівника.');
   return { done: done.length };
+};
+
+// заявка з помилкою: той, хто підтверджує, міняє роль і/або ланку (регіон, ерію, команду) до підтвердження
+API.roleEdit = function (c, d) {
+  const r = loadRoles_().filter((x) => x.id === str_(d.roleId) && x.status === ST.PENDING)[0];
+  if (!r) bad_('Заявку вже розглянуто.');
+  if (!canDecide_(c, r)) deny_();
+  const def = roleDef_(str_(d.key));
+  if (!def || def.key === 'SUPER') bad_('Обери роль.');
+  const u = str_(d.unit);
+  const level = u === 'nat' ? 'nat' : { r: 'region', a: 'area', t: 'team' }[u.slice(0, 1)];
+  const unitId = u === 'nat' ? '' : u.slice(2);
+  if (level !== def.level) bad_('Для ролі «' + def.label + '» обери ' + ({ nat: 'Україну', region: 'регіон', area: 'ерію', team: 'команду' }[def.level]) + '.');
+  const st = loadStruct_();
+  if ((level === 'region' && !st.region[unitId]) || (level === 'area' && !st.area[unitId]) || (level === 'team' && !st.team[unitId])) bad_('Такої ланки немає.');
+  const target = { key: def.key, level: level, unitId: unitId, tgId: r.tgId };
+  if (!canDecide_(c, target)) deny_('Таку роль у цій ланці ти не можеш підтверджувати.');
+  if (loadRoles_().some((x) => x.id !== r.id && x.tgId === r.tgId && x.key === def.key && x.level === level && x.unitId === unitId && (x.status === ST.ACTIVE || x.status === ST.PENDING))) bad_('У людини вже є така роль.');
+  S.run('UPDATE roles SET role_key = ?, level = ?, unit_id = ?, title = ? WHERE id = ?', [def.key, level, unitId, def.titled ? (r.title || '') : '', r.id], true);
+  Object.assign(r, { key: def.key, level: level, unitId: unitId, rank: def.rank, title: def.titled ? r.title || '' : '' });
+  r.label = def.titled && r.title ? r.title + ' (' + def.label.toLowerCase() + ')' : def.label;
+  return { role: roleOut_(r) };
 };
 
 API.removeRole = function (c, d) {

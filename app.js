@@ -1829,6 +1829,21 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
 
   // ───────────── ЗАЯВКИ ─────────────
+  // виправити заявку: роль і ланку (регіон → ерія → команда)
+  function reqEditForm() {
+    const E = S.reqEdit, st = struct();
+    const roles = me().editRoles || [];
+    const def = roles.find((x) => x.key === E.key) || {};
+    const areas = st.areas.filter((a) => a.regionId === E.regionId), teams = st.teams.filter((t) => t.areaId === E.areaId);
+    const sel = (ch, label, list, cur, dis) => `<label class="f"><span>${label}</span><select class="in" data-ch="${ch}"${dis ? ' disabled' : ''}><option value="">Обери…</option>${list.map((x) => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`;
+    let h = `<div class="card col" style="gap:8px;margin:2px 0 8px;background:var(--glass-hi)"><label class="f"><span>Роль</span><select class="in" data-ch="reqEditKey">${roles.map((x) => `<option value="${x.key}"${x.key === E.key ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>`;
+    if (def.level && def.level !== 'nat') h += sel('reqEditRegion', 'Регіон', st.regions, E.regionId);
+    if (def.level === 'area' || def.level === 'team') h += sel('reqEditArea', 'Ерія', areas, E.areaId, !E.regionId);
+    if (def.level === 'team') h += sel('reqEditTeam', 'Команда', teams.filter((t) => t.state !== 'closed'), E.teamId, !E.areaId);
+    h += `<div class="row"><button type="button" class="btn sec2 sm" data-a="reqEditCancel">Скасувати</button><button type="button" class="btn sm grow" data-a="reqEditSave">Зберегти зміни</button></div>
+      <div class="xs muted">Після збереження підтверди заявку як звичайно — людина отримає вже виправлену роль.</div></div>`;
+    return h;
+  }
   VIEWS.requests = function () {
     let h = header('Заявки', S.reqOthers ? 'Не стосуються тебе напряму, але ти можеш підтвердити' : 'Чекають саме на тебе');
     if (!S.reqs) return h + loading();
@@ -1837,7 +1852,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const card = (p) => `<div class="card col"><div class="row"><span class="avatar" style="background:rgba(76,110,245,.18)">${esc(initials(p.name))}</span>
       <div class="grow"><div class="b">${esc(p.name)}</div><div class="small muted">${p.username ? '@' + esc(p.username) : ''}${p.phone ? ' · ' + esc(p.phone) : ''}</div></div></div>
       <div class="col" style="gap:4px">${p.roles.map((r) => `<label class="check" style="border:0;border-radius:12px;background:var(--soft);min-height:46px;padding:0 12px"><input type="checkbox" data-ch="reqToggle" data-id="${esc(r.id)}"${S.reqSel[r.id] ? ' checked' : ''}>
-        <span class="grow"><span class="b">${esc(r.label)}</span> <span class="small muted">· ${esc(r.unitName)}</span></span></label>${r.titled ? `<label class="f" style="padding:0 4px 6px"><span>Назва ролі — можна виправити перед підтвердженням</span><input class="in" type="text" maxlength="60" data-bind="reqTitle.${esc(r.id)}" value="${esc(S.reqTitle[r.id] != null ? S.reqTitle[r.id] : r.title)}"></label>` : ''}`).join('')}</div>
+        <span class="grow"><span class="b">${esc(r.label)}</span> <span class="small muted">· ${esc(r.unitName)}</span></span>${(me().editRoles || []).length ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="reqEdit" data-id="${esc(r.id)}">Змінити</button>` : ''}</label>${S.reqEdit && S.reqEdit.id === r.id ? reqEditForm() : ''}${r.titled ? `<label class="f" style="padding:0 4px 6px"><span>Назва ролі — можна виправити перед підтвердженням</span><input class="in" type="text" maxlength="60" data-bind="reqTitle.${esc(r.id)}" value="${esc(S.reqTitle[r.id] != null ? S.reqTitle[r.id] : r.title)}"></label>` : ''}`).join('')}</div>
       <div class="row"><button type="button" class="btn sec2 sm" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="0">Відхилити</button>
       <button type="button" class="btn teal sm grow" data-a="reqDecide" data-tg="${esc(p.tgId)}" data-ok="1">Підтвердити вибрані</button></div></div>`;
     if (!S.reqOthers) {
@@ -2495,6 +2510,28 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.reqOthers = () => { S.reqOthers = !S.reqOthers; render(); };
   A.reqTab = (d) => { S.reqOthers = d.v === '1'; render(); window.scrollTo(0, 0); };
   A.reqToggle = (d, el) => { S.reqSel[d.id] = el.checked; };
+  A.reqEdit = (d) => {
+    if (S.reqEdit && S.reqEdit.id === d.id) { S.reqEdit = null; return render(); }
+    const r = (S.reqs || []).flatMap((p) => p.roles).find((x) => x.id === d.id); if (!r) return;
+    const st = struct();
+    const team = r.level === 'team' ? st.teams.find((t) => t.id === r.unitId) : null;
+    const areaId = r.level === 'area' ? r.unitId : team ? team.areaId : '';
+    const area = st.areas.find((a) => a.id === areaId);
+    S.reqEdit = { id: r.id, key: r.key, regionId: r.level === 'region' ? r.unitId : area ? area.regionId : '', areaId: areaId, teamId: team ? team.id : '' };
+    render();
+  };
+  A.reqEditCancel = () => { S.reqEdit = null; render(); };
+  A.reqEditKey = (d, el) => { S.reqEdit.key = el.value; render(); };
+  A.reqEditRegion = (d, el) => { Object.assign(S.reqEdit, { regionId: el.value, areaId: '', teamId: '' }); render(); };
+  A.reqEditArea = (d, el) => { Object.assign(S.reqEdit, { areaId: el.value, teamId: '' }); render(); };
+  A.reqEditTeam = (d, el) => { S.reqEdit.teamId = el.value; render(); };
+  A.reqEditSave = async () => {
+    const E = S.reqEdit, def = (me().editRoles || []).find((x) => x.key === E.key) || {};
+    const unit = def.level === 'nat' ? 'nat' : def.level === 'region' ? (E.regionId && 'r:' + E.regionId) : def.level === 'area' ? (E.areaId && 'a:' + E.areaId) : (E.teamId && 't:' + E.teamId);
+    if (!unit) return toast('Обери, де саме служитиме людина', 'error');
+    const res = await run(() => api('roleEdit', { roleId: E.id, key: E.key, unit: unit }), 'Заявку виправлено');
+    if (res) { S.reqEdit = null; loadReqs(); }
+  };
   A.reqDecide = async (d) => {
     const p = S.reqs.filter((x) => x.tgId === d.tg)[0];
     if (!p) return;

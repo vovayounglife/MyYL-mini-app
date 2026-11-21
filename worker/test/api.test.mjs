@@ -975,6 +975,22 @@ r = await api(AD, 'myylTree', {});
   ok(tu && tu.people.some((p) => p.dropIds && p.dropIds.length) && au.people.filter((p) => p.tgId === String(AD.id)).every((p) => !p.dropIds), 'дерево: директор ерії може видаляти людей у своїх командах, себе — ні'); }
 r = await api(LEAD, 'myylTree', {});
 ok(!r.ok || Object.values(r.data.units).every((u) => u.people.every((p) => !p.dropIds)), 'дерево: лідер нікого не видаляє');
+// заявка з помилкою: капітан виправляє роль, директор ерії — ще й команду
+await api({ id: 290, first_name: 'Помил' }, 'register', { name: 'Помилкова Заявка', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
+let pr = (await api(CAP, 'requests')).data.find((p) => p.tgId === '290');
+let prr = pr.roles[0];
+r = await api(CAP, 'roleEdit', { roleId: prr.id, key: 'HELPER', unit: 't:' + capTeam.id });
+ok(r.ok && r.data.role.key === 'HELPER', 'заявка: капітан змінив роль на Помічника');
+r = await api(CAP, 'roleEdit', { roleId: prr.id, key: 'AREA_ADMIN', unit: 'a:a1' });
+ok(!r.ok, 'заявка: капітан не дає ролі ерії');
+r = await api(CAP, 'roleEdit', { roleId: prr.id, key: 'HELPER', unit: 'a:a1' });
+ok(!r.ok && /команду/.test(r.message), 'заявка: роль і ланка мають збігатися');
+r = await api(AD, 'roleEdit', { roleId: prr.id, key: 'LEADER', unit: 't:tSv' });
+ok(r.ok && r.data.role.unitId === 'tSv', 'заявка: директор ерії переніс у іншу команду');
+r = await api(AD, 'decide', { roleIds: [prr.id], approve: true });
+me = await api({ id: 290, first_name: 'Помил' }, 'me');
+ok(me.data.roles.some((x) => x.key === 'LEADER' && x.unitId === 'tSv' && x.status === 'активна'), 'заявка: підтверджено з виправленням');
+ok((await api(CAP, 'me')).data.editRoles.some((x) => x.key === 'HELPER'), 'заявка: список ролей для виправлення');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
