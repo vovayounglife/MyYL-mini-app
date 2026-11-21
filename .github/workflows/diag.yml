@@ -25,6 +25,7 @@ jobs:
         run: |
           curl -s "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo" | jq '.result | {url: (.url|sub("[?].*";"")), pending_update_count, last_error_date, last_error_message, ip_address}'
       - name: З України та Європи (check-host.net)
+        continue-on-error: true
         run: |
           U=https://yl-mini-app.vova-younglife.workers.dev/
           R=$(curl -s -H 'Accept: application/json' "https://check-host.net/check-http?host=$U&max_nodes=40")
