@@ -1260,9 +1260,11 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     (d.cats || [{ key: '', title: 'Усі', ic: '🏅' }]).forEach((cat) => {
       const list = d.ach.filter((a) => !cat.key || a.cat === cat.key);
       if (!list.length) return;
-      h += `<div class="sec">${cat.ic} ${esc(cat.title)} · ${list.filter((a) => a.done).length}/${list.length}</div><div class="grid2">${list.map((a) => `<div class="card ach${a.done ? ' got' : ''}">
-      <span class="ach-ic">${ACH_IC[a.key] || '⭐'}</span><b>${esc(a.title)}</b><span class="xs muted">${esc(a.desc)}</span>
-      ${a.done ? '<span class="xs ach-ok">Отримано ✓</span>' : `<span class="track" style="height:6px"><i style="width:${Math.round(a.have / a.need * 100)}%"></i></span><span class="xs muted">${fmtNum(a.have)} з ${a.need}</span>`}</div>`).join('')}</div>`;
+      h += `<div class="sec">${cat.ic} ${esc(cat.title)} · ${list.filter((a) => a.done).length}/${list.length}</div><div class="card ach-grid">${list.map((a) => {
+        const pct = Math.round(a.have / a.need * 100);
+        return `<button type="button" class="ach-c${a.done ? ' got' : ''}" data-a="achInfo" data-t="${esc(a.title)}" data-d="${esc(a.desc)}" data-p="${a.done ? 'Отримано ✓' : fmtNum(a.have) + ' з ' + a.need}">
+          <span class="ach-ring" style="--p:${a.done ? 100 : pct}"><span class="ach-ic">${ACH_IC[a.key] || '⭐'}</span></span><span class="ach-n">${esc(a.title)}</span></button>`;
+      }).join('')}</div>`;
     });
     h += '<div class="xs muted" style="text-align:center">Клуби рахуються з твоїх відміток і з відміток присутності у звіті клубу. Малі групи й КР — з твоїх звітів і відміток тижня.</div>';
     return h;
@@ -1967,6 +1969,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     location.reload();
   };
   A.viewPick = (d, el) => (el.value ? A.viewAs({ k: el.value }) : A.viewExit());
+  A.achInfo = (d) => toast(d.t + ' — ' + d.d + ' · ' + d.p);
   A.viewExit = () => { try { sessionStorage.removeItem('yl:viewAs'); sessionStorage.removeItem('yl:viewRoles'); } catch (e) { /* ок */ } location.reload(); };
   A.checkin = async (d, el) => {
     const w = S.me && S.me.myWeek; if (!w) return;
