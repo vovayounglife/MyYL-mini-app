@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: З України (Globalping)
+        continue-on-error: true
+        run: bash .github/diag/ua.sh
       - name: Справжній застосунок у браузері
         continue-on-error: true
         run: |
