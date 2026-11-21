@@ -16,6 +16,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Вхід поза Telegram (auth/start)
+        run: |
+          for H in https://yl-mini-app.vova-younglife.workers.dev https://myyl-api.pages.dev; do
+            echo "== $H"
+            curl -s -m 20 -w "\nHTTP %{http_code} за %{time_total}s\n" -X POST "$H/auth/start" -H 'Origin: https://vovayounglife.github.io' --data '{}' | sed -E 's/[a-f0-9]{40}/<nonce>/g'
+            curl -s -m 20 -D - -o /dev/null -X OPTIONS "$H/auth/start" -H 'Origin: https://vovayounglife.github.io' -H 'Access-Control-Request-Method: POST' | grep -iE '^HTTP|access-control'
+          done
       - name: Збої на телефонах (останні)
         env:
           SYNC_KEY: ${{ secrets.SYNC_KEY }}
