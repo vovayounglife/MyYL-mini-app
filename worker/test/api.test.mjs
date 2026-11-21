@@ -1023,6 +1023,11 @@ ok(me.data.status === 'active' && me.data.roles.filter((x) => x.key === 'LEADER'
   ok(st.ok && st.data.breakdown.rows.some((x) => x.teamId === capTeam.id && x.last), 'статистика: біля команди — дата останнього звіту');
   r = await api(CAP, 'report', { units: ['t:' + capTeam.id], items: ['club', 'mg'], from: d0, to: new Date().toISOString().slice(0, 10) });
   ok(r.ok && (r.data.clubList || []).some((x) => x.teens === 11 && x.leaders === 4) && r.data.sections[0].cols.some((c) => c.key === 'l'), 'звіт: кожен клуб окремо, лідери й підлітки');
+  r = await api(LEAD, 'clubDelete', { id: h0.id });
+  ok(!r.ok, 'клуб: лідер не видаляє звіт');
+  r = await api(AD, 'clubDelete', { id: h0.id });
+  st = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'club', period: 'month' });
+  ok(r.ok && !st.data.club.history.some((x) => x.id === h0.id), 'клуб: директор ерії видалив звіт');
   r = await api(LEAD, 'report', { units: ['t:' + capTeam.id], items: ['club'], from: d0, to: d0 });
   ok(!r.ok, 'звіт: лідер не готує звітів');
 }

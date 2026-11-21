@@ -151,7 +151,7 @@ const NEEDS = {
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
-  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
+  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
   dirStats: { log: 'stats' }, installStats: {},
@@ -2598,7 +2598,7 @@ API.stats = function (c0, d) {
   out.breakdown.rows.forEach((row) => { const id = row.drill && row.drill.indexOf('t:') === 0 ? row.drill.slice(2) : (row.teamId || ''); if (id && last[id]) { row.last = last[id].date; row.lastNone = last[id].mode === MODE.none; } else if (id) row.last = ''; });
   if (scope.level === 'team') {
     const id = scope.unitId;
-    const canEdit = clubTeams_(c0).indexOf(id) >= 0;
+    const canEdit = canClubFix_(c0, id);
     out.club = { last: last[id] ? last[id].date : '', capernaum: (st.team[id] || {}).dir === 'Capernaum', canEdit: canEdit,
       history: (S.clubs || []).filter((r) => r.teamId === id).slice(0, 40).map(clubOut_) };
   }
@@ -2607,11 +2607,21 @@ API.stats = function (c0, d) {
 function lastClubs_() { const o = {}; (S.clubs || []).forEach((r) => { if (r.teamId && !o[r.teamId]) o[r.teamId] = r; }); return o; }
 const clubOut_ = (r) => ({ id: r.id, date: r.date, none: r.mode === MODE.none, week: r.mode === MODE.week, teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note, author: r.author });
 
-// змінити звіт за клуб (хто може вносити клуб у цій команді)
+// змінити чи видалити звіт за клуб: хто вносить клуб у цій команді, а також Еріа Директор і Еріа Адмін
+function canClubFix_(c, teamId) {
+  return isSuper_(c) || clubTeams_(c).indexOf(teamId) >= 0 || c.roles.some((r) => (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && covers_(r, 'team', teamId));
+}
+API.clubDelete = function (c, d) {
+  const r = (S.clubs || []).filter((x) => x.id === str_(d.id))[0];
+  if (!r) bad_('Звіт уже видалено.');
+  if (!canClubFix_(c, r.teamId)) deny_('Видаляти звіт за клуб можуть ті, хто його вносить, а також Еріа Директор і Еріа Адмін.');
+  S.run('DELETE FROM reports WHERE id = ?', [r.id]);
+  return { ok: true };
+};
 API.clubEdit = function (c, d) {
   const r = (S.clubs || []).filter((x) => x.id === str_(d.id))[0];
   if (!r) bad_('Звіт не знайдено.');
-  if (clubTeams_(c).indexOf(r.teamId) < 0) deny_('Змінювати звіт за клуб можуть Капітан, Адмін команди і керівництво ерії.');
+  if (!canClubFix_(c, r.teamId)) deny_('Змінювати звіт за клуб можуть Капітан, Адмін команди, Еріа Директор і Еріа Адмін.');
   const n = (v) => { const x = Number(v); return isFinite(x) && x >= 0 ? Math.round(x) : 0; };
   const none = !!d.none;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') && d.date <= kyivDay(new Date()) ? d.date : r.date;

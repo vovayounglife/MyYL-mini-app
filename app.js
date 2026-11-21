@@ -860,7 +860,9 @@
       <div class="small muted">${cl.last ? 'Останній звіт: ' + esc(fmtDay(cl.last)) : 'Звітів за клуб ще не було'}</div>`;
     if (!cl.history.length) return h + '</div>';
     const n = (k, v) => `<span class="ch-n"><b>${v}</b><span class="xs muted">${k}</span></span>`;
-    h += cl.history.map((r) => {
+    const all = S.stats.histAll;
+    const shownH = all ? cl.history : cl.history.slice(0, 5);
+    h += shownH.map((r) => {
       if (E && E.id === r.id) {
         const inp = (k, l) => `<label class="f" style="flex:1;min-width:70px"><span>${l}</span><input class="in" type="number" min="0" inputmode="numeric" data-bind="stats.clubEdit.${k}" value="${esc(E[k])}"></label>`;
         return `<div class="ch-row col" style="gap:8px">
@@ -868,13 +870,15 @@
           <label class="toggle-row" style="padding:0"><span class="small">Клубу не було</span><input type="checkbox" data-ch="clubEditNone"${E.none ? ' checked' : ''}></label>
           ${E.none ? '' : `<div class="row wrap" style="gap:8px">${inp('teens', 'Підлітків')}${inp('newT', 'Нових')}${inp('leaders', 'Лідерів')}${cl.capernaum || E.parents ? inp('parents', 'Батьків') : ''}</div>`}
           <label class="f"><span>Нотатка</span><input class="in" type="text" data-bind="stats.clubEdit.note" value="${esc(E.note || '')}"></label>
-          <div class="grid2"><button type="button" class="btn ghost sm" data-a="clubEditCancel">Скасувати</button><button type="button" class="btn sm" data-a="clubEditSave">Зберегти</button></div></div>`;
+          <div class="grid2"><button type="button" class="btn ghost sm" data-a="clubEditCancel">Скасувати</button><button type="button" class="btn sm" data-a="clubEditSave">Зберегти</button></div>
+          <button type="button" class="link-btn danger-t" data-a="clubDelete" data-id="${esc(r.id)}">🗑 Видалити цей звіт</button></div>`;
       }
       return `<div class="ch-row"><div class="row between" style="gap:8px"><span class="b">${esc(fmtDay(r.date))}${r.week ? ' <span class="xs muted">· підсумок тижня</span>' : ''}</span>
           ${cl.canEdit ? `<button type="button" class="link-btn" data-a="clubEditOpen" data-id="${esc(r.id)}">змінити</button>` : ''}</div>
         ${r.none ? '<div class="small muted">Клубу не було</div>' : `<div class="row" style="gap:14px;flex-wrap:wrap">${n('підлітків', r.teens)}${n('нових', r.newT)}${n('лідерів', r.leaders)}${cl.capernaum || r.parents ? n('батьків', r.parents) : ''}</div>`}
         ${r.note ? `<div class="xs muted">${esc(r.note)}</div>` : ''}<div class="xs muted">вніс(ла): ${esc(r.author || '—')}</div></div>`;
     }).join('');
+    if (cl.history.length > 5) h += `<button type="button" class="link-btn" data-a="histAll">${all ? 'Згорнути' : 'Показати ще (' + (cl.history.length - 5) + ')'}</button>`;
     return h + '</div>';
   }
 
@@ -2428,6 +2432,13 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.statsSort = (d) => { S.stats.sort = d.s; render(); };
   A.clubEditOpen = (d) => { const r = ((S.stats.data && S.stats.data.club) || { history: [] }).history.filter((x) => x.id === d.id)[0]; if (!r) return; S.stats.clubEdit = Object.assign({}, r); render(); };
   A.clubEditCancel = () => { S.stats.clubEdit = null; render(); };
+  A.histAll = () => { S.stats.histAll = !S.stats.histAll; render(); };
+  A.clubDelete = async (d) => {
+    const r = ((S.stats.data && S.stats.data.club) || { history: [] }).history.filter((x) => x.id === d.id)[0]; if (!r) return;
+    if (!(await confirmAsk('Видалити звіт за клуб від ' + fmtDay(r.date) + '? Його не можна буде повернути.'))) return;
+    const ok = await run(() => api('clubDelete', { id: d.id }), 'Звіт видалено');
+    if (ok) { S.stats.clubEdit = null; loadStats(); }
+  };
   A.clubEditNone = (d, el) => { S.stats.clubEdit.none = el.checked; render(); };
   A.clubEditSave = async () => {
     const E = S.stats.clubEdit;
