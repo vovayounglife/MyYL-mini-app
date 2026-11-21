@@ -1135,7 +1135,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <div class="xs muted" id="bcCount" style="text-align:right;margin-top:-6px">${b.text.length} / 3500</div>
       <label class="toggle-row" style="padding:4px 0"><span><span class="b" style="display:block">Кнопка «Відкрити Young Life»</span><span class="small muted">під повідомленням</span></span><input type="checkbox" data-bind="bc.button"${b.button ? ' checked' : ''}></label>
       <button type="button" class="btn" data-a="bcSend"${b.sending || !b.count ? ' disabled' : ''}>${icon('send', 18)} Надіслати</button>
-      <div class="xs muted">Повідомлення буде з підписом: твоє імʼя й роль.</div></div>`;
+      <div class="xs muted">${caps().isSuper && (S.pick.broadcast || { keys: [] }).keys.indexOf('nat') >= 0 ? 'На всю Україну — без підпису: просто повідомлення від бота.' : caps().isSuper ? 'Підпис: твоє імʼя й роль у цьому регіоні (напр. Регіональний Директор · West).' : 'Повідомлення буде з підписом: твоє імʼя й роль.'}</div></div>`;
     if (!info) return h + loading();
     if (info.queued) h += `<div class="small muted">Ще доставляється: ${plural(info.queued, 'повідомлення', 'повідомлення', 'повідомлень')} (до 40 на хвилину).</div>`;
     if (info.history.length) {

@@ -1084,6 +1084,17 @@ r = await api(VOVA, 'bugDone', { id: bg.id });
 r = await api(VOVA, 'bugs');
 ok(r.data.list.find((x) => x.id === bg.id).done, 'помилка: позначено виправленим');
 
+// ── Раб Божий: не в національній команді; підпис розсилки ──
+r = await api(VOVA, 'myylTree');
+ok(r.ok && !(r.data.units.nat.people || []).some((p) => p.tgId === '1'), 'дерево: Раб Божий не в «Національній команді»');
+r = await api(VOVA, 'broadcast', { units: ['nat'], text: 'Привіт усім' });
+const ob = (re) => env.DB.raw.prepare('SELECT text FROM outbox').all().map((x) => x.text).concat(sent.map((x) => x.text || '')).filter((t) => re.test(t || ''));
+const bcAll = ob(/Привіт усім/);
+ok(r.ok && bcAll.length && bcAll.every((t) => !/📣/.test(t) && !/Вова/.test(t)), 'розсилка: Раб Божий на всю Україну — без підпису');
+r = await api(VOVA, 'broadcast', { units: ['a:a1'], text: 'Привіт ерії' });
+const bcA = ob(/Привіт ерії/);
+ok(r.ok && bcA.length && bcA.every((t) => /📣 <b>Вова/.test(t) && !/Раб Божий/.test(t)), 'розсилка: Раб Божий у межах регіону — підпис його роллю ' + (bcA[0] || '').slice(0, 80));
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

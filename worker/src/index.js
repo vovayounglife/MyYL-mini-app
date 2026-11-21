@@ -1925,7 +1925,8 @@ API.myylTree = function (c0) {
   });
   // люди з активними ролями — на тій одиниці, де роль
   const byUnit = {};
-  loadRoles_().filter((r) => r.status === ST.ACTIVE).forEach((r) => {
+  // «Раб Божий» — службова роль, у складі не показуємо
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.key !== 'SUPER').forEach((r) => {
     const k = r.level === 'nat' ? 'nat' : (r.level === 'region' ? 'r:' : r.level === 'area' ? 'a:' : 't:') + r.unitId;
     if (!units[k]) return;
     const m = byUnit[k] = byUnit[k] || {};
@@ -2174,7 +2175,7 @@ function bcRecipients_(c, d) {
   let ids = a.ids.filter((id) => wants_(id, 'bc'));
   // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
   if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people).filter((id) => id !== c.id && wants_(id, 'bc'))));
-  return { ids: ids, label: a.label };
+  return { ids: ids, label: a.label, units: units };
 }
 
 API.broadcastInfo = function (c, d) {
@@ -2194,8 +2195,9 @@ API.broadcast = function (c, d) {
   if (text.length > 3500) bad_('Задовге повідомлення: максимум 3500 символів.');
   const r = bcRecipients_(c, d);
   if (!r.ids.length) bad_('За цим вибором ще нікого немає.');
-  const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0];
-  const head = '📣 <b>' + esc_(c.name) + '</b>' + (top ? ' · ' + esc_(top.label + (top.level === 'nat' ? '' : ' · ' + unitName_(top.level, top.unitId))) : '') + '\n\n';
+  const sig = signLine_(c, r.units);
+  // Раб Божий на всю Україну — без підпису, просто від бота
+  const head = sig == null ? '' : '📣 <b>' + esc_(c.name) + '</b>' + (sig ? ' · ' + esc_(sig) : '') + '\n\n';
   const body = head + esc_(text);
   r.ids.forEach((id) => {
     if (d.button === false) S.send(id, body);
@@ -2213,7 +2215,22 @@ function oversees_(c, x) {
   if (x.authorId === c.id || isSuper_(c)) return true;
   return c.roles.some((r) => r.rank <= RANK.APPROVE && r.rank < x.authorRank && x.units.length > 0 && x.units.every((k) => { const u = keyUnit_(k); return covers_(r, u.level, u.unitId); }));
 }
-const authorLine_ = (c) => { const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0]; return esc_(c.name) + (top ? ' · ' + esc_(top.label + (top.level === 'nat' ? '' : ' · ' + unitName_(top.level, top.unitId))) : ''); };
+// підпис автора: Раб Божий на всю Україну — null (без підпису); у межах регіону й нижче — його роль там (напр. «Регіональний Директор · West»)
+function signLine_(c, units) {
+  const lab = (r) => r.label + (r.level === 'nat' ? '' : ' · ' + unitName_(r.level, r.unitId));
+  const own = c.roles.filter((r) => r.key !== 'SUPER').sort((a, b) => a.rank - b.rank);
+  if (isSuper_(c)) {
+    if (!units || !units.length || units.some((u) => u.level === 'nat')) return null;
+    const fit = own.filter((r) => units.every((u) => covers_(r, u.level, u.unitId)))[0];
+    return fit ? lab(fit) : own[0] ? lab(own[0]) : '';
+  }
+  const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0];
+  return top ? lab(top) : '';
+}
+const authorLine_ = (c, keys) => {
+  if (isSuper_(c)) { const sig = signLine_(c, (keys || []).map(keyUnit_)); return sig == null ? 'Young Life Україна' : esc_(c.name) + (sig ? ' · ' + esc_(sig) : ''); }
+  const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0]; return esc_(c.name) + (top ? ' · ' + esc_(top.label + (top.level === 'nat' ? '' : ' · ' + unitName_(top.level, top.unitId))) : '');
+};
 const fmtDue_ = (k) => { const M = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня']; return Number(k.slice(8, 10)) + ' ' + M[Number(k.slice(5, 7)) - 1]; };
 function tpCounts_(c) {
   return {
@@ -2260,7 +2277,7 @@ API.taskSave = function (c, d) {
   S.run("INSERT OR IGNORE INTO task_people (task_id, tg_id, name, status, note, updated) SELECT ?, value, '', 'todo', '', '' FROM json_each(?)", [t.id, JSON.stringify(a.ids)]);
   S.tasks.push(t);
   a.ids.forEach((id) => S.taskPeople.push({ taskId: t.id, tgId: id, name: '', status: 'todo', note: '', updated: '' }));
-  const text = '✅ <b>Нова задача</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : '') + (t.desc ? '\n\n' + esc_(t.desc.slice(0, 1500)) : '');
+  const text = '✅ <b>Нова задача</b> від ' + authorLine_(c, t.units) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : '') + (t.desc ? '\n\n' + esc_(t.desc.slice(0, 1500)) : '');
   if (!d.self) a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', 'tasks'));
   return { id: t.id, count: a.ids.length };
 };
@@ -2300,7 +2317,7 @@ API.taskNudge = function (c, d) {
   const t = S.tasks.filter((x) => x.id === str_(d.id))[0];
   if (!t || !oversees_(c, t)) deny_();
   const ids = S.taskPeople.filter((x) => x.taskId === t.id && x.status !== 'done').map((x) => x.tgId).filter((id) => wants_(id, 'tasks'));
-  ids.forEach((id) => sendApp_(id, '⏰ <b>Нагадування про задачу</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : ''), 'Відкрити задачу', 'tasks'));
+  ids.forEach((id) => sendApp_(id, '⏰ <b>Нагадування про задачу</b> від ' + authorLine_(c, t.units) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : ''), 'Відкрити задачу', 'tasks'));
   return { sent: ids.length };
 };
 
@@ -2337,7 +2354,7 @@ API.pollSave = function (c, d) {
   S.run('INSERT INTO polls (id, question, options, multi, open_results, units, roles, audience, people, author_id, author, author_rank, created, closed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     [p.id, p.question, JSON.stringify(p.options), p.multi ? 1 : 0, p.open ? 1 : 0, p.units.join(','), p.roles.join(','), p.audience, p.people.join(','), p.authorId, p.author, p.authorRank, p.created, '']);
   S.polls.push(p);
-  const text = '📊 <b>Опитування</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(q) + '</b>\n' + opts.map((x) => '• ' + esc_(x)).join('\n');
+  const text = '📊 <b>Опитування</b> від ' + authorLine_(c, p.units) + '\n\n<b>' + esc_(q) + '</b>\n' + opts.map((x) => '• ' + esc_(x)).join('\n');
   a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Проголосувати', 'polls'));
   return { id: p.id, count: a.ids.length };
 };
