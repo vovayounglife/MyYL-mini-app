@@ -1,0 +1,15 @@
+import puppeteer from 'puppeteer';
+const b = await puppeteer.launch({ args: ['--no-sandbox'] });
+const p = await b.newPage();
+await p.setViewport({ width: 390, height: 844, isMobile: true });
+p.on('console', (m) => console.log('CONSOLE', m.type(), m.text()));
+p.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+p.on('requestfailed', (r) => console.log('REQFAILED', r.method(), r.url().slice(0, 90), r.failure() && r.failure().errorText));
+p.on('response', (r) => { if (!/fonts|telegram\.org/.test(r.url())) console.log('RESP', r.status(), r.request().method(), r.url().slice(0, 90)); });
+await p.evaluateOnNewDocument(() => { window.Telegram = { WebApp: { initData: 'query_id=x&user=%7B%22id%22%3A1%7D&auth_date=1&hash=00', initDataUnsafe: { user: { id: 1 } }, colorScheme: 'light', version: '8.0', platform: 'ios', ready() {}, expand() {}, onEvent() {}, setHeaderColor() {}, setBackgroundColor() {}, isVersionAtLeast() { return true; }, checkHomeScreenStatus() {}, BackButton: { show() {}, hide() {}, onClick() {} }, HapticFeedback: { notificationOccurred() {}, impactOccurred() {} }, showConfirm() {}, showAlert() {} } }; });
+await p.setRequestInterception(true);
+p.on('request', (r) => (r.url().includes('telegram.org/js') ? r.respond({ contentType: 'text/javascript', body: '' }) : r.continue()));
+await p.goto('https://vovayounglife.github.io/MyYL-mini-app/', { waitUntil: 'networkidle2', timeout: 60000 });
+await new Promise((r) => setTimeout(r, 8000));
+console.log('TEXT', (await p.evaluate(() => document.body.innerText)).slice(0, 400).replace(/\n/g, ' | '));
+await b.close();

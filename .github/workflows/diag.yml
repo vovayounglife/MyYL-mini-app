@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/diag.yml']
+    paths: ['.github/workflows/diag.yml', '.github/diag/**']
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -12,6 +12,14 @@ jobs:
       CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Справжній застосунок у браузері
+        continue-on-error: true
+        run: |
+          cd .github/diag && npm init -y >/dev/null && npm i puppeteer@23 >/dev/null 2>&1 && node probe.mjs
       - name: Запит до сервера
         run: |
           for i in 1 2 3; do
