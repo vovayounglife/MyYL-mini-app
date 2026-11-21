@@ -307,6 +307,7 @@
     if (screen === 'perms') loadPerms();
     if (screen === 'inst') { ensurePick('inst'); loadInst(); }
     if (screen === 'mystats') loadMyStats();
+    if (screen === 'ach') loadAch();
     if (screen === 'res') { S.res.form = null; loadRes(); }
     if (screen === 'dirs') { ensurePick('dirs'); loadDirs(); }
     if (screen === 'tasks') { S.tasks.open = o.id || null; S.tasks.form = null; loadTasks(); }
@@ -569,7 +570,7 @@
     if (todo.polls) h += `<button type="button" class="banner" data-a="tabGo" data-s="polls"><span class="badge" style="width:32px;height:32px;border-radius:16px;background:var(--blue)">${todo.polls}</span>
         <span class="grow"><b>${todo.polls === 1 ? 'Нове опитування' : 'Нові опитування'}</b><br><span class="small muted">Твій голос ще не враховано</span></span>${icon('chev')}</button>`;
     if (m.myWeek) h += myWeekCard(m.myWeek);
-    else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика й ачівки</b><br><span class="small muted">клуби, малі групи, КР, знані — і нагороди за служіння</span></span>${icon('chev')}</button>`;
+    else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика</b><br><span class="small muted">клуби, малі групи, КР, знані · ачівки — у «Ще»</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     // вище капітана звіт за клуб на головній не вносять (лише «Був на клубі»)
     // без дублів: що вже є в «Мій тиждень» (клуб, МГ, КР) чи нижче в розділах — у «Швидко внести» не повторюємо
@@ -1219,7 +1220,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     // капітан / адмін команди: звіт за клуб усієї команди
     if (canClub) h += `<button type="button" class="mw-club${cs && cs.status !== 'missing' ? ' ok' : ''}" data-a="openAdd" data-type="club"${cs ? ` data-team="${esc(cs.teamId)}"` : ''}>
       <span class="grow"><b>Звіт за клуб команди</b><br><span class="xs muted">${cs && cs.status === 'ok' ? 'цього тижня внесено ✓' : cs && cs.status === 'none' ? 'відмічено «клубу не було»' : 'ще не внесено — скільки підлітків, хто з лідерів був'}</span></span>${icon('chev')}</button>`;
-    h += `<button type="button" class="linkish small" data-a="tabGo" data-s="mystats">${all ? '🔥 Повний тиждень! ' : ''}Моя статистика й ачівки →</button></div>`;
+    h += `<div class="row" style="gap:16px;flex-wrap:wrap"><button type="button" class="linkish small" data-a="tabGo" data-s="mystats">${all ? '🔥 Повний тиждень! ' : ''}Моя статистика →</button><button type="button" class="linkish small" data-a="tabGo" data-s="ach">🏅 Ачівки →</button></div></div>`;
     return h;
   }
   function confetti() {
@@ -1244,6 +1245,10 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     try { S.myStats = await api('myStats', { period: P }); } catch (e) { toast(e.message, 'error'); }
     if (S.screen === 'mystats') render();
   }
+  async function loadAch() {
+    try { S.achD = await api('myStats', { period: 'all' }); } catch (e) { toast(e.message, 'error'); }
+    if (S.screen === 'ach') render();
+  }
   VIEWS.mystats = function () {
     let h = header('Моя статистика', first() + ' · твоє служіння');
     const P = S.myStatsP || 'all';
@@ -1257,6 +1262,15 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     h += `<div class="sec">Останні 12 тижнів</div><div class="card ms-trail">${d.trail.map((t) => `<span class="ms-w" title="${esc(t.week)}"><i class="${t.club ? 'c' : ''}"></i><i class="${t.mg ? 'm' : ''}"></i><i class="${t.kr ? 'k' : ''}"></i></span>`).join('')}
       <div class="ms-leg xs muted"><span><i class="c"></i>клуб</span><span><i class="m"></i>мала група</span><span><i class="k"></i>КР</span></div></div>`;
     const done = d.ach.filter((a) => a.done).length;
+    h += `<button type="button" class="banner" data-a="tabGo" data-s="ach"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Ачівки · ${done} з ${d.ach.length}</b><br><span class="small muted">нагороди за служіння — окремий розділ</span></span>${icon('chev')}</button>`;
+    h += '<div class="xs muted" style="text-align:center">Клуби рахуються з твоїх відміток і з відміток присутності у звіті клубу. Малі групи й КР — з твоїх звітів і відміток тижня.</div>';
+    return h;
+  };
+  VIEWS.ach = function () {
+    let h = header('Ачівки', first() + ' · нагороди за служіння');
+    const d = S.achD;
+    if (!d) return h + loading();
+    const done = d.ach.filter((a) => a.done).length;
     h += `<div class="ach-head card row"><span class="ms-fire">🏅</span><span class="grow"><b>Ачівки · ${done} з ${d.ach.length}</b><span class="track" style="height:8px;margin-top:6px;display:block"><i style="width:${Math.round(done / d.ach.length * 100)}%;background:var(--grad)"></i></span></span></div>`;
     (d.cats || [{ key: '', title: 'Усі', ic: '🏅' }]).forEach((cat) => {
       const list = d.ach.filter((a) => !cat.key || a.cat === cat.key);
@@ -1267,7 +1281,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
           <span class="ach-ring" style="--p:${a.done ? 100 : pct}"><span class="ach-ic">${ACH_IC[a.key] || '⭐'}</span></span><span class="ach-n">${esc(a.title)}</span></button>`;
       }).join('')}</div>`;
     });
-    h += '<div class="xs muted" style="text-align:center">Клуби рахуються з твоїх відміток і з відміток присутності у звіті клубу. Малі групи й КР — з твоїх звітів і відміток тижня.</div>';
+    h += '<div class="xs muted" style="text-align:center">Натисни на кружечок — побачиш, що треба для ачівки. Рахується за весь час служіння.</div>';
+    h += '<button type="button" class="linkish small" style="align-self:center" data-a="tabGo" data-s="mystats">Моя статистика →</button>';
     return h;
   };
   const fmtNum = (v) => String(Math.round((Number(v) || 0) * 10) / 10).replace('.', ',');
@@ -1631,30 +1646,40 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   // ───────────── ЩЕ ─────────────
   VIEWS.more = function () {
     const c = caps();
-    const tiles = sectionTiles().filter((t) => t.k !== 'broadcast');
+    const tiles = sectionTiles();
+    const tile = (k) => tiles.filter((t) => t.k === k)[0];
     const td = me().todo || {};
-    const team = [{ k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' },
+    const has = (x) => !!x;
+    // 1. особисте
+    const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' },
+      { k: 'mystats', label: 'Моя статистика', sub: 'клуби, малі групи, КР, знані', icon: 'stats', ic: 'ic-coral' },
+      { k: 'ach', label: 'Ачівки', sub: 'нагороди за служіння', icon: 'check', ic: 'ic-yellow' }];
+    if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
+    // 2. команда
+    const team = [tile('myyl') && Object.assign({}, tile('myyl'), { label: 'Моя команда' }),
+      { k: 'calendar', label: 'Календар Young Life', sub: 'події, «Йду / їду», нагадування', icon: 'calendar', ic: 'ic-blue' },
       { k: 'tasks', label: 'Задачі до виконання', sub: c.broadcast ? 'доручити й стежити за виконанням' : 'що тобі доручили', icon: 'task', ic: 'ic-teal', badge: td.tasks },
       { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls },
-      { k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання для служіння', icon: 'res', ic: 'ic-yellow' }].concat(tiles.filter((t) => ['myyl', 'team', 'finance'].indexOf(t.k) >= 0));
-    const manage = tiles.filter((t) => ['structure'].indexOf(t.k) >= 0);
-    if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
-    if ((c.reportItems || []).length) manage.unshift({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
+      { k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання для служіння', icon: 'res', ic: 'ic-yellow' },
+      tile('broadcast')].filter(has);
+    // 3. звіти
+    const reps = [tile('finance') && Object.assign({}, tile('finance'), { label: 'Місячний фінансовий звіт' })];
+    if ((c.reportItems || []).length) reps.push({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
+    if (c.stats !== false && (S.me.scopes || []).length) reps.push({ k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-purple' });
+    reps.push(tile('team') && Object.assign({}, tile('team'), { label: 'Склад команд' }));
+    // 4. керування й налаштування
+    const manage = [tile('structure')];
     if ((S.me.scopes || []).length) manage.push({ k: 'inst', label: 'Встановили MyYL', sub: 'хто вже в застосунку — по регіонах, еріях, командах', icon: 'phoneApp', ic: 'ic-teal' });
-    if (c.stats !== false && (S.me.scopes || []).length) manage.splice((c.reportItems || []).length ? 1 : 0, 0, { k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-teal' });
+    if (c.perms) manage.push({ k: 'perms', label: 'Дозволи й доступ', sub: 'що можуть ланки нижче', icon: 'lock', ic: 'ic-soft' });
+    manage.push({ k: 'notif', label: 'Сповіщення', sub: 'що бот надсилає тобі', icon: 'bell', ic: 'ic-yellow' });
+    // 5. застосунок
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Додати на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : (S.homeSt === 'added' ? 'іконку додано ✓' : 'іконка YL на телефоні — як це зробити'), icon: 'phoneApp', ic: 'ic-teal' }];
-    const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
-    mine.unshift({ k: 'mystats', label: 'Моя статистика', sub: 'клуби, малі групи, КР, знані — і ачівки', icon: 'stats', ic: 'ic-coral' });
-    if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
-    mine.push({ k: 'notif', label: 'Сповіщення', sub: 'що бот надсилає тобі', icon: 'bell', ic: 'ic-yellow' });
-    if (c.broadcast) mine.push({ k: 'broadcast', label: 'Написати', sub: c.isSuper ? 'усім або вибраним у боті' : 'своїм людям у боті', icon: 'send', ic: 'ic-coral' });
     const list = (items) => `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
     let h = header('Ще');
-    if (team.length) h += '<div class="sec">Команда</div>' + list(team);
-    if (manage.length) h += '<div class="sec">Звіти й структура</div>' + list(manage);
-    h += '<div class="sec">Застосунок</div>' + list(app);
-    h += '<div class="sec">Особисте</div>' + list(mine);
+    [['Особисте', mine], ['Команда', team], ['Звіти', reps.filter(has)], ['Керування', manage.filter(has)], ['Застосунок', app]].forEach(([t, items]) => {
+      if (items.length) h += `<div class="sec">${t}</div>` + list(items);
+    });
     const vr = (VIEW_ROLES || (S.me && S.me.viewRoles) || []);
     if (vr.length || VIEW_AS) {
       h += `<label class="card row view-pick"><span class="grow small"><b>👁 Відобразити як для</b><br><span class="xs muted">лише перегляд, нічого не зміниться</span></span>
