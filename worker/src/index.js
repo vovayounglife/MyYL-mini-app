@@ -1211,20 +1211,42 @@ API.checkin = function (c, d) {
 };
 
 // ── моя статистика й ачівки ──
+// ачівки: [ключ, категорія, назва, опис, показник, поріг]
+const ACH_CATS = [['start', 'Старт', '🌱'], ['streak', 'Постійність', '🔥'], ['club', 'Клуби', '🎉'], ['mg', 'Малі групи', '📖'], ['kr', 'Контактна робота', '🤝'], ['known', 'Знані по імені', '🙏']];
 const ACH = [
-  ['first', 'Перший крок', 'Перша відмітка чи звіт', 'acts', 1],
-  ['full', 'Повний тиждень', 'Клуб, мала група і КР за один тиждень', 'full', 1],
-  ['streak4', 'Вогник', '4 тижні поспіль з активністю', 'streak', 4],
-  ['streak12', 'Марафонець', '12 тижнів поспіль', 'streak', 12],
-  ['club10', 'Свій на клубі', '10 клубів', 'clubs', 10],
-  ['club30', 'Серце клубу', '30 клубів', 'clubs', 30],
-  ['mg10', 'Пастир групи', '10 малих груп', 'mgs', 10],
-  ['mg40', 'Наставник', '40 малих груп', 'mgs', 40],
-  ['kr10', 'Поруч', '10 годин контактної роботи', 'kr', 10],
-  ['kr50', 'Друг на кожен день', '50 годин контактної роботи', 'kr', 50],
-  ['known10', 'Знаю по імені', '10 підлітків у «Знаних»', 'known', 10],
-  ['known30', 'Молитовник', '30 підлітків у «Знаних»', 'known', 30],
-  ['own1', 'Йдуть самі', 'Підліток у стадії «Йдуть самі»', 'own', 1],
+  ['first', 'start', 'Перший крок', 'Перша відмітка чи звіт', 'acts', 1],
+  ['month1', 'start', 'Перший місяць', '4 тижні з активністю', 'acts', 4],
+  ['half', 'start', 'Півроку в служінні', '26 активних тижнів', 'acts', 26],
+  ['year1', 'start', 'Рік служіння', '52 активні тижні', 'acts', 52],
+  ['streak4', 'streak', 'Вогник', '4 тижні поспіль', 'streak', 4],
+  ['streak12', 'streak', 'Марафонець', '12 тижнів поспіль', 'streak', 12],
+  ['streak26', 'streak', 'Незгасний', '26 тижнів поспіль', 'streak', 26],
+  ['full', 'streak', 'Повний тиждень', 'Клуб, мала група і КР за тиждень', 'full', 1],
+  ['full5', 'streak', 'П’ять повних', '5 повних тижнів', 'full', 5],
+  ['full20', 'streak', 'Усе й завжди', '20 повних тижнів', 'full', 20],
+  ['club1', 'club', 'Перший клуб', 'Відмітка про клуб', 'clubs', 1],
+  ['club10', 'club', 'Свій на клубі', '10 клубів', 'clubs', 10],
+  ['club30', 'club', 'Серце клубу', '30 клубів', 'clubs', 30],
+  ['club75', 'club', 'Легенда клубу', '75 клубів', 'clubs', 75],
+  ['mg1', 'mg', 'Перша група', 'Перша мала група', 'mgs', 1],
+  ['mg10', 'mg', 'Пастир групи', '10 малих груп', 'mgs', 10],
+  ['mg40', 'mg', 'Наставник', '40 малих груп', 'mgs', 40],
+  ['mg100', 'mg', 'Сотня зустрічей', '100 малих груп', 'mgs', 100],
+  ['mgT50', 'mg', 'Повна кімната', '50 відвідувань підлітків на МГ', 'mgTeens', 50],
+  ['mgT200', 'mg', 'Сотні сердець', '200 відвідувань підлітків на МГ', 'mgTeens', 200],
+  ['kr1', 'kr', 'Перша зустріч', 'Перша контактна робота', 'krN', 1],
+  ['krN20', 'kr', 'Завжди поруч', '20 зустрічей КР', 'krN', 20],
+  ['kr10', 'kr', 'Поруч', '10 годин КР', 'kr', 10],
+  ['kr50', 'kr', 'Друг на кожен день', '50 годин КР', 'kr', 50],
+  ['kr150', 'kr', 'Життя поруч', '150 годин КР', 'kr', 150],
+  ['known1', 'known', 'Перше імʼя', 'Перший підліток у «Знаних»', 'known', 1],
+  ['known10', 'known', 'Знаю по імені', '10 підлітків', 'known', 10],
+  ['known30', 'known', 'Молитовник', '30 підлітків', 'known', 30],
+  ['known75', 'known', 'Великі ворота', '75 підлітків', 'known', 75],
+  ['friends10', 'known', 'Справжні друзі', '10 підлітків у стадії «Дружимо» і далі', 'friends', 10],
+  ['grow5', 'known', 'Зростаємо разом', '5 підлітків зростають у вірі', 'grow', 5],
+  ['own1', 'known', 'Йдуть самі', 'Підліток у стадії «Йдуть самі»', 'own', 1],
+  ['own5', 'known', 'Учні, що ведуть', '5 підлітків «Йдуть самі»', 'own', 5],
 ];
 function weekShift_(wk, n) { const d = new Date(wk + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 7 * n); return d.toISOString().slice(0, 10); }
 API.myStats = function (c, d) {
@@ -1239,7 +1261,9 @@ API.myStats = function (c, d) {
   const mark = (wk, k, v) => { if (!wk) return; W[wk] = W[wk] || { club: 0, mg: 0, kr: 0, krH: 0, mgN: 0 }; W[wk][k] = Math.max(W[wk][k], v === undefined ? 1 : v); };
   m.att.forEach((wk) => mark(wk, 'club'));
   m.ck.forEach((r) => { if (r.club) mark(r.week, 'club'); if (r.mg) mark(r.week, 'mg'); if (r.kr) mark(r.week, 'kr'); });
-  reps.forEach((r) => { mark(r.week, r.type); if (r.type === 'kr') W[r.week].krH += Number(r.hours) || 0; if (r.type === 'mg') W[r.week].mgN += 1; });
+  let mgTeens = 0, krN = 0;
+  reps.forEach((r) => { mark(r.week, r.type); if (r.type === 'kr') { W[r.week].krH += Number(r.hours) || 0; krN++; } if (r.type === 'mg') { W[r.week].mgN += 1; mgTeens += Number(r.count) || 0; } });
+  krN += m.ck.filter((r) => r.kr).length;
   const weeks = Object.keys(W).sort();
   const sum = (f, only) => weeks.filter((w) => !only || inP(w)).reduce((a, w) => a + f(W[w]), 0);
   const totals = (only) => ({
@@ -1256,13 +1280,14 @@ API.myStats = function (c, d) {
   let best = 0, run = 0, prev = '';
   weeks.forEach((w) => { run = prev && weekShift_(prev, 1) === w ? run + 1 : 1; best = Math.max(best, run); prev = w; });
   const known = m.known.length, own = m.known.filter((k) => k.stage === 'own').length;
+  const grow = m.known.filter((k) => k.stage === 'grow' || k.stage === 'own').length, friends = m.known.filter((k) => k.stage && k.stage !== 'meet').length;
   const all = totals(false), cur = totals(true);
-  const val = { acts: all.active, full: all.full, streak: best, clubs: all.clubs, mgs: all.mgs, kr: all.kr, known: known, own: own };
-  const ach = ACH.map((a) => ({ key: a[0], title: a[1], desc: a[2], have: Math.min(val[a[3]], a[4]), need: a[4], done: val[a[3]] >= a[4] }));
+  const val = { acts: all.active, full: all.full, streak: best, clubs: all.clubs, mgs: all.mgs, kr: all.kr, known: known, own: own, grow: grow, friends: friends, mgTeens: mgTeens, krN: krN };
+  const ach = ACH.map((a) => ({ key: a[0], cat: a[1], title: a[2], desc: a[3], have: Math.min(val[a[4]] || 0, a[5]), need: a[5], done: (val[a[4]] || 0) >= a[5] }));
   // останні 12 тижнів для «доріжки»
   const trail = [];
   for (let i = 11; i >= 0; i--) { const w = weekShift_(nowWk, -i); const x = W[w] || {}; trail.push({ week: w, club: !!x.club, mg: !!(x.mg || x.mgN), kr: !!(x.kr || x.krH) }); }
-  return { period: period, kpi: { clubs: cur.clubs, mgs: cur.mgs, kr: cur.kr, known: known, active: cur.active, streak: streak, best: best }, ach: ach, trail: trail };
+  return { cats: ACH_CATS.map((x) => ({ key: x[0], title: x[1], ic: x[2] })), period: period, kpi: { clubs: cur.clubs, mgs: cur.mgs, kr: cur.kr, known: known, active: cur.active, streak: streak, best: best }, ach: ach, trail: trail };
 };
 
 // ── знані по імені ──

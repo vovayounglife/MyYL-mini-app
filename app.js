@@ -1229,7 +1229,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
 
   // ── моя статистика й ачівки ──
-  const ACH_IC = { first: '👣', full: '🔥', streak4: '⚡', streak12: '🏃', club10: '🎉', club30: '💛', mg10: '📖', mg40: '🧭', kr10: '☕', kr50: '🤝', known10: '🙏', known30: '🕊️', own1: '🌱' };
+  const ACH_IC = { first: '👣', month1: '🌱', half: '🌿', year1: '🌳', streak4: '⚡', streak12: '🏃', streak26: '🔥', full: '⭐', full5: '🌟', full20: '💫',
+    club1: '🎈', club10: '🎉', club30: '💛', club75: '👑', mg1: '📖', mg10: '🧑‍🤝‍🧑', mg40: '🧭', mg100: '💯', mgT50: '🏠', mgT200: '❤️',
+    kr1: '☕', krN20: '🚶', kr10: '🤝', kr50: '🫂', kr150: '🏔️', known1: '✍️', known10: '🙏', known30: '🕊️', known75: '🚪', friends10: '🤗', grow5: '🌾', own1: '🌱', own5: '🔦' };
   const MS_P = [['month', 'Місяць'], ['quarter', '3 міс'], ['year', 'Рік'], ['all', 'Увесь час']];
   async function loadMyStats() {
     const P = S.myStatsP || 'all';
@@ -1249,9 +1251,14 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     h += `<div class="sec">Останні 12 тижнів</div><div class="card ms-trail">${d.trail.map((t) => `<span class="ms-w" title="${esc(t.week)}"><i class="${t.club ? 'c' : ''}"></i><i class="${t.mg ? 'm' : ''}"></i><i class="${t.kr ? 'k' : ''}"></i></span>`).join('')}
       <div class="ms-leg xs muted"><span><i class="c"></i>клуб</span><span><i class="m"></i>мала група</span><span><i class="k"></i>КР</span></div></div>`;
     const done = d.ach.filter((a) => a.done).length;
-    h += `<div class="sec">Ачівки · ${done} з ${d.ach.length}</div><div class="grid2">${d.ach.map((a) => `<div class="card ach${a.done ? ' got' : ''}">
+    h += `<div class="ach-head card row"><span class="ms-fire">🏅</span><span class="grow"><b>Ачівки · ${done} з ${d.ach.length}</b><span class="track" style="height:8px;margin-top:6px;display:block"><i style="width:${Math.round(done / d.ach.length * 100)}%;background:var(--grad)"></i></span></span></div>`;
+    (d.cats || [{ key: '', title: 'Усі', ic: '🏅' }]).forEach((cat) => {
+      const list = d.ach.filter((a) => !cat.key || a.cat === cat.key);
+      if (!list.length) return;
+      h += `<div class="sec">${cat.ic} ${esc(cat.title)} · ${list.filter((a) => a.done).length}/${list.length}</div><div class="grid2">${list.map((a) => `<div class="card ach${a.done ? ' got' : ''}">
       <span class="ach-ic">${ACH_IC[a.key] || '⭐'}</span><b>${esc(a.title)}</b><span class="xs muted">${esc(a.desc)}</span>
       ${a.done ? '<span class="xs ach-ok">Отримано ✓</span>' : `<span class="track" style="height:6px"><i style="width:${Math.round(a.have / a.need * 100)}%"></i></span><span class="xs muted">${fmtNum(a.have)} з ${a.need}</span>`}</div>`).join('')}</div>`;
+    });
     h += '<div class="xs muted" style="text-align:center">Клуби рахуються з твоїх відміток і з відміток присутності у звіті клубу. Малі групи й КР — з твоїх звітів і відміток тижня.</div>';
     return h;
   };
@@ -1642,9 +1649,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     h += '<div class="sec">Особисте</div>' + list(mine);
     const vr = (VIEW_ROLES || (S.me && S.me.viewRoles) || []);
     if (vr.length || VIEW_AS) {
-      h += `<div class="sec">Відобразити як для</div><div class="card col" style="gap:10px"><div class="small muted">Подивись застосунок очима іншої ролі — які розділи й кнопки вона бачить. Лише перегляд, нічого не зміниться.</div>
-        <div class="pills wrap">${vr.map((r) => `<button type="button" class="pill${VIEW_AS && VIEW_AS.key === r.key ? ' on' : ''}" data-a="viewAs" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>
-        ${VIEW_AS ? '<button type="button" class="btn sec2" data-a="viewExit">Вийти з режиму перегляду</button>' : ''}</div>`;
+      h += `<label class="card row view-pick"><span class="grow small"><b>👁 Відобразити як для</b><br><span class="xs muted">лише перегляд, нічого не зміниться</span></span>
+        <select class="in" data-ch="viewPick" aria-label="Відобразити як для"><option value="">Себе</option>${vr.map((r) => `<option value="${r.key}"${VIEW_AS && VIEW_AS.key === r.key ? ' selected' : ''}>${esc(r.label)}</option>`).join('')}</select></label>`;
     }
     return h;
   };
@@ -1955,6 +1961,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     try { sessionStorage.setItem('yl:viewAs', JSON.stringify({ key: d.k })); sessionStorage.setItem('yl:viewRoles', JSON.stringify(vr)); } catch (e) { /* ок */ }
     location.reload();
   };
+  A.viewPick = (d, el) => (el.value ? A.viewAs({ k: el.value }) : A.viewExit());
   A.viewExit = () => { try { sessionStorage.removeItem('yl:viewAs'); sessionStorage.removeItem('yl:viewRoles'); } catch (e) { /* ок */ } location.reload(); };
   A.checkin = async (d, el) => {
     const w = S.me && S.me.myWeek; if (!w) return;

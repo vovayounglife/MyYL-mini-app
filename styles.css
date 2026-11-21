@@ -453,3 +453,6 @@ html.dark .btn.sec2::before, html.dark .btn.ghost::before { opacity: .18; }
   background: linear-gradient(135deg, rgba(91, 33, 182, .92), rgba(124, 58, 237, .92)); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border-radius: 0 0 20px 20px; box-shadow: 0 10px 26px -10px rgba(91, 33, 182, .6); }
 .viewbar button { flex: 0 0 auto; height: 34px; padding: 0 14px; border-radius: 999px; background: rgba(255, 255, 255, .22); color: #fff; font-weight: 700; border: 1px solid rgba(255, 255, 255, .4); }
 .pills.wrap { flex-wrap: wrap; overflow: visible; }
+.view-pick { gap: 12px; align-items: center; padding: 12px 14px; }
+.view-pick select { width: auto; max-width: 52%; min-height: 40px; padding: 0 12px; border-radius: 999px; font-weight: 700; }
+.ach-head { gap: 12px; align-items: center; }

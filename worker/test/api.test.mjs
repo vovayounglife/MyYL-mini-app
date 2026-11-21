@@ -956,7 +956,7 @@ ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'kr').n === mwKr0 + 2 && r.
 r = await api(LEAD, 'checkin', { kind: 'zzz', on: true });
 ok(!r.ok, 'мій тиждень: невідома відмітка');
 r = await api(LEAD, 'myStats', { period: 'all' });
-ok(r.ok && r.data.kpi.clubs >= 1 && r.data.kpi.streak >= 1 && r.data.ach.find((a) => a.key === 'first').done && r.data.trail.length === 12, 'моя статистика: клуби, серія, ачівка «Перший крок»');
+ok(r.ok && r.data.kpi.clubs >= 1 && r.data.kpi.streak >= 1 && r.data.ach.find((a) => a.key === 'first').done && r.data.cats.length === 6 && r.data.trail.length === 12, 'моя статистика: клуби, серія, ачівка «Перший крок»');
 // ── «Відобразити як для» ──
 const asView = async (user, action, data, viewAs) => (await req('/', { initData: initData(user), action, data, viewAs })).json();
 me = await api(CAP, 'me');
