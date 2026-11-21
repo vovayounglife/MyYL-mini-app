@@ -33,7 +33,17 @@
     };
   }
   const tg = IN_TG ? realTg : makeShim();
-  const API_URL = (window.YL_CONFIG || {}).API_URL || '';
+  // основна адреса сервера і запасна (якщо мережа не пускає workers.dev); робоча запамʼятовується
+  const API_HOSTS = [(window.YL_CONFIG || {}).API_URL || '', (window.YL_CONFIG || {}).API_URL_BACKUP || 'https://myyl-api.pages.dev'].filter(Boolean);
+  let API_URL = API_HOSTS[0] || '';
+  try { const h = localStorage.getItem('yl:apiHost'); if (h && API_HOSTS.indexOf(h) >= 0) API_URL = h; } catch (e) { /* ок */ }
+  const switchHost = () => {
+    const i = API_HOSTS.indexOf(API_URL), next = API_HOSTS[(i + 1) % API_HOSTS.length];
+    if (!next || next === API_URL) return false;
+    API_URL = next;
+    try { localStorage.setItem('yl:apiHost', API_URL); } catch (e) { /* ок */ }
+    return true;
+  };
   const $app = document.getElementById('app');
 
   // ───────────── іконки ─────────────
@@ -175,6 +185,8 @@
           break;
         } catch (e) {
           lastErr = e;
+          // відповіді не було зовсім — наступна спроба (і наступні запити) підуть на іншу адресу сервера
+          if (!st) switchHost();
           clog({ a: action, try: k + 1, err: (e && e.name) + ': ' + (e && e.message), st: st, ct: ct, len: txt.length, head: txt.slice(0, 160), bytes: body.length });
         } finally { if (timer) clearTimeout(timer); }
       }

@@ -21,11 +21,11 @@
 <body>
 <div class="bg-blobs" aria-hidden="true"><i></i><i></i><i></i></div>
 <div id="app"><div class="loader"><div class="spin"></div>Завантаження…</div></div>
-<script src="config.js?v=3"></script>
+<script src="config.js?v=4"></script>
 <script>
   // свіжа версія без очікування кешу: номер беремо з version.json (не кешується), інакше — вбудований
   (function () {
-    var FALLBACK = { app: 55, css: 15 }, done = false;
+    var FALLBACK = { app: 56, css: 15 }, done = false;
     function go(v) {
       if (done) return; done = true;
       if (v.css && v.css !== FALLBACK.css) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'styles.css?v=' + v.css; document.head.appendChild(l); }
