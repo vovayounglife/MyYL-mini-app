@@ -166,10 +166,19 @@ async function handleApi(req, env, ctx) {
   try {
     const tgUser = body.session ? await verifySession(body.session, env) : await verifyInitData(body.initData, env.BOT_TOKEN);
     if (!tgUser) throw new ApiError('auth', 'Не вдалося перевірити Telegram. Відкрий застосунок заново.');
+    return json({ ok: true, data: await runAs_(S, tgUser, body.action, body.data || {}) });
+  } catch (err) {
+    S.abort();
+    if (!(err instanceof ApiError)) console.error(err && err.stack || err);
+    return json({ ok: false, error: err.code || 'error', message: err instanceof ApiError ? err.message : 'Сталася помилка. Спробуй ще раз.' });
+  }
+}
+async function runAs_(S, tgUser, action, d) {
+  const body = { action: action };
+  {
     const fn = API[body.action];
     const need = NEEDS[body.action];
     if (!fn || !need) throw new ApiError('bad_action', 'Невідома дія: ' + body.action);
-    const d = body.data || {};
     await S.loadBase();
     if (need.log === 'week') await S.loadLog(weekKey_(new Date()));
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
@@ -193,11 +202,7 @@ async function handleApi(req, env, ctx) {
     if (need.usage) await S.loadTeamUsage(str_(d.id));
     const data = use(S, () => fn(ctx_(tgUser), d));
     await S.flush();
-    return json({ ok: true, data: data });
-  } catch (err) {
-    S.abort();
-    if (!(err instanceof ApiError)) console.error(err && err.stack || err);
-    return json({ ok: false, error: err.code || 'error', message: err instanceof ApiError ? err.message : 'Сталася помилка. Спробуй ще раз.' });
+    return data;
   }
 }
 
@@ -3314,6 +3319,17 @@ async function handleAdmin(req, env, ctx, url) {
   const body = await req.json().catch(() => ({}));
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
+  if (action === 'probe') {
+    // виконати запит від імені «Раб Божий» (SUPER) і повернути лише час, розмір і помилку — без даних
+    const sup = await db.prepare("SELECT tg_id FROM roles WHERE role_key = 'SUPER' AND status = 'активна' LIMIT 1").first('tg_id');
+    const out = [];
+    for (const q of (Array.isArray(body.q) ? body.q : [])) {
+      const t0 = Date.now(); const S0 = new Store(env, ctx);
+      try { const data = await runAs_(S0, { id: Number(sup), first_name: 'probe' }, q.action, q.data || {}); out.push({ a: q.action, ok: true, ms: Date.now() - t0, bytes: JSON.stringify(data).length }); }
+      catch (e) { S0.abort(); out.push({ a: q.action, ok: false, ms: Date.now() - t0, err: String(e && (e.code || '') + ' ' + (e.message || e)).slice(0, 200), stack: e instanceof ApiError ? '' : String(e && e.stack || '').slice(0, 600) }); }
+    }
+    return json({ ok: true, out: out });
+  }
   if (action === 'clog') {
     const r = await env.DB.prepare('SELECT ts, data FROM client_log ORDER BY ts DESC LIMIT 40').all();
     return json({ ok: true, rows: r.results || [] });
