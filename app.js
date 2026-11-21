@@ -569,6 +569,7 @@
     if (todo.polls) h += `<button type="button" class="banner" data-a="tabGo" data-s="polls"><span class="badge" style="width:32px;height:32px;border-radius:16px;background:var(--blue)">${todo.polls}</span>
         <span class="grow"><b>${todo.polls === 1 ? 'Нове опитування' : 'Нові опитування'}</b><br><span class="small muted">Твій голос ще не враховано</span></span>${icon('chev')}</button>`;
     if (m.myWeek) h += myWeekCard(m.myWeek);
+    else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика й ачівки</b><br><span class="small muted">клуби, малі групи, КР, знані — і нагороди за служіння</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     const quick = TYPES.filter((t) => canType(t.k));
     const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
@@ -1628,7 +1629,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (c.stats !== false && (S.me.scopes || []).length) manage.splice((c.reportItems || []).length ? 1 : 0, 0, { k: 'dirs', label: 'Статистика за напрямками', sub: 'YoungLife · WyldLife · College · Capernaum · YoungMoms', icon: 'stats', ic: 'ic-teal' });
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Додати на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : (S.homeSt === 'added' ? 'іконку додано ✓' : 'іконка YL на телефоні — як це зробити'), icon: 'phoneApp', ic: 'ic-teal' }];
     const mine = [{ k: 'profile', label: 'Мій профіль', sub: myLine(), icon: 'profile', ic: 'ic-soft' }];
-    if (S.me.myWeek) mine.unshift({ k: 'mystats', label: 'Моя статистика', sub: 'клуби, малі групи, КР, знані — і ачівки', icon: 'stats', ic: 'ic-coral' });
+    mine.unshift({ k: 'mystats', label: 'Моя статистика', sub: 'клуби, малі групи, КР, знані — і ачівки', icon: 'stats', ic: 'ic-coral' });
     if (c.approve) mine.push({ k: 'requests', label: 'Заявки', sub: 'підтвердження ролей', icon: 'requests', ic: 'ic-blue', badge: me().pendingCount });
     mine.push({ k: 'notif', label: 'Сповіщення', sub: 'що бот надсилає тобі', icon: 'bell', ic: 'ic-yellow' });
     if (c.broadcast) mine.push({ k: 'broadcast', label: 'Написати', sub: c.isSuper ? 'усім або вибраним у боті' : 'своїм людям у боті', icon: 'send', ic: 'ic-coral' });
