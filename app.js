@@ -1065,7 +1065,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
           <span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r)}</span>`).join('')}</span></span></button>
           ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${p.username
             ? `<button type="button" class="btn sec2 sm" style="width:100%" data-a="openUrl" data-url="https://t.me/${esc(encodeURIComponent(p.username))}">${icon('tg', 18)} Написати @${esc(p.username)}</button>`
-            : '<div class="small muted">Немає публічного імені в Telegram</div>'}</div>` : ''}`;
+            : '<div class="small muted">Немає публічного імені в Telegram</div>'}
+            ${p.dropIds ? `<button type="button" class="btn ghost sm danger-t" style="margin-top:10px;width:100%" data-a="memberRemove" data-ids="${esc(p.dropIds.join(','))}" data-name="${esc(p.name)}" data-team="${esc(u.name)}" data-reg="${p.registered ? 1 : ''}">🗑 Видалити з «${esc(u.name)}»</button>` : ''}</div>` : ''}`;
       }).join('')}</div>`;
     }
     if (u.level === 'team' && (caps().viewTeams || []).indexOf(u.id) >= 0) {
@@ -2476,7 +2477,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
   A.memberRemove = (d) => {
     const msg = 'Видалити ' + d.name + ' зі складу «' + d.team + '»?\n\n' + (d.reg ? 'Ролі в цій команді буде знято. Сам акаунт MyYL лишиться.' : 'Людина ще не в MyYL — якщо вона більше ніде не числиться, запис буде видалено повністю.');
-    const doIt = async () => { const res = await run(() => api('memberRemove', { roleIds: d.ids.split(',') }), 'Видалено зі складу'); if (res) { S.team.open = null; loadTeam(); } };
+    const doIt = async () => { const res = await run(() => api('memberRemove', { roleIds: d.ids.split(',') }), 'Видалено зі складу'); if (res) { S.team.open = null; S.myyl.open = null; if (S.screen === 'myyl') loadMyyl(); else loadTeam(); } };
     if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => { if (ok) doIt(); }); else if (confirm(msg)) doIt();
   };
   A.roleRemove = (d) => {

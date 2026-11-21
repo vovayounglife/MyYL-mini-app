@@ -1851,16 +1851,17 @@ API.myylTree = function (c0) {
     const k = r.level === 'nat' ? 'nat' : (r.level === 'region' ? 'r:' : r.level === 'area' ? 'a:' : 't:') + r.unitId;
     if (!units[k]) return;
     const m = byUnit[k] = byUnit[k] || {};
-    const p = m[r.tgId] = m[r.tgId] || { tgId: r.tgId, name: r.name, roles: [], rank: 99 };
+    const p = m[r.tgId] = m[r.tgId] || { tgId: r.tgId, name: r.name, roles: [], rank: 99, ids: [], drop: true };
     p.roles.push({ label: r.label, rank: r.rank });
     p.rank = Math.min(p.rank, r.rank);
+    p.ids.push(r.id); if (!canDrop_(c0, r)) p.drop = false;
   });
   Object.keys(byUnit).forEach((k) => {
     units[k].people = Object.keys(byUnit[k]).map((id) => {
       const p = byUnit[k][id];
       const person = getPerson_(id) || {};
       return { tgId: id, name: person.name || p.name, username: person.username || '', ig: person.ig || '', title: person.title || '', rank: p.rank,
-        roles: p.roles.sort((a, b) => a.rank - b.rank).map((x) => x.label) };
+        roles: p.roles.sort((a, b) => a.rank - b.rank).map((x) => x.label), registered: isReal_(id), dropIds: p.drop ? p.ids : null };
     }).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   });
   // підсумки по гілці: люди й команди

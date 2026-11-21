@@ -970,6 +970,11 @@ r = await asView(CAP, 'me', {}, { key: 'AREA_DIRECTOR' });
 ok(!r.ok, 'перегляд: вищу роль — ні');
 r = await asView(VOVA, 'stats', { units: [], cat: 'overview', period: 'month' }, { key: 'LEADER' });
 ok(r.ok, 'перегляд: статистика очима лідера');
+r = await api(AD, 'myylTree', {});
+{ const tu = r.data.units['t:' + capTeam.id], au = r.data.units['a:a1'];
+  ok(tu && tu.people.some((p) => p.dropIds && p.dropIds.length) && au.people.filter((p) => p.tgId === String(AD.id)).every((p) => !p.dropIds), 'дерево: директор ерії може видаляти людей у своїх командах, себе — ні'); }
+r = await api(LEAD, 'myylTree', {});
+ok(!r.ok || Object.values(r.data.units).every((u) => u.people.every((p) => !p.dropIds)), 'дерево: лідер нікого не видаляє');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
