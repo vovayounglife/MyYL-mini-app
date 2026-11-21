@@ -128,9 +128,14 @@
 
   // ───────────── локальний кеш: показуємо останні дані миттєво, оновлюємо у фоні ─────────────
   const UID = (() => { try { return String(tg.initDataUnsafe.user.id); } catch (e) { return 'x'; } })();
+  // «Відобразити як для»: роль, очима якої дивимось (лише на цю сесію; кеш телефону не чіпаємо)
+  let VIEW_AS = null;
+  try { VIEW_AS = JSON.parse(sessionStorage.getItem('yl:viewAs') || 'null'); } catch (e) { VIEW_AS = null; }
+  let VIEW_ROLES = null;
+  try { VIEW_ROLES = JSON.parse(sessionStorage.getItem('yl:viewRoles') || 'null'); } catch (e) { VIEW_ROLES = null; }
   const LS = {
-    get(k) { try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
-    set(k, v) { try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
+    get(k) { if (VIEW_AS) return null; try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
+    set(k, v) { if (VIEW_AS) return; try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
@@ -167,7 +172,7 @@
   const HOST_FAIL = {};
   async function api(action, data) {
     const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
-    const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }));
+    const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }, VIEW_AS ? { viewAs: VIEW_AS } : {}));
     // однакові запити перегляду, що вже в дорозі, не дублюємо
     const read = READ_ACTIONS.test(action);
     if (read && INFLIGHT[body]) return INFLIGHT[body];
@@ -480,7 +485,8 @@
     // новий екран (або інший заголовок у ньому) — плавна поява; звичайні оновлення — без анімації
     const vKey = S.screen + '|' + ((view.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || '');
     const enter = vKey !== S._vKey; S._vKey = vKey;
-    $app.innerHTML = `<main class="main${nav ? '' : ' no-nav'}${enter ? ' enter' : ''}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
+    const vb = VIEW_AS && S.me && S.me.viewAs ? `<div class="viewbar" role="status"><span class="grow">👁 <b>Режим перегляду</b> · ${esc(S.me.viewAs.label)} · ${esc(S.me.viewAs.unitName || '')}</span><button type="button" data-a="viewExit">Вийти</button></div>` : '';
+    $app.innerHTML = vb + `<main class="main${nav ? '' : ' no-nav'}${enter ? ' enter' : ''}${vb ? ' has-viewbar' : ''}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
       <div id="thxT" class="thx-text">Дякую тобі за вірність в малому</div>
       <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
@@ -1633,6 +1639,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (manage.length) h += '<div class="sec">Звіти й структура</div>' + list(manage);
     h += '<div class="sec">Застосунок</div>' + list(app);
     h += '<div class="sec">Особисте</div>' + list(mine);
+    const vr = (VIEW_ROLES || (S.me && S.me.viewRoles) || []);
+    if (vr.length || VIEW_AS) {
+      h += `<div class="sec">Відобразити як для</div><div class="card col" style="gap:10px"><div class="small muted">Подивись застосунок очима іншої ролі — які розділи й кнопки вона бачить. Лише перегляд, нічого не зміниться.</div>
+        <div class="pills wrap">${vr.map((r) => `<button type="button" class="pill${VIEW_AS && VIEW_AS.key === r.key ? ' on' : ''}" data-a="viewAs" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>
+        ${VIEW_AS ? '<button type="button" class="btn sec2" data-a="viewExit">Вийти з режиму перегляду</button>' : ''}</div>`;
+    }
     return h;
   };
 
@@ -1937,6 +1949,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.back = back;
   A.tab = (d) => go(d.s);
   A.tabGo = (d) => go(d.s);
+  A.viewAs = (d) => {
+    const vr = VIEW_ROLES || (S.me && S.me.viewRoles) || [];
+    try { sessionStorage.setItem('yl:viewAs', JSON.stringify({ key: d.k })); sessionStorage.setItem('yl:viewRoles', JSON.stringify(vr)); } catch (e) { /* ок */ }
+    location.reload();
+  };
+  A.viewExit = () => { try { sessionStorage.removeItem('yl:viewAs'); sessionStorage.removeItem('yl:viewRoles'); } catch (e) { /* ок */ } location.reload(); };
   A.checkin = async (d, el) => {
     const w = S.me && S.me.myWeek; if (!w) return;
     const it = w.items.find((x) => x.key === d.k); if (!it || it.locked) return;

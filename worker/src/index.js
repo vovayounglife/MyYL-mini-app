@@ -166,15 +166,16 @@ async function handleApi(req, env, ctx) {
   try {
     const tgUser = body.session ? await verifySession(body.session, env) : await verifyInitData(body.initData, env.BOT_TOKEN);
     if (!tgUser) throw new ApiError('auth', 'Не вдалося перевірити Telegram. Відкрий застосунок заново.');
-    return json({ ok: true, data: await runAs_(S, tgUser, body.action, body.data || {}) });
+    return json({ ok: true, data: await runAs_(S, tgUser, body.action, body.data || {}, body.viewAs) });
   } catch (err) {
     S.abort();
     if (!(err instanceof ApiError)) console.error(err && err.stack || err);
     return json({ ok: false, error: err.code || 'error', message: err instanceof ApiError ? err.message : 'Сталася помилка. Спробуй ще раз.' });
   }
 }
-async function runAs_(S, tgUser, action, d) {
+async function runAs_(S, tgUser, action, d, viewAs) {
   const body = { action: action };
+  if (viewAs && !VIEW_OK.test(action)) throw new ApiError('preview', 'Це режим перегляду — зміни вимкнені. Вийди з нього, щоб працювати від себе.');
   {
     const fn = API[body.action];
     const need = NEEDS[body.action];
@@ -202,7 +203,7 @@ async function runAs_(S, tgUser, action, d) {
     if (need.ck) await S.loadCheckins(String(tgUser.id));
     if (need.mine) await S.loadMine(String(tgUser.id));
     if (need.usage) await S.loadTeamUsage(str_(d.id));
-    const data = use(S, () => fn(ctx_(tgUser), d));
+    const data = use(S, () => { const c = ctx_(tgUser); return fn(viewAs ? viewCtx_(c, viewAs) : c, d); });
     await S.flush();
     return data;
   }
@@ -609,6 +610,34 @@ function ctx_(tg) {
   const roles = active.filter((r) => !(roleDef_(r.key) || {}).viewOnly);
   return { id: id, tg: tg, person: person, roles: roles, active: active, allRoles: all, get name() { const p = getPerson_(id); return (p && p.name) || fullName_(tg); } };
 }
+// ── «Відобразити як для»: перегляд застосунку очима нижчої ролі (лише читання) ──
+const VIEW_OK = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo|myStats|report)$/;
+// ролі, якими людина може «подивитися»: усі нижчі за її найвищу (без «Раб Божий»)
+function viewRoles_(c) {
+  if (!c.roles.length) return [];
+  const top = Math.min.apply(null, c.roles.map((r) => r.rank));
+  return ROLES.filter((r) => r.key !== 'SUPER' && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
+}
+function viewCtx_(c, v) {
+  const def = roleDef_(String(v.key || ''));
+  if (!def || def.key === 'SUPER') throw new ApiError('bad_request', 'Невідома роль для перегляду.');
+  if (!viewRoles_(c).some((r) => r.key === def.key)) throw new ApiError('forbidden', 'Можна дивитися лише очима ролей, нижчих за твою.');
+  // ланка: та, що обрана, або перша доступна цього рівня в межах людини
+  const pref = { team: 't:', area: 'a:', region: 'r:', nat: 'nat' }[def.level];
+  const sc = allowedScopes_(c);
+  let unit = String(v.unit || '');
+  const fits = (k) => (def.level === 'nat' ? k === 'nat' : k.indexOf(pref) === 0);
+  if (!unit || !sc.some((x) => x.key === unit) || !fits(unit)) {
+    const own = c.roles.filter((r) => r.level === def.level).map((r) => (r.level === 'nat' ? 'nat' : pref + r.unitId))[0];
+    unit = own || ((sc.filter((x) => fits(x.key))[0] || {}).key) || (def.level === 'nat' ? 'nat' : '');
+  }
+  if (!unit) throw new ApiError('bad_request', 'У тебе немає ланки рівня «' + def.label + '» для перегляду.');
+  const unitId = unit === 'nat' ? '' : unit.slice(2);
+  const role = { id: 'view:' + def.key, tgId: c.id, name: c.name, key: def.key, label: def.label, rank: def.rank, level: def.level, unitId: unitId, status: ST.ACTIVE, title: '', requested: '', decided: '' };
+  const vr = def.viewOnly ? [] : [role];
+  return { id: c.id, tg: c.tg, person: c.person, roles: vr, active: [role], allRoles: [role], get name() { return c.name; },
+    view: { key: def.key, label: def.label, unit: unit, unitName: unit === 'nat' ? 'Україна' : unitName_(def.level, unitId) } };
+}
 function roleDef_(key) { return ROLES.filter((r) => r.key === key)[0] || null; }
 
 function covers_(r, level, unitId) {
@@ -796,6 +825,7 @@ API.me = function (c) {
   if (wide.roles.some((r) => r.virtual)) out.statScopes = allowedScopes_(wide);
   out.week = weekStatus_(c);
   out.myWeek = myWeek_(c);
+  if (c.view) out.viewAs = c.view; else out.viewRoles = viewRoles_(c);
   out.todo = tpCounts_(c);
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
