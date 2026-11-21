@@ -146,12 +146,12 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true, bugCount: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
-  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats' }, nudge: { log: 'week' },
+  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
   dirStats: { log: 'stats' }, installStats: {},
@@ -185,6 +185,9 @@ async function runAs_(S, tgUser, action, d, viewAs) {
     if (need.log === 'week') await S.loadLog(weekKey_(new Date()));
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
+    if (need.clubs) await S.loadClubs();
+    if (need.bugCount) S.bugOpen = (await S.db.prepare("SELECT COUNT(*) AS n FROM bugs WHERE COALESCE(done, '') = ''").first('n')) || 0;
+    if (need.bugs) S.bugs = ((await S.db.prepare('SELECT * FROM bugs ORDER BY created DESC LIMIT 200').all()).results || []);
     if (need.events) await S.loadEvents();
     if (need.known) {
       if (d.mine || (body.action !== 'knownList' && !str_(d.teamId))) await S.loadKnownMine(String(tgUser.id));
@@ -271,6 +274,11 @@ class Store {
     settings.forEach((r) => { b.settings[r.key] = r.value; });
     indexBase(b);
     BASE = b; this.b = b;
+  }
+  // усі звіти за клуб (історія команди й дата останнього звіту)
+  async loadClubs() {
+    const rs = await this.db.prepare("SELECT * FROM reports WHERE type = 'club' ORDER BY date DESC, seq DESC").all();
+    this.clubs = (rs.results || []).map(logFromRow);
   }
   async loadLog(fromWeek, withExtras) {
     const rs = await this.db.prepare('SELECT * FROM reports WHERE week >= ?').bind(fromWeek).all();
@@ -469,7 +477,7 @@ function roleFromRow(r) {
   return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, title: title, label: title ? title + ' (' + def.label.toLowerCase() + ')' : def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '' };
 }
 function logFromRow(r) {
-  return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '', attendees: r.attendees || '' };
+  return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, parents: r.parents || 0, note: r.note || '', created: r.created || '', hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '', attendees: r.attendees || '' };
 }
 
 // Одиниці з запиту (units: ['nat','r:…','a:…','t:…'] або teamId) → активні команди (без перевірки прав)
@@ -617,7 +625,8 @@ const VIEW_OK = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|t
 function viewRoles_(c) {
   if (!c.roles.length) return [];
   const top = Math.min.apply(null, c.roles.map((r) => r.rank));
-  return ROLES.filter((r) => r.key !== 'SUPER' && !r.hidden && r.rank > top).map((r) => ({ key: r.key, label: r.label, level: r.level }));
+  // «Національний офіс» очима — лише Раб Божий
+  return ROLES.filter((r) => r.key !== 'SUPER' && !r.hidden && r.rank > top && (r.key !== 'OFFICE' || isSuper_(c))).map((r) => ({ key: r.key, label: r.label, level: r.level }));
 }
 function viewCtx_(c, v) {
   const def = roleDef_(String(v.key || ''));
@@ -817,6 +826,7 @@ API.me = function (c) {
     perms: permUnits_(c).length > 0,
     addTeams: addTeams_(c),
     reportItems: reportItems_(c),
+    dirs: canDirs_(c),
     broadcast: canBroadcast_(c),
     isSuper: isSuper_(c),
   };
@@ -829,13 +839,14 @@ API.me = function (c) {
   if (c.view) out.viewAs = c.view; else out.viewRoles = viewRoles_(c);
   out.todo = tpCounts_(c);
   if (out.caps.approve) out.editRoles = editRoles_(c);
+  if (out.caps.isSuper) out.bugsOpen = S.bugOpen || 0;
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
 };
 
 API.register = function (c, d) {
-  const name = str_(d.name);
+  const name = str_(d.name).replace(/\s+/g, ' ');
   if (name.length < 2) bad_('Вкажи імʼя та прізвище.');
   const claim = str_(d.claim);
   if (!claim && (!d.roles || !d.roles.length)) bad_('Обери хоча б одну роль.');
@@ -933,8 +944,22 @@ const NICK_ = [
 ];
 const NICK_MAP_ = {};
 NICK_.forEach((g, i) => g.split(' ').forEach((w) => { (NICK_MAP_[w.replace(/[ʼ’']/g, '')] = NICK_MAP_[w.replace(/[ʼ’']/g, '')] || []).push(i); }));
-const nickEq_ = (a, b) => { const A = NICK_MAP_[a], B = NICK_MAP_[b]; return !!(A && B && A.some((x) => B.indexOf(x) >= 0)); };
-const tokEq_ = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && lev_(a, b) <= 1) || nickEq_(a, b);
+// звучання імені незалежно від абетки: «Olya» = «Оля», «Hanna» = «Ганна», «Khrystyna» = «Христина»
+function phon_(t) {
+  let x = String(t || '').toLowerCase().split('').map((ch) => (TR_[ch] != null ? TR_[ch] : ch)).join('');
+  x = x.replace(/kh/g, 'h').replace(/ts/g, 'c').replace(/ck/g, 'k').replace(/q/g, 'k').replace(/x/g, 'ks').replace(/w/g, 'v').replace(/[yj]/g, 'i')
+    .replace(/h/g, 'g').replace(/ie/g, 'e').replace(/ii/g, 'i').replace(/(.)\1+/g, '$1');
+  return x;
+}
+let NICK_PH_ = null;
+const nickPh_ = (t) => {
+  if (!NICK_PH_) { NICK_PH_ = {}; NICK_.forEach((g, i) => g.split(' ').forEach((w) => { const k = phon_(w.replace(/[ʼ’']/g, '')); (NICK_PH_[k] = NICK_PH_[k] || []).push(i); })); }
+  return NICK_PH_[phon_(t)];
+};
+const nickEq_ = (a, b) => { const A = NICK_MAP_[a] || nickPh_(a), B = NICK_MAP_[b] || nickPh_(b); return !!(A && B && A.some((x) => B.indexOf(x) >= 0)); };
+const latin_ = (t) => /[a-z]/.test(t);
+const tokEq_ = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && lev_(a, b) <= 1) || nickEq_(a, b) ||
+  ((latin_(a) !== latin_(b) || (latin_(a) && latin_(b))) && (phon_(a) === phon_(b) || (Math.min(a.length, b.length) >= 4 && lev_(phon_(a), phon_(b)) <= 1)));
 function nameScore_(a, b) {
   const A = nameToks_(a), B = nameToks_(b);
   const s = A.filter((x) => B.some((y) => tokEq_(x, y))).length;
@@ -1219,7 +1244,7 @@ API.saveReport = function (c, d) {
   const regionId = teamId ? st.teamRegion(teamId) : upper.level === 'region' ? upper.unitId : upper.level === 'area' ? (st.area[upper.unitId] || {}).regionId || '' : '';
   const row = {
     id: uid_(), pid: pid, created: nowIso(), date: date, week: week, type: type, mode: MODE[mode], team_id: teamId, area_id: areaId, region_id: regionId,
-    count: none || type === 'kr' ? 0 : n(d.teens), new_t: none || type === 'kr' ? 0 : n(d.newT), leaders: none || type !== 'club' ? 0 : n(d.leaders),
+    count: none || type === 'kr' ? 0 : n(d.teens), new_t: none || type === 'kr' ? 0 : n(d.newT), leaders: none || type === 'kr' ? 0 : n(d.leaders), parents: none || type !== 'club' ? 0 : n(d.parents),
     hours: none || type !== 'kr' ? 0 : n(d.hours), topic: type === 'mg' ? clip_(d.topic) : '', note: clip_(d.note),
     attendees: (d.attendees || []).map(String).join(','), author_id: c.id, author: c.name,
   };
@@ -1939,14 +1964,16 @@ API.myylTree = function (c0) {
 
 // ── Підготувати звіт: свій рівень і рівень нижче ──
 const REPORT_ITEMS = {
-  club: { label: 'Клуби', cols: [['n', 'Клубів'], ['v', 'Відвідувань'], ['avg', 'Середньо'], ['new', 'Нових'], ['rep', 'Звітували, тижнів']] },
-  mg: { label: 'Малі групи', cols: [['n', 'Зустрічей'], ['v', 'Відвідувань'], ['avg', 'Середньо'], ['new', 'Нових']] },
+  club: { label: 'Клуби', cols: [['n', 'Клубів'], ['v', 'Підлітків (усього)'], ['avg', 'Підлітків середньо'], ['new', 'Нових'], ['l', 'Лідерів (усього)'], ['lavg', 'Лідерів середньо'], ['par', 'Батьків'], ['rep', 'Звітували, тижнів']] },
+  mg: { label: 'Малі групи', cols: [['n', 'Зустрічей'], ['v', 'Підлітків (усього)'], ['avg', 'Підлітків середньо'], ['new', 'Нових'], ['l', 'Лідерів (усього)'], ['p', 'Лідерів вносили']] },
   kr: { label: 'Контактна робота', cols: [['h', 'Годин'], ['p', 'Людей вносили'], ['none', 'Відміток «не було»']] },
   known: { label: 'Знані по імені', cols: [['total', 'Знаних зараз'], ['meet', 'Хочу познайомитись'], ['friends', 'Дружимо'], ['grow', 'Зростають у вірі'], ['own', 'Йдуть самі'], ['new', 'Нових за період']] },
   finance: { label: 'Фінанси', cols: [['inc', 'Надійшло, ₴'], ['out', 'Витрачено, ₴'], ['net', 'Різниця, ₴'], ['teams', 'Команд здали']] },
 };
 const reportScopes_ = (c) => (isSuper_(c) ? allowedScopes_(c) : allowedScopes_(c).filter((s) => s.depth <= 1));
 function reportItems_(c) {
+  // лідери й нижче звіти не готують
+  if (!c.roles.some((r) => r.level !== 'team' || r.rank < RANK.MG)) return [];
   const ok = {};
   reportScopes_(c).forEach((s) => statCats_(c, s).forEach((x) => { if (REPORT_ITEMS[x.key]) ok[x.key] = true; }));
   const out = Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
@@ -2007,7 +2034,12 @@ function reportRow_(teamIds, items, from, to, allowed, scope) {
     if (it === 'club' || it === 'mg') {
       const a = of(it).filter(ok);
       const v = sum(a, (r) => r.count);
-      out[it] = { n: nf(a.length), v: nf(v), avg: a.length ? df(v / a.length) : '—', new: nf(sum(a, (r) => r.newT)) };
+      // лідери на МГ: з поля «лідерів», а в старих звітах — щонайменше автор
+      const lead = (r) => (it === 'mg' ? Math.max(1, Number(r.leaders) || 0) : r.leaders);
+      const l = sum(a, lead);
+      out[it] = { n: nf(a.length), v: nf(v), avg: a.length ? df(v / a.length) : '—', new: nf(sum(a, (r) => r.newT)), l: nf(l) };
+      if (it === 'club') { out[it].lavg = a.length ? df(l / a.length) : '—'; out[it].par = nf(sum(a, (r) => r.parents)); }
+      if (it === 'mg') out[it].p = nf(uniq_(a.map((r) => r.authorId)).length);
       if (it === 'club') {
         const done = {};
         rows.filter((r) => r.type === 'club' && weeks.indexOf(r.week) >= 0).forEach((r) => { done[r.teamId + '|' + r.week] = true; });
@@ -2072,6 +2104,15 @@ API.report = function (c, d) {
     sections: items.map((it) => ({ key: it, label: REPORT_ITEMS[it].label, cols: REPORT_ITEMS[it].cols.map((x) => ({ key: x[0], label: x[1] })) })),
     rows, total,
   };
+  if (items.indexOf('club') >= 0) {
+    // кожен внесений клуб окремо (лише команди, де клуби можна бачити)
+    const okT = {};
+    keys.filter((k) => allowedFor(byKey[k]).club).forEach((k) => scopeTeamIds_(byKey[k]).forEach((id) => { okT[id] = true; }));
+    const st = loadStruct_();
+    out.clubList = loadLog_().filter((r) => r.type === 'club' && okT[r.teamId] && r.date >= from && r.date <= to)
+      .sort((a, b) => ((st.team[a.teamId] || {}).name || '').localeCompare((st.team[b.teamId] || {}).name || '') || (a.date < b.date ? -1 : 1))
+      .map((r) => ({ team: (st.team[r.teamId] || {}).name || '', date: fmt(r.date), none: r.mode === MODE.none, week: r.mode === MODE.week, teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note }));
+  }
   if (wantNames) {
     // лише команди, де є право бачити знаних
     const teamIds = uniq_([].concat.apply([], keys.filter((k) => allowedFor(byKey[k]).known).map((k) => scopeTeamIds_(byKey[k])))).filter((id) => canKnown_(c, id));
@@ -2086,6 +2127,13 @@ API.report = function (c, d) {
   return out;
 };
 
+function clubListHtml_(list) {
+  const e = esc_;
+  const par = list.some((x) => x.parents);
+  return '<h2>Кожен клуб окремо · ' + list.length + '</h2><div class="w"><table class="nm"><thead><tr><th>Команда</th><th>Дата</th><th>Підлітків</th><th>Нових</th><th>Лідерів</th>' + (par ? '<th>Батьків</th>' : '') + '<th>Нотатка</th></tr></thead><tbody>' +
+    list.map((x) => '<tr><td>' + e(x.team) + '</td><td>' + e(x.date) + (x.week ? ' (тиждень)' : '') + '</td>' + (x.none ? '<td colspan="' + (par ? 4 : 3) + '">клубу не було</td>' : '<td>' + x.teens + '</td><td>' + x.newT + '</td><td>' + x.leaders + '</td>' + (par ? '<td>' + x.parents + '</td>' : '')) + '<td>' + e(x.note || '') + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
 function reportHtml_(r) {
   const e = esc_;
   const table = (sec) => '<h2>' + e(sec.label) + '</h2><div class="w"><table><thead><tr><th></th>' + sec.cols.map((c) => '<th>' + e(c.label) + '</th>').join('') + '</tr></thead><tbody>' +
@@ -2100,7 +2148,7 @@ function reportHtml_(r) {
     'td:first-child,th:first-child{text-align:left;white-space:normal}tr.top td{font-weight:600}tr.ch td{color:#444}tr.ch td:first-child{padding-left:22px}' +
     'tr.tot td{font-weight:700;border-top:2px solid #1d1d1f;background:#fff4ef}table.nm{min-width:760px}table.nm td,table.nm th{text-align:left;white-space:nowrap;font-weight:400}table.nm td:first-child{color:#6b6b70}@media print{body{padding:0}}</style></head><body>' +
     '<div class="hd"><h1>' + e(r.title) + '</h1><div class="m">' + (r.sections.length ? 'Період: ' : '') + e(r.period) + ' · сформував(ла): ' + e(r.author) + ' · ' + e(r.created) + '</div></div>' +
-    r.sections.map(table).join('') + (r.names ? namesHtml_(r.names) : '') +
+    r.sections.map(table).join('') + (r.clubList ? clubListHtml_(r.clubList) : '') + (r.names ? namesHtml_(r.names) : '') +
     (r.sections.length ? '<p class="m" style="margin-top:28px">«Звітували, тижнів» — скільки тижнів команди внесли звіт про клуб (разом з «не було») з усіх можливих. «—» — немає доступу до цих даних.</p>' : '') +
     (r.names ? '<p class="m">Особисті дані підлітків — лише для служіння. Не пересилай файл стороннім.</p>' : '') + '</body></html>';
 }
@@ -2183,8 +2231,9 @@ API.audCount = function (c, d) {
 function taskOut_(c, t) {
   const ppl = S.taskPeople.filter((x) => x.taskId === t.id);
   const mine = ppl.filter((x) => x.tgId === c.id)[0];
-  const see = oversees_(c, t);
-  const o = { id: t.id, title: t.title, desc: t.desc, due: t.due, author: t.author, audience: t.audience, created: t.created, closed: t.closed, total: ppl.length,
+  const self = t.audience === 'Собі';
+  const see = !self && oversees_(c, t);
+  const o = { self: self, id: t.id, title: t.title, desc: t.desc, due: t.due, author: t.author, audience: t.audience, created: t.created, closed: t.closed, total: ppl.length,
     done: ppl.filter((x) => x.status === 'done').length, doing: ppl.filter((x) => x.status === 'doing').length, mine: mine ? { status: mine.status, note: mine.note } : null,
     oversee: see, canEdit: t.authorId === c.id || isSuper_(c) };
   if (see) o.people = ppl.map((x) => ({ tgId: x.tgId, name: (getPerson_(x.tgId) || {}).name || x.name, status: x.status, note: x.note, updated: x.updated }))
@@ -2192,15 +2241,17 @@ function taskOut_(c, t) {
   return o;
 }
 API.tasks = function (c) {
-  const list = S.tasks.filter((t) => oversees_(c, t) || S.taskPeople.some((x) => x.taskId === t.id && x.tgId === c.id)).map((t) => taskOut_(c, t));
-  return { list: list.sort((a, b) => (a.closed ? 1 : 0) - (b.closed ? 1 : 0) || (a.due || '9') .localeCompare(b.due || '9') || (a.created < b.created ? 1 : -1)), canCreate: canBroadcast_(c) };
+  // «Задача собі» бачить лише автор
+  const list = S.tasks.filter((t) => (t.audience === 'Собі' ? t.authorId === c.id : oversees_(c, t) || S.taskPeople.some((x) => x.taskId === t.id && x.tgId === c.id))).map((t) => taskOut_(c, t));
+  return { list: list.sort((a, b) => (a.closed ? 1 : 0) - (b.closed ? 1 : 0) || (a.due || '9') .localeCompare(b.due || '9') || (a.created < b.created ? 1 : -1)), canCreate: canBroadcast_(c), canSelf: c.roles.length > 0 };
 };
 API.taskSave = function (c, d) {
-  if (!canBroadcast_(c)) deny_('Створювати задачі можуть Капітан і вищі ролі.');
+  // «Задача собі» — може кожен; іншим — Капітан і вище
+  if (!d.self && !canBroadcast_(c)) deny_('Створювати задачі можуть Капітан і вищі ролі.');
   const title = clip_(d.title).slice(0, 200);
   if (title.length < 2) bad_('Напиши, що треба зробити.');
   const due = /^\d{4}-\d{2}-\d{2}$/.test(d.due || '') ? d.due : '';
-  const a = audience_(c, d, 'part.tasks');
+  const a = d.self ? { ids: [c.id], units: [], roles: [], label: 'Собі' } : audience_(c, d, 'part.tasks');
   if (!a.ids.length) bad_('За цим вибором ще нікого немає.');
   if (a.ids.length > 1500) bad_('Забагато людей — звузь вибір.');
   const t = { id: uid_(), title: title, desc: clip_(d.desc), due: due, units: a.units, roles: a.roles, audience: a.label, authorId: c.id, author: c.name, authorRank: topRank_(c), created: nowIso(), closed: '' };
@@ -2210,7 +2261,7 @@ API.taskSave = function (c, d) {
   S.tasks.push(t);
   a.ids.forEach((id) => S.taskPeople.push({ taskId: t.id, tgId: id, name: '', status: 'todo', note: '', updated: '' }));
   const text = '✅ <b>Нова задача</b> від ' + authorLine_(c) + '\n\n<b>' + esc_(t.title) + '</b>' + (t.due ? '\nТермін: ' + fmtDue_(t.due) : '') + (t.desc ? '\n\n' + esc_(t.desc.slice(0, 1500)) : '');
-  a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', 'tasks'));
+  if (!d.self) a.ids.filter((id) => wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', 'tasks'));
   return { id: t.id, count: a.ids.length };
 };
 API.taskStatus = function (c, d) {
@@ -2540,7 +2591,35 @@ API.stats = function (c0, d) {
   if (!scope) deny_();
   const cats = statCats_(c, scope);
   const cat = cats.some((x) => x.key === d.cat) ? d.cat : cats[0].key;
-  return computeStats_(c, scope, cat, d.period || 'month', cats, scopes, customRange_(d));
+  const out = computeStats_(c, scope, cat, d.period || 'month', cats, scopes, customRange_(d));
+  // коли команда востаннє звітувала за клуб; для однієї команди — історія звітів за клуб
+  const last = lastClubs_();
+  const st = loadStruct_();
+  out.breakdown.rows.forEach((row) => { const id = row.drill && row.drill.indexOf('t:') === 0 ? row.drill.slice(2) : (row.teamId || ''); if (id && last[id]) { row.last = last[id].date; row.lastNone = last[id].mode === MODE.none; } else if (id) row.last = ''; });
+  if (scope.level === 'team') {
+    const id = scope.unitId;
+    const canEdit = clubTeams_(c0).indexOf(id) >= 0;
+    out.club = { last: last[id] ? last[id].date : '', capernaum: (st.team[id] || {}).dir === 'Capernaum', canEdit: canEdit,
+      history: (S.clubs || []).filter((r) => r.teamId === id).slice(0, 40).map(clubOut_) };
+  }
+  return out;
+};
+function lastClubs_() { const o = {}; (S.clubs || []).forEach((r) => { if (r.teamId && !o[r.teamId]) o[r.teamId] = r; }); return o; }
+const clubOut_ = (r) => ({ id: r.id, date: r.date, none: r.mode === MODE.none, week: r.mode === MODE.week, teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note, author: r.author });
+
+// змінити звіт за клуб (хто може вносити клуб у цій команді)
+API.clubEdit = function (c, d) {
+  const r = (S.clubs || []).filter((x) => x.id === str_(d.id))[0];
+  if (!r) bad_('Звіт не знайдено.');
+  if (clubTeams_(c).indexOf(r.teamId) < 0) deny_('Змінювати звіт за клуб можуть Капітан, Адмін команди і керівництво ерії.');
+  const n = (v) => { const x = Number(v); return isFinite(x) && x >= 0 ? Math.round(x) : 0; };
+  const none = !!d.none;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') && d.date <= kyivDay(new Date()) ? d.date : r.date;
+  const mode = none ? MODE.none : r.mode === MODE.none ? MODE.event : r.mode;
+  const v = { date: date, week: weekKey_(date), mode: mode, count: none ? 0 : n(d.teens), new_t: none ? 0 : n(d.newT), leaders: none ? 0 : n(d.leaders), parents: none ? 0 : n(d.parents), note: clip_(d.note) };
+  const keys = Object.keys(v);
+  S.run('UPDATE reports SET ' + keys.map((k) => k + ' = ?').join(', ') + ' WHERE id = ?', keys.map((k) => v[k]).concat([r.id]));
+  return { ok: true };
 };
 
 API.nudge = function (c, d) {
@@ -2650,7 +2729,10 @@ API.installStats = function (c0, d) {
     users: people.filter((x) => x.reg), notYet: people.filter((x) => !x.reg).map((x) => ({ name: x.name, role: x.role })) };
 };
 
+// статистика за напрямками — від ерії і вище (капітанам і нижче не потрібна)
+const canDirs_ = (c) => P_(c, 'see.stats').roles.some((r) => r.level !== 'team');
 API.dirStats = function (c0, d) {
+  if (!canDirs_(c0)) deny_('Статистика за напрямками — для керівництва ерій і вище.');
   const c = wideStats_(P_(c0, 'see.stats'));
   if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
   const p = pickScope_(c, keysOf_(d));
@@ -2735,6 +2817,7 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
     known: [[nf(knownTotal), 'Знаних по імені'], [nf(of('known').length), 'Нових за період']].concat(STAGES.map((x) => [nf(stageSum_(teamIds, x[0]) + selfKnown_(scope, x[0])), x[1]])),
     finance: [[nf(sum(fin, (r) => r.inc)) + ' ₴', 'Надійшло'], [nf(sum(fin, (r) => r.spent)) + ' ₴', 'Витрачено'], [nf(sum(fin, (r) => r.inc - r.spent)) + ' ₴', 'Різниця'], [nf(uniq_(fin.map((r) => r.teamId)).length), 'Команд здали звіт']],
   };
+  { const par = sum(clubs, (r) => r.parents); if (par) K.club.push([nf(par), 'Батьків на клубах (Capernaum)']); }
   const metric = {
     overview: (r) => (r.type === 'club' && ok(r) ? r.count : 0), club: (r) => (r.type === 'club' && ok(r) ? r.count : 0),
     mg: (r) => (r.type === 'mg' && ok(r) ? r.count : 0), kr: (r) => (r.type === 'kr' ? r.hours : 0),
@@ -2789,6 +2872,7 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
   const breakdown = groups.map((g) => {
     const v = cat === 'people' ? (g.count != null ? g.count : g.key && g.key.indexOf('t:') !== 0 ? uniq_(tRoles.filter((r) => g.teams.indexOf(r.unitId) >= 0).map((r) => r.tgId).concat(officeIn(g.key))).length : peopleIn(g.teams)) : cat === 'known' ? g.teams.reduce((a, id) => a + (Number(st.team[id].known) || 0), 0) + (g.key && g.key.indexOf('t:') !== 0 ? selfKnown_(Object.assign(keyUnit_(g.key), {}), '') : 0) : sum(dd_(inPAll.filter(g.test)), metric);
     const row = { name: g.name, value: v, text: cat === 'kr' ? df(v) : nf(v), drill: g.key && scopeKeys[g.key] ? g.key : '' };
+    if (g.key && g.key.indexOf('t:') === 0) row.teamId = g.key.slice(2);
     if (cat === 'people' && g.teams) row.sub = g.teams.length + (g.teams.length === 1 ? ' команда' : ' команд');
     if (g.teams && cat !== 'people') { row.total = g.teams.length; row.done = g.teams.filter((id) => reported[id]).length; row.teams = g.teams.length; }
     return row;
@@ -3403,6 +3487,76 @@ function mergeAll_(name) {
   mergeIds_(ids);
   return { merged: ids.length };
 }
+// ── «Повідомити про помилку»: пише кожен, читає Раб Божий ──
+API.bugSend = function (c, d) {
+  const text = clip_(d.text).slice(0, 3000);
+  if (text.length < 3) bad_('Опиши, що сталося.');
+  const b = { id: uid_(), tg_id: c.id, name: c.name, text: text, screen: clip_(d.screen).slice(0, 40), info: clip_(d.info).slice(0, 400), created: nowIso() };
+  S.run('INSERT INTO bugs (id, tg_id, name, text, screen, info, created, done) VALUES (?,?,?,?,?,?,?,?)', [b.id, b.tg_id, b.name, b.text, b.screen, b.info, b.created, '']);
+  const supers = uniq_(loadRoles_().filter((r) => r.key === 'SUPER' && r.status === ST.ACTIVE).map((r) => r.tgId));
+  supers.forEach((id) => sendApp_(id, '🐞 <b>Помилка в MyYL</b> від ' + esc_(c.name) + (b.screen ? ' · екран «' + esc_(b.screen) + '»' : '') + '\n\n' + esc_(text), 'Відкрити повідомлення', 'bugs'));
+  return { ok: true };
+};
+API.bugs = function (c) {
+  if (!isSuper_(c)) deny_();
+  return { list: (S.bugs || []).map((b) => ({ id: b.id, name: b.name, text: b.text, screen: b.screen, info: b.info, created: b.created, done: !!b.done })) };
+};
+API.bugDone = function (c, d) {
+  if (!isSuper_(c)) deny_();
+  const b = (S.bugs || []).filter((x) => x.id === str_(d.id))[0];
+  if (!b) bad_('Не знайдено.');
+  S.run('UPDATE bugs SET done = ? WHERE id = ?', [d.undo ? '' : nowIso(), b.id]);
+  return { ok: true };
+};
+// ── «Можливі дублікати» (Раб Божий): схожі імена (і латиниця = кирилиця), хоча б один — не зареєстрований у боті або однакове імʼя ──
+function dupPairs_() {
+  const st = loadStruct_();
+  const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
+  const ids = uniq_(live.map((r) => r.tgId)).filter((id) => getPerson_(id) && getPerson_(id).name);
+  const where = (id) => uniq_(live.filter((r) => r.tgId === id).map((r) => (r.level === 'team' ? (st.team[r.unitId] || {}).name || '?' : unitName_(r.level, r.unitId)))).slice(0, 3).join(', ');
+  let skip = [];
+  try { skip = JSON.parse(S.setting('DUPES_SKIP') || '[]'); } catch (e) { skip = []; }
+  const buckets = {};
+  ids.forEach((id) => uniq_(nameToks_(getPerson_(id).name).filter((t) => t.length >= 3).map((t) => phon_(surKey_(t)).slice(0, 4))).forEach((k) => { (buckets[k] = buckets[k] || []).push(id); }));
+  const seen = {}, out = [];
+  Object.keys(buckets).forEach((k) => {
+    const b = buckets[k];
+    if (b.length > 60) return;
+    for (let i = 0; i < b.length; i++) for (let j = i + 1; j < b.length; j++) {
+      const x = b[i], y = b[j];
+      const key = [x, y].sort().join('|');
+      if (seen[key] || skip.indexOf(key) >= 0) continue;
+      seen[key] = 1;
+      if (isReal_(x) && isReal_(y)) continue;
+      const sc = nameScore_(getPerson_(x).name, getPerson_(y).name);
+      if (!sc.alike) continue;
+      out.push({ key: key, why: sc.exact ? 'однакове імʼя' : 'схоже імʼя', people: [x, y].map((id) => ({ id: id, name: getPerson_(id).name, where: where(id), real: isReal_(id) })) });
+    }
+  });
+  return out.sort((a, b) => a.people[0].name.localeCompare(b.people[0].name)).slice(0, 80);
+}
+API.dupes = function (c) {
+  if (!isSuper_(c)) deny_();
+  return { list: dupPairs_() };
+};
+API.dupMerge = function (c, d) {
+  if (!isSuper_(c)) deny_();
+  const ids = (d.ids || []).map(String).filter((id) => getPerson_(id));
+  if (ids.length !== 2 || ids[0] === ids[1]) bad_('Обери двох людей.');
+  if (ids.every(isReal_)) bad_('Обидва вже в боті — їх не обʼєднати автоматично.');
+  const keep = mergeIds_(ids);
+  return { keep: keep, name: (getPerson_(keep) || {}).name || '' };
+};
+API.dupSkip = function (c, d) {
+  if (!isSuper_(c)) deny_();
+  const key = (d.ids || []).map(String).sort().join('|');
+  let skip = [];
+  try { skip = JSON.parse(S.setting('DUPES_SKIP') || '[]'); } catch (e) { skip = []; }
+  if (skip.indexOf(key) < 0) skip.push(key);
+  S.b.settings.DUPES_SKIP = JSON.stringify(skip.slice(-2000));
+  S.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['DUPES_SKIP', S.b.settings.DUPES_SKIP], true);
+  return { ok: true };
+};
 // явне обʼєднання: [«Яна Ковальчук», «Яніна Ковальчук»] — кожне імʼя має відповідати рівно одному запису
 function mergeNames_(names) {
   const ids = [];
@@ -3785,4 +3939,4 @@ function weekLabel_(k) {
 }
 
 // для тестів
-export const __test = { API, Store, use, verifyInitData, weekKey_, kyivDay, weeklyReminder, eventReminder, resetBase: () => { BASE = null; } };
+export const __test = { nameScore_, API, Store, use, verifyInitData, weekKey_, kyivDay, weeklyReminder, eventReminder, resetBase: () => { BASE = null; } };

@@ -478,3 +478,9 @@ html.dark .ach-c.got .ach-ic { background: #2a2230; }
 .progress { top: var(--top-safe, 0px); }
 .viewbar { margin-top: var(--top-safe, 0px); }
 .main.has-viewbar { padding-top: 18px; }
+
+/* історія звітів за клуб */
+.ch-row { border-top: 1px solid var(--line); padding: 10px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.ch-n { display: inline-flex; align-items: baseline; gap: 4px; }
+.ch-n b { font-size: 17px; }
+.tag.self { background: rgba(155,93,229,.14); color: #7b3fc4; }

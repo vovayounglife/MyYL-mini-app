@@ -294,7 +294,7 @@ ok(r.ok, 'звіт: Раб Божий замовляє будь-яку один�
 r = await api(AD, 'report', { units: ['t:' + capTeam.id], items: ['club'], from: monthAgo, to: today });
 ok(r.ok, 'звіт: ЕД — команда (рівень нижче)');
 r = await api(SUG, 'report', { units: ['t:' + capTeam.id], items: ['club', 'finance'], from: monthAgo, to: today });
-ok(r.ok && r.data.sections.length === 1 && r.data.sections[0].key === 'club', 'звіт: сахарок — лише клуби');
+ok(!r.ok, 'звіт: сахарок (нижче лідера) звітів не готує');
 sent.length = 0;
 r = await api(AD, 'report', { units: ['a:a1'], items: ['club', 'mg'], from: monthAgo, to: today, send: true });
 const doc = sent.find((x) => x.m === 'sendDocument');
@@ -823,7 +823,7 @@ r = await api(VOVA, 'dirStats', { units: ['a:a1'], period: 'custom', from: '2025
 const wy = r.ok && r.data.rows.find((x) => x.dir === 'WyldLife');
 ok(wy && wy.clubs === 1 && wy.teens === 12 && wy.teams === 1 && r.data.rows.length >= 5, 'напрямки: статистика за напрямком ' + JSON.stringify(wy));
 r = await api(LEAD, 'dirStats', {});
-ok(r.ok, 'напрямки: доступно в межах своєї команди');
+ok(!r.ok, 'напрямки: лідеру команди недоступно');
 
 
 // ── корисні ресурси ──
@@ -1004,6 +1004,80 @@ const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
 ok(me.data.status === 'active' && me.data.roles.filter((x) => x.key === 'LEADER').length === 1 && me.data.profile.ig === '@taras_n' && me.data.profile.bday === '2001-05-03', 'YL Pray: юзернейм Telegram привʼязав людину й анкету');
+
+// ── клуби: батьки (Capernaum), історія, зміна, остання дата; звіт — кожен клуб ──
+{
+  const d0 = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+  r = await api(CAP, 'saveReport', { type: 'club', teamId: capTeam.id, mode: 'event', date: d0, teens: 9, newT: 1, leaders: 3, parents: 4, note: 'тест' });
+  ok(r.ok, 'клуб: звіт із батьками');
+  let st = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'club', period: 'month' });
+  const h0 = st.ok && st.data.club && st.data.club.history.find((x) => x.note === 'тест');
+  ok(h0 && h0.parents === 4 && h0.leaders === 3 && st.data.club.canEdit && st.data.club.last, 'клуб: історія команди з батьками й датою останнього звіту');
+  r = await api(LEAD, 'clubEdit', { id: h0.id, teens: 1 });
+  ok(!r.ok, 'клуб: лідер не змінює звіт');
+  r = await api(CAP, 'clubEdit', { id: h0.id, teens: 11, newT: 2, leaders: 4, parents: 5, note: 'змінено', date: d0 });
+  st = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'club', period: 'month' });
+  const h1 = st.data.club.history.find((x) => x.id === h0.id);
+  ok(r.ok && h1.teens === 11 && h1.parents === 5 && h1.note === 'змінено', 'клуб: капітан змінив звіт');
+  st = await api(AD, 'stats', { units: ['a:a1'], cat: 'club', period: 'month' });
+  ok(st.ok && st.data.breakdown.rows.some((x) => x.teamId === capTeam.id && x.last), 'статистика: біля команди — дата останнього звіту');
+  r = await api(CAP, 'report', { units: ['t:' + capTeam.id], items: ['club', 'mg'], from: d0, to: new Date().toISOString().slice(0, 10) });
+  ok(r.ok && (r.data.clubList || []).some((x) => x.teens === 11 && x.leaders === 4) && r.data.sections[0].cols.some((c) => c.key === 'l'), 'звіт: кожен клуб окремо, лідери й підлітки');
+  r = await api(LEAD, 'report', { units: ['t:' + capTeam.id], items: ['club'], from: d0, to: d0 });
+  ok(!r.ok, 'звіт: лідер не готує звітів');
+}
+// ── задача собі ──
+r = await api(LEAD, 'taskSave', { self: true, title: 'Подзвонити Максу' });
+ok(r.ok && r.data.count === 1, 'задача собі: лідер може');
+r = await api(LEAD, 'tasks');
+ok(r.data.list.some((x) => x.self && x.title === 'Подзвонити Максу') && r.data.canSelf, 'задача собі: видно в списку');
+r = await api(VOVA, 'tasks');
+ok(!r.data.list.some((x) => x.title === 'Подзвонити Максу'), 'задача собі: інші не бачать');
+// ── «Відобразити як» Національний офіс — лише Раб Божий ──
+me = await api(AD, 'me');
+ok(!(me.data.viewRoles || []).some((x) => x.key === 'OFFICE'), 'перегляд: ЕД не бачить «Національний офіс»');
+me = await api(VOVA, 'me');
+ok((me.data.viewRoles || []).some((x) => x.key === 'OFFICE'), 'перегляд: Раб Божий бачить «Національний офіс»');
+
+// ── можливі дублікати: латиниця = кирилиця ──
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Ольга Дума' });
+const OD = { id: 401, first_name: 'Olya' };
+r = await api(OD, 'register', { name: 'Olya Duma', roles: ['VOLUNTEER'], teamId: capTeam.id, areaId: 'a1' });
+r = await api(VOVA, 'dupes');
+let dp = r.ok && r.data.list.find((x) => x.people.some((p) => p.name === 'Olya Duma'));
+ok(dp || (r.ok && !r.data.list.some((x) => x.people.some((p) => p.name === 'Ольга Дума'))), 'дублі: Olya Duma ↔ Ольга Дума знайдено або вже обʼєднано при реєстрації');
+r = await api(CAP, 'dupes');
+ok(!r.ok, 'дублі: лише Раб Божий');
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Khrystyna Melnyk' });
+r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
+r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Христина Мельник' });
+r = await api(VOVA, 'dupes');
+ok(r.ok && !r.data.list.some((x) => x.people.some((p) => /Khrystyna|Христина/.test(p.name))), 'дублі: «Христина Мельник» латиницею не задвоюється в складі');
+// дві команди — дубль видно в списку
+me = await api(VOVA, 'me');
+const otherT = me.data.structure.teams.find((x) => x.id !== capTeam.id && x.state !== 'closed');
+r = await api(VOVA, 'memberAdd', { teamId: otherT.id, role: 'VOLUNTEER', names: 'Mykola Savchenko' });
+r = await api(VOVA, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Микола Савченко' });
+r = await api(VOVA, 'dupes');
+dp = r.data.list.find((x) => x.people.some((p) => p.name === 'Mykola Savchenko'));
+ok(dp && dp.people.some((p) => p.name === 'Микола Савченко'), 'дублі: Mykola Savchenko ↔ Микола Савченко (різні команди)');
+r = await api(VOVA, 'dupSkip', { ids: dp.people.map((p) => p.id) });
+r = await api(VOVA, 'dupes');
+ok(!r.data.list.some((x) => x.key === dp.key), 'дублі: «не дубль» ховає пару');
+
+// ── повідомлення про помилки ──
+r = await api(LEAD, 'bugSend', { text: 'Не відкривається календар', screen: 'calendar' });
+ok(r.ok, 'помилка: лідер надсилає');
+r = await api(LEAD, 'bugs');
+ok(!r.ok, 'помилка: список — лише Раб Божий');
+me = await api(VOVA, 'me');
+ok(me.data.bugsOpen >= 1, 'помилка: лічильник нових');
+r = await api(VOVA, 'bugs');
+const bg = r.ok && r.data.list.find((x) => x.text === 'Не відкривається календар');
+ok(bg && !bg.done && bg.screen === 'calendar', 'помилка: Раб Божий бачить');
+r = await api(VOVA, 'bugDone', { id: bg.id });
+r = await api(VOVA, 'bugs');
+ok(r.data.list.find((x) => x.id === bg.id).done, 'помилка: позначено виправленим');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

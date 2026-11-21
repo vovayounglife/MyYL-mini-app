@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT NOT NULL, tg_id TEXT NOT NULL, na
 CREATE TABLE IF NOT EXISTS reports (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, created TEXT, date TEXT, week TEXT, type TEXT, mode TEXT,
   team_id TEXT, area_id TEXT, region_id TEXT, count REAL DEFAULT 0, new_t REAL DEFAULT 0, leaders REAL DEFAULT 0, hours REAL DEFAULT 0,
-  topic TEXT, note TEXT, attendees TEXT, author_id TEXT, author TEXT, pid TEXT
+  topic TEXT, note TEXT, attendees TEXT, author_id TEXT, author TEXT, pid TEXT, parents REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS reports_week ON reports (week);
 
@@ -80,3 +80,5 @@ CREATE TABLE IF NOT EXISTS client_log (ts TEXT, data TEXT);
 
 -- 023: відмітки тижня від членів команди (клуб, МГ, КР)
 CREATE TABLE IF NOT EXISTS checkins (tg_id TEXT NOT NULL, week TEXT NOT NULL, club INTEGER DEFAULT 0, mg INTEGER DEFAULT 0, kr INTEGER DEFAULT 0, updated TEXT, PRIMARY KEY (tg_id, week));
+
+CREATE TABLE IF NOT EXISTS bugs (id TEXT PRIMARY KEY, tg_id TEXT, name TEXT, text TEXT, screen TEXT, info TEXT, created TEXT, done TEXT);
