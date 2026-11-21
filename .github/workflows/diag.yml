@@ -19,6 +19,22 @@ jobs:
             head -c 300 body.txt; echo
           done
           curl -s -o /dev/null -w "OPTIONS %{http_code}\n" -X OPTIONS https://yl-mini-app.vova-younglife.workers.dev
+      - name: Telegram → сервер (вебхук)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: curl -s "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo" | jq '.result | {url: (.url|sub("[?].*";"")), pending_update_count, last_error_date, last_error_message, ip_address}'
+      - name: З України та Європи (check-host.net)
+        run: |
+          U=https://yl-mini-app.vova-younglife.workers.dev/
+          R=$(curl -s -H 'Accept: application/json' "https://check-host.net/check-http?host=$U&max_nodes=40")
+          ID=$(echo "$R" | jq -r .request_id); echo "nodes: $(echo "$R" | jq -c '[.nodes|to_entries[]|.value[1]]')"
+          sleep 25
+          curl -s -H 'Accept: application/json' "https://check-host.net/check-result/$ID" | jq -c 'to_entries[] | {node:.key, r:.value}' | grep -iE 'ua|pl|de|ro|md|sk|cz|hu|lt|nl' | head -30
+          R=$(curl -s -H 'Accept: application/json' "https://check-host.net/check-tcp?host=yl-mini-app.vova-younglife.workers.dev:443&max_nodes=40")
+          ID=$(echo "$R" | jq -r .request_id); sleep 20
+          echo TCP; curl -s -H 'Accept: application/json' "https://check-host.net/check-result/$ID" | jq -c 'to_entries[] | {node:.key, r:.value}' | grep -iE 'ua|pl|de|ro|md' | head -20
+          echo GHPAGES; R=$(curl -s -H 'Accept: application/json' "https://check-host.net/check-http?host=https://vovayounglife.github.io/MyYL-mini-app/&max_nodes=40"); ID=$(echo "$R" | jq -r .request_id); sleep 20
+          curl -s -H 'Accept: application/json' "https://check-host.net/check-result/$ID" | jq -c 'to_entries[] | {node:.key, r:.value}' | grep -iE 'ua' | head -10
       - name: Помилки воркера за 24 год (Cloudflare)
         run: |
           SINCE=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ); NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
