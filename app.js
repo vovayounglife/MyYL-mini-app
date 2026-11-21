@@ -1103,7 +1103,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       h += `<div class="card list">${u.people.map((p) => {
         const open = m.open === p.tgId;
         return `<button type="button" class="li" data-a="myylPerson" data-id="${esc(p.tgId)}" aria-expanded="${open}"><span class="avatar">${esc(initials(p.name))}</span>
-          <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span>${p.title ? `<span class="small muted" style="display:block">${esc(p.title)}</span>` : ''}
+          <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span>
           <span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r)}</span>`).join('')}</span></span></button>
           ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${p.username
             ? `<button type="button" class="btn sec2 sm" style="width:100%" data-a="openUrl" data-url="https://t.me/${esc(encodeURIComponent(p.username))}">${icon('tg', 18)} Написати @${esc(p.username)}</button>`
@@ -1998,7 +1998,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <div class="xs muted">Тут рахуються твої особисті записи: знані «Без команди», а для вищих ролей — мала група й контактна робота.</div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
       <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${activeRoles().some((r) => r.key === 'SUPER') ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
-    const F = [['name', 'Імʼя та прізвище', 'text'], ['title', 'Статус під іменем (необовʼязково)', 'text'], ['phone', 'Телефон', 'tel'], ['ig', 'Instagram', 'text'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
+    const F = [['name', 'Імʼя та прізвище', 'text'], ['phone', 'Телефон', 'tel'], ['ig', 'Instagram', 'text'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
     return h;
