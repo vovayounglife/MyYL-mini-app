@@ -145,7 +145,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week' }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -199,6 +199,8 @@ async function runAs_(S, tgUser, action, d) {
     if (need.bc) await S.loadBroadcasts();
     if (need.res) await S.loadRes();
     if (need.tp) await S.loadTP();
+    if (need.ck) await S.loadCheckins(String(tgUser.id));
+    if (need.mine) await S.loadMine(String(tgUser.id));
     if (need.usage) await S.loadTeamUsage(str_(d.id));
     const data = use(S, () => fn(ctx_(tgUser), d));
     await S.flush();
@@ -313,6 +315,21 @@ class Store {
     const rs = await this.db.prepare('SELECT * FROM known WHERE team_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)).all();
     ids.forEach((id) => { this.known[id] = []; });
     (rs.results || []).forEach((r) => { (this.known[r.team_id] = this.known[r.team_id] || []).push(r); });
+  }
+  async loadCheckins(tgId) {
+    const r = await this.db.prepare('SELECT * FROM checkins WHERE tg_id = ? AND week = ?').bind(tgId, weekKey_(new Date())).first();
+    this.ck = r || null;
+  }
+  // усе «моє» для особистої статистики: звіти МГ/КР, клуби з відміткою присутності, відмітки тижнів, знані
+  async loadMine(tgId) {
+    const like = '%,' + tgId + ',%';
+    const [rep, att, ck, kn] = await this.db.batch([
+      this.db.prepare("SELECT week, date, type, mode, hours, count, pid FROM reports WHERE author_id = ? AND type IN ('mg','kr')").bind(tgId),
+      this.db.prepare("SELECT DISTINCT week FROM reports WHERE type = 'club' AND (',' || COALESCE(attendees, '') || ',') LIKE ?").bind(like),
+      this.db.prepare('SELECT * FROM checkins WHERE tg_id = ?').bind(tgId),
+      this.db.prepare('SELECT stage, added FROM known WHERE author_id = ? AND active = 1').bind(tgId),
+    ]);
+    this.mine = { rep: rep.results || [], att: (att.results || []).map((r) => r.week), ck: ck.results || [], known: kn.results || [] };
   }
   async loadKnownMine(tgId) {
     const rs = await this.db.prepare('SELECT * FROM known WHERE author_id = ?').bind(tgId).all();
@@ -450,7 +467,7 @@ function roleFromRow(r) {
   return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, title: title, label: title ? title + ' (' + def.label.toLowerCase() + ')' : def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '' };
 }
 function logFromRow(r) {
-  return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '' };
+  return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '', attendees: r.attendees || '' };
 }
 
 // Одиниці з запиту (units: ['nat','r:…','a:…','t:…'] або teamId) → активні команди (без перевірки прав)
@@ -778,6 +795,7 @@ API.me = function (c) {
   const wide = wideStats_(P_(c, 'see.stats'));
   if (wide.roles.some((r) => r.virtual)) out.statScopes = allowedScopes_(wide);
   out.week = weekStatus_(c);
+  out.myWeek = myWeek_(c);
   out.todo = tpCounts_(c);
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
@@ -1127,6 +1145,90 @@ API.saveReport = function (c, d) {
   S.log.push(logFromRow(row));
   });
   return { week: weekStatus_(c) };
+};
+
+// ── мій тиждень: відмітки члена команди (клуб, МГ, КР) ──
+const CK_KINDS = ['club', 'mg', 'kr'];
+function myWeek_(c) {
+  if (!c.roles.some((r) => r.level === 'team' && r.status === ST.ACTIVE)) return null;
+  const wk = weekKey_(new Date());
+  const rows = loadLog_().filter((r) => r.week === wk);
+  const ck = S.ck || {};
+  const att = rows.some((r) => r.type === 'club' && (',' + (r.attendees || '') + ',').indexOf(',' + c.id + ',') >= 0);
+  const rep = (t) => rows.some((r) => r.type === t && r.authorId === c.id && r.mode !== MODE.none);
+  const items = [
+    { key: 'club', label: 'Був(ла) на клубі', on: !!ck.club || att, locked: att },
+    { key: 'mg', label: 'Провів(ла) малу групу', on: !!ck.mg || rep('mg'), locked: rep('mg') },
+    { key: 'kr', label: 'Контактна робота', on: !!ck.kr || rep('kr'), locked: rep('kr') },
+  ];
+  return { key: wk, label: weekLabel_(wk), items: items, done: items.filter((x) => x.on).length };
+}
+API.checkin = function (c, d) {
+  const kind = String(d.kind || '');
+  if (CK_KINDS.indexOf(kind) < 0) bad_('Невідома відмітка.');
+  if (!c.roles.some((r) => r.level === 'team' && r.status === ST.ACTIVE)) deny_('Відмічати тиждень можуть члени команди.');
+  const wk = weekKey_(new Date());
+  const cur = Object.assign({ club: 0, mg: 0, kr: 0 }, S.ck || {});
+  cur[kind] = d.on ? 1 : 0;
+  S.run('INSERT INTO checkins (tg_id, week, club, mg, kr, updated) VALUES (?,?,?,?,?,?) ON CONFLICT (tg_id, week) DO UPDATE SET club = excluded.club, mg = excluded.mg, kr = excluded.kr, updated = excluded.updated',
+    [c.id, wk, cur.club, cur.mg, cur.kr, nowIso()]);
+  S.ck = cur;
+  return { myWeek: myWeek_(c) };
+};
+
+// ── моя статистика й ачівки ──
+const ACH = [
+  ['first', 'Перший крок', 'Перша відмітка чи звіт', 'acts', 1],
+  ['full', 'Повний тиждень', 'Клуб, мала група і КР за один тиждень', 'full', 1],
+  ['streak4', 'Вогник', '4 тижні поспіль з активністю', 'streak', 4],
+  ['streak12', 'Марафонець', '12 тижнів поспіль', 'streak', 12],
+  ['club10', 'Свій на клубі', '10 клубів', 'clubs', 10],
+  ['club30', 'Серце клубу', '30 клубів', 'clubs', 30],
+  ['mg10', 'Пастир групи', '10 малих груп', 'mgs', 10],
+  ['mg40', 'Наставник', '40 малих груп', 'mgs', 40],
+  ['kr10', 'Поруч', '10 годин контактної роботи', 'kr', 10],
+  ['kr50', 'Друг на кожен день', '50 годин контактної роботи', 'kr', 50],
+  ['known10', 'Знаю по імені', '10 підлітків у «Знаних»', 'known', 10],
+  ['known30', 'Молитовник', '30 підлітків у «Знаних»', 'known', 30],
+  ['own1', 'Йдуть самі', 'Підліток у стадії «Йдуть самі»', 'own', 1],
+];
+function weekShift_(wk, n) { const d = new Date(wk + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 7 * n); return d.toISOString().slice(0, 10); }
+API.myStats = function (c, d) {
+  const m = S.mine || { rep: [], att: [], ck: [], known: [] };
+  const period = ['month', 'quarter', 'year', 'all'].indexOf(d.period) >= 0 ? d.period : 'all';
+  const nowWk = weekKey_(new Date());
+  const from = period === 'all' ? '' : weekShift_(nowWk, -({ month: 4, quarter: 13, year: 52 }[period]) + 1);
+  const inP = (wk) => !from || wk >= from;
+  const reps = dd_(m.rep.map((r) => Object.assign({}, r))).filter((r) => r.mode !== MODE.none);
+  // тижні з подіями: звіти, клуби з відміткою, особисті відмітки
+  const W = {};
+  const mark = (wk, k, v) => { if (!wk) return; W[wk] = W[wk] || { club: 0, mg: 0, kr: 0, krH: 0, mgN: 0 }; W[wk][k] = Math.max(W[wk][k], v === undefined ? 1 : v); };
+  m.att.forEach((wk) => mark(wk, 'club'));
+  m.ck.forEach((r) => { if (r.club) mark(r.week, 'club'); if (r.mg) mark(r.week, 'mg'); if (r.kr) mark(r.week, 'kr'); });
+  reps.forEach((r) => { mark(r.week, r.type); if (r.type === 'kr') W[r.week].krH += Number(r.hours) || 0; if (r.type === 'mg') W[r.week].mgN += 1; });
+  const weeks = Object.keys(W).sort();
+  const sum = (f, only) => weeks.filter((w) => !only || inP(w)).reduce((a, w) => a + f(W[w]), 0);
+  const totals = (only) => ({
+    clubs: sum((x) => x.club, only),
+    mgs: sum((x) => Math.max(x.mg, x.mgN), only),
+    kr: Math.round(sum((x) => x.krH, only) * 10) / 10,
+    krWeeks: sum((x) => x.kr, only),
+    active: sum(() => 1, only),
+    full: sum((x) => (x.club && (x.mg || x.mgN) && (x.kr || x.krH) ? 1 : 0), only),
+  });
+  // серія: тижні поспіль з активністю (поточний тиждень ще може бути порожнім)
+  let streak = 0, wk = W[nowWk] ? nowWk : weekShift_(nowWk, -1);
+  while (W[wk]) { streak++; wk = weekShift_(wk, -1); }
+  let best = 0, run = 0, prev = '';
+  weeks.forEach((w) => { run = prev && weekShift_(prev, 1) === w ? run + 1 : 1; best = Math.max(best, run); prev = w; });
+  const known = m.known.length, own = m.known.filter((k) => k.stage === 'own').length;
+  const all = totals(false), cur = totals(true);
+  const val = { acts: all.active, full: all.full, streak: best, clubs: all.clubs, mgs: all.mgs, kr: all.kr, known: known, own: own };
+  const ach = ACH.map((a) => ({ key: a[0], title: a[1], desc: a[2], have: Math.min(val[a[3]], a[4]), need: a[4], done: val[a[3]] >= a[4] }));
+  // останні 12 тижнів для «доріжки»
+  const trail = [];
+  for (let i = 11; i >= 0; i--) { const w = weekShift_(nowWk, -i); const x = W[w] || {}; trail.push({ week: w, club: !!x.club, mg: !!(x.mg || x.mgN), kr: !!(x.kr || x.krH) }); }
+  return { period: period, kpi: { clubs: cur.clubs, mgs: cur.mgs, kr: cur.kr, known: known, active: cur.active, streak: streak, best: best }, ach: ach, trail: trail };
 };
 
 // ── знані по імені ──

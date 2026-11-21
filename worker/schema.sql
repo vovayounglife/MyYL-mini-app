@@ -77,3 +77,6 @@ VALUES ('res0budni', 'Подкаст «Будні лідера»', 'https://yout
 
 -- 022: збої на телефонах (для діагностики)
 CREATE TABLE IF NOT EXISTS client_log (ts TEXT, data TEXT);
+
+-- 023: відмітки тижня від членів команди (клуб, МГ, КР)
+CREATE TABLE IF NOT EXISTS checkins (tg_id TEXT NOT NULL, week TEXT NOT NULL, club INTEGER DEFAULT 0, mg INTEGER DEFAULT 0, kr INTEGER DEFAULT 0, updated TEXT, PRIMARY KEY (tg_id, week));

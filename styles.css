@@ -405,3 +405,39 @@ html.dark .rtab td:first-child, html.dark .rtab th:first-child { background: rgb
 }
 html.dark .btn.sec2::before, html.dark .btn.ghost::before { opacity: .18; }
 
+
+/* ── мій тиждень ── */
+.mw-count { font-size: 22px; font-weight: 800; }
+.mw-count .muted { font-size: 15px; }
+.mw-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.mw-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 96px; padding: 10px 6px; border-radius: 22px; text-align: center; font-weight: 700; font-size: 13px; line-height: 1.2; color: var(--text);
+  background: var(--glass-hi); border: 1px solid var(--glass-brd); box-shadow: 0 6px 16px -10px rgba(120, 50, 20, .35), var(--glass-in); transition: transform .3s var(--spring), background .25s, color .25s, box-shadow .3s; }
+.mw-btn:active { transform: scale(.93); }
+.mw-btn .mw-ic { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(232, 85, 42, .12); color: var(--accent-text); transition: transform .4s var(--spring); }
+.mw-btn.on { background: var(--grad); color: #fff; border-color: rgba(255, 255, 255, .5); box-shadow: 0 10px 22px -8px rgba(226, 85, 42, .6), inset 0 1px 0 rgba(255, 255, 255, .5); }
+.mw-btn.on .mw-ic { background: rgba(255, 255, 255, .25); color: #fff; animation: mwPop .5s var(--spring); }
+.mw-btn[disabled] { opacity: 1; cursor: default; }
+@keyframes mwPop { 0% { transform: scale(.4) rotate(-20deg); } 100% { transform: none; } }
+.mw-full { box-shadow: 0 0 0 2px rgba(255, 133, 71, .5), var(--glass-sh), var(--glass-in); }
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 200; overflow: hidden; }
+.confetti i { position: absolute; top: -12px; width: 8px; height: 12px; border-radius: 2px; animation: conf 1.8s cubic-bezier(.2, .7, .4, 1) forwards; }
+@keyframes conf { to { transform: translate(var(--dx), 105vh) rotate(var(--r)); opacity: .9; } }
+
+/* ── моя статистика ── */
+.ms-k { display: flex; flex-direction: column; gap: 2px; padding: 16px; }
+.ms-k b { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+.ms-streak { gap: 12px; align-items: center; }
+.ms-fire { font-size: 34px; animation: fire 2.4s ease-in-out infinite; }
+@keyframes fire { 0%, 100% { transform: scale(1) rotate(-3deg); } 50% { transform: scale(1.12) rotate(3deg); } }
+.ms-trail { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; padding: 14px; }
+.ms-w { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.ms-w i, .ms-leg i { width: 100%; max-width: 18px; height: 10px; border-radius: 5px; background: rgba(120, 80, 60, .12); display: block; }
+.ms-w i.c, .ms-leg i.c { background: #ff8547; } .ms-w i.m, .ms-leg i.m { background: #a78bfa; } .ms-w i.k, .ms-leg i.k { background: #2dd4bf; }
+.ms-leg { grid-column: 1 / -1; display: flex; gap: 14px; justify-content: center; margin-top: 6px; }
+.ms-leg span { display: inline-flex; align-items: center; gap: 5px; } .ms-leg i { width: 14px; height: 8px; }
+.ach { display: flex; flex-direction: column; gap: 4px; padding: 14px; filter: grayscale(.85); opacity: .75; }
+.ach.got { filter: none; opacity: 1; box-shadow: 0 0 0 1.5px rgba(255, 196, 92, .8), var(--glass-sh), var(--glass-in); }
+.ach-ic { font-size: 30px; line-height: 1; margin-bottom: 4px; }
+.ach.got .ach-ic { animation: mwPop .6s var(--spring); }
+.ach .track i { background: var(--grad); }
+.ach-ok { color: var(--accent-text); font-weight: 700; }

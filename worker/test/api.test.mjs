@@ -942,6 +942,18 @@ await api(VOVA, 'memberAdd', { teamId: 'tSv', names: 'Панєва Настя', 
 await api(VOVA, 'memberAdd', { teamId: capTeam.id, names: 'Анастасія Панєва', role: 'LEADER' });
 r = await admin('teams', { people: [{ all: 'Анастасія Панєва' }] });
 ok(r.ok && r.people[0].merged === 2, 'дублі: обʼєднання всіх записів людини');
+// ── мій тиждень і моя статистика ──
+me = await api(LEAD, 'me');
+ok(me.data.myWeek && me.data.myWeek.items.length === 3, 'мій тиждень: три відмітки для члена команди');
+r = await api(LEAD, 'checkin', { kind: 'club', on: true });
+ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: відмітив клуб');
+r = await api(LEAD, 'checkin', { kind: 'kr', on: true });
+r = await api(LEAD, 'checkin', { kind: 'kr', on: false });
+ok(r.ok && !r.data.myWeek.items.find((x) => x.key === 'kr').on && r.data.myWeek.items.find((x) => x.key === 'club').on, 'мій тиждень: зняв КР, клуб лишився');
+r = await api(LEAD, 'checkin', { kind: 'zzz', on: true });
+ok(!r.ok, 'мій тиждень: невідома відмітка');
+r = await api(LEAD, 'myStats', { period: 'all' });
+ok(r.ok && r.data.kpi.clubs >= 1 && r.data.kpi.streak >= 1 && r.data.ach.find((a) => a.key === 'first').done && r.data.trail.length === 12, 'моя статистика: клуби, серія, ачівка «Перший крок»');
 const TN = { id: 281, first_name: 'Тарас', username: 'taras_tg' };
 r = await api(TN, 'register', { name: 'Тарас', roles: ['LEADER'], teamId: capTeam.id, areaId: 'a1' });
 me = await api(TN, 'me');
