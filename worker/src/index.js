@@ -2843,6 +2843,10 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
   } else {
     for (let k = chartStart; k <= chartEnd; k = addDaysKey_(k, 7)) { const b = { key: k, label: k.slice(8, 10) + '.' + k.slice(5, 7), v: 0 }; buckets.push(b); byKey[k] = b; }
     rows.forEach((r) => { const b = byKey[r.week]; if (b) b.v += Number(metric(r)) || 0; });
+    // одна команда, клуби: підпис стовпчика — день, коли клуб відбувся (а не початок тижня)
+    if (scope.level === 'team' && (cat === 'club' || cat === 'overview')) {
+      rows.filter((r) => r.type === 'club' && r.mode === MODE.event && byKey[r.week]).forEach((r) => { const b = byKey[r.week]; if (!b.day || r.date > b.day) { b.day = r.date; b.label = r.date.slice(8, 10) + '.' + r.date.slice(5, 7); } });
+    }
   }
 
   const ML2 = { people: 'людей', overview: 'підлітків на клубах', club: 'підлітків на клубах', mg: 'учасників малих груп', kr: 'годин КР', known: 'знаних по імені', finance: 'надходжень, ₴' };
@@ -2897,7 +2901,7 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
     scope, scopes, cats, cat, period, range: cr,
     kpis: K[cat].map((k) => ({ v: k[0], l: k[1] })),
     chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер' + (uRoles.length ? ' · Офіс (ролі ерій і регіонів)' : ''), bars: roleBars }
-      : { title: titles[cat], sub: cr ? (byMonth ? 'по місяцях' : 'по тижнях') + ' · ' + fmtDue_(cr.from) + ' ' + cr.from.slice(0, 4) + ' – ' + fmtDue_(cr.to) + ' ' + cr.to.slice(0, 4) : period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
+      : { title: titles[cat], sub: scope.level === 'team' && (cat === 'club' || cat === 'overview') && !byMonth ? 'по клубах — дата, коли клуб відбувся' + (cr ? '' : ', останні ' + chartWeeks + ' тижнів') : cr ? (byMonth ? 'по місяцях' : 'по тижнях') + ' · ' + fmtDue_(cr.from) + ' ' + cr.from.slice(0, 4) + ' – ' + fmtDue_(cr.to) + ' ' + cr.to.slice(0, 4) : period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
     breakdown: { title: cat === 'people' && scope.level === 'team' ? 'Ролі' : ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
     path, report,
     weekLabel: weekLabel_(nowWk),
