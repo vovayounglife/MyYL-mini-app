@@ -803,9 +803,8 @@
     const b = d.breakdown;
     if (b.rows.length) {
       let rows = b.rows.slice();
-      const sort = st.sort || 'value';
+      const sort = st.sort === 'name' ? 'name' : 'value';
       if (sort === 'name') rows.sort((x, y) => x.name.localeCompare(y.name));
-      if (sort === 'behind') rows.sort((x, y) => ((x.done || 0) / (x.total || 1)) - ((y.done || 0) / (y.total || 1)) || x.value - y.value);
       const many = rows.length > 8;
       const shown = many && !st.showAll ? rows.slice(0, 8) : rows;
       const rmax = Math.max.apply(null, b.rows.map((r) => r.value).concat([1]));
@@ -813,7 +812,7 @@
       const hasRep = rows.some((r) => r.total != null);
       h += `<div class="card col" style="gap:4px"><div class="row between"><h2>${esc(b.title)} · ${b.rows.length}</h2></div>
         <div class="xs muted">Показник: ${esc(b.metric)}${hasRep ? ' · «здали» — ' + esc(b.repLabel) + ' цього тижня' : ''}</div>
-        <div class="pills" style="margin:6px 0 4px">${[['value', 'Більше'], ['name', 'А–Я']].concat(hasRep ? [['behind', 'Хто відстає']] : []).map((s) => `<button type="button" class="pill${sort === s[0] ? ' on' : ''}" style="min-height:34px" data-a="statsSort" data-s="${s[0]}">${s[1]}</button>`).join('')}</div>
+        <div class="pills" style="margin:6px 0 4px">${[['value', 'Більше'], ['name', 'А–Я']].map((s) => `<button type="button" class="pill${sort === s[0] ? ' on' : ''}" style="min-height:34px" data-a="statsSort" data-s="${s[0]}">${s[1]}</button>`).join('')}</div>
         ${many ? '<input class="in" type="search" placeholder="Пошук у списку" data-live="statsRowFind" style="min-height:42px;margin-bottom:4px">' : ''}
         <div id="brkList">${shown.map((r, i) => {
           const lag = r.total != null && r.done < r.total;
