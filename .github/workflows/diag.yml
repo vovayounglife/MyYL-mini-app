@@ -22,7 +22,8 @@ jobs:
       - name: Telegram → сервер (вебхук)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        run: curl -s "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo" | jq '.result | {url: (.url|sub("[?].*";"")), pending_update_count, last_error_date, last_error_message, ip_address}'
+        run: |
+          curl -s "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo" | jq '.result | {url: (.url|sub("[?].*";"")), pending_update_count, last_error_date, last_error_message, ip_address}'
       - name: З України та Європи (check-host.net)
         run: |
           U=https://yl-mini-app.vova-younglife.workers.dev/
