@@ -318,6 +318,7 @@ r = await api(AD, 'knownList', { units: ['a:a1'] });
 ok(r.ok && r.data.length === 5 && r.data[0].team, 'знані: по всій ерії, з назвою команди');
 r = await api(AD, 'stats', { units: ['a:a1'], cat: 'known' });
 ok(r.ok && r.data.kpis[0].v === '5' && r.data.kpis.find((k) => k.l === 'Дружимо').v === '3' && r.data.kpis.find((k) => k.l === 'Йдуть самі').v === '1', 'статистика знаних по етапах');
+ok(r.data.trend && r.data.trend.to === 5 && r.data.trend.points.length === r.data.chart.bars.length && r.data.trend.delta === 5 - r.data.trend.from && r.data.trend.points.every((p, i, a) => !i || p.v >= a[i - 1].v), 'знані: точкова діаграма — скільки було на кінець тижня (' + JSON.stringify(r.data.trend.points.map((p) => p.v)) + ')');
 r = await api(AD, 'report', { units: ['a:a1'], items: ['known'], from: monthAgo, to: today });
 ok(r.ok && r.data.rows[0].values.known.friends === '3', 'звіт знаних по етапах');
 
@@ -439,6 +440,7 @@ me = await api(LEAD, 'me');
 ok(me.data.profile.notif.bc === false && me.data.profile.notif.remind === true, 'сповіщення: збережено');
 // статистика «Команда»
 r = await api(AD, 'stats', { units: ['a:a1'], cat: 'people' });
+ok(r.data.trend && r.data.trend.to === Number(r.data.kpis.find((k) => k.l === 'У командах').v) && r.data.trend.points.length === 8, 'команда: точкова діаграма кількості людей (' + JSON.stringify(r.data.trend.points.map((p) => p.v)) + ')');
 ok(r.ok && r.data.cats.some((x) => x.key === 'people' && x.label === 'Команда') && r.data.kpis[0].l === 'Людей усього' && r.data.breakdown.rows.length === 2 && r.data.chart.bars.length === 8 && r.data.chart.bars[7].label === 'Офіс', 'статистика «Команда» по ерії');
 r = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'people' });
 ok(r.ok && r.data.breakdown.title === 'Ролі' && r.data.breakdown.rows.some((x) => x.name === 'Волонтер'), 'статистика «Команда» по команді — ролі');

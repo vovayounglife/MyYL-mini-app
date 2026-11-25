@@ -289,17 +289,24 @@ class Store {
     if (withExtras) {
       // нові знані й фінанси — у тому ж форматі, що й звіти (для статистики)
       const fromDay = fromWeek;
-      const [kn, fin, stg, slf] = await this.db.batch([
+      const [kn, fin, stg, slf, gone] = await this.db.batch([
         this.db.prepare("SELECT team_id, added, author_id FROM known WHERE added >= ? AND active = 1").bind(fromDay),
         this.db.prepare('SELECT team_id, month, office, church, team, spent FROM finance WHERE month >= ?').bind(fromDay.slice(0, 7)),
         this.db.prepare("SELECT team_id, COALESCE(stage, 'meet') AS stage, COUNT(*) AS n FROM known WHERE active = 1 GROUP BY team_id, COALESCE(stage, 'meet')"),
         this.db.prepare("SELECT author_id, COALESCE(stage, 'meet') AS stage, COUNT(*) AS n FROM known WHERE active = 1 AND team_id = '' GROUP BY author_id, COALESCE(stage, 'meet')"),
+        this.db.prepare("SELECT team_id, added, updated, author_id FROM known WHERE active = 0 AND updated >= ?").bind(fromDay),
       ]);
       // особисті знані «Без команди»: рахуємо на рівні автора
       this.knownSelf = (slf.results || []).map((r) => Object.assign({ stage: r.stage, n: r.n }, authorUnit_(this.b, r.author_id)));
       this.knownStages = {};
       (stg.results || []).forEach((r) => { (this.knownStages[r.team_id] = this.knownStages[r.team_id] || {})[r.stage] = r.n; });
       const b = this.b;
+      // знані, яких прибрали за цей час: для графіка «скільки було на дату»
+      this.knownGone = [];
+      (gone.results || []).forEach((r) => {
+        const t = b.team[r.team_id], u = r.team_id ? (t ? { areaId: t.areaId, regionId: b.teamRegion(r.team_id) } : null) : authorUnit_(b, r.author_id);
+        if (u) this.knownGone.push({ teamId: r.team_id || '', areaId: u.areaId, regionId: u.regionId, added: String(r.added || '').slice(0, 10), gone: String(r.updated || '').slice(0, 10) });
+      });
       (kn.results || []).forEach((r) => {
         const t = b.team[r.team_id]; const day = String(r.added || '').slice(0, 10);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
@@ -486,7 +493,7 @@ function roleFromRow(r) {
   const def = roleDef_(r.role_key);
   if (!def) return null;
   const title = def.titled ? String(r.title || '').trim() : '';
-  return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, title: title, label: title ? title + ' (' + def.label.toLowerCase() + ')' : def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '' };
+  return { id: r.id, tgId: r.tg_id, name: r.name || '', key: def.key, title: title, label: title ? title + ' (' + def.label.toLowerCase() + ')' : def.label, rank: def.rank, level: def.level, unitId: r.unit_id || '', status: r.status, requested: r.requested || '', decided: r.decided || '' };
 }
 function logFromRow(r) {
   return { id: r.id, pid: r.pid || '', date: r.date, week: r.week, type: r.type, mode: r.mode, teamId: r.team_id, areaId: r.area_id, regionId: r.region_id, count: r.count || 0, newT: r.new_t || 0, leaders: r.leaders || 0, parents: r.parents || 0, note: r.note || '', created: r.created || '', hours: r.hours || 0, inc: 0, spent: 0, authorId: r.author_id || '', author: r.author || '', attendees: r.attendees || '' };
@@ -527,6 +534,7 @@ const loadStruct_ = () => S.b;
 const loadRoles_ = () => S.b.roles;
 const getPerson_ = (id) => S.b.people[String(id)] || null;
 const loadLog_ = () => S.log;
+const loadKnownGone_ = () => S.knownGone || [];
 const loadEvents_ = () => S.events;
 // ── повторювані події: серія зберігається одним рядком, дати розгортаються на льоту ──
 const REPEAT = { week: 'щотижня', '2week': 'раз на 2 тижні', month: 'щомісяця' };
@@ -3086,6 +3094,33 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
     return { type: type, label: { club: 'Клуби', mg: 'Малі групи', kr: 'Контактна робота' }[type], ok: m.ok, none: m.none, total: m.total, unit: m.unit, missing: m.missingNames };
   });
 
+  // кількість на кінець кожного тижня/місяця — як змінювалась за період (люди в командах, знані)
+  let trend = null;
+  if (cat === 'people' || cat === 'known') {
+    const today = kyivDay(new Date());
+    const ends = buckets.map((b) => {
+      let e = byMonth ? (() => { const y = Number(b.key.slice(0, 4)), m = Number(b.key.slice(5, 7)); return b.key + '-' + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0'); })() : addDaysKey_(b.key, 6);
+      if (e > today) e = today;
+      return e;
+    });
+    let at;
+    if (cat === 'people') {
+      const all = loadRoles_().filter((r) => r.level === 'team' && inScope[r.unitId] && (r.status === ST.ACTIVE || (r.status === ST.REMOVED && r.decided)));
+      at = (day) => uniq_(all.filter((r) => String(r.requested || r.decided || '').slice(0, 10) <= day && (r.status === ST.ACTIVE || String(r.decided).slice(0, 10) > day)).map((r) => r.tgId || 'r:' + r.id)).length;
+    } else {
+      const inSc = (r) => inScope[r.teamId] || upperRowIn_(scope, r);
+      const added = loadLog_().filter((r) => r.type === 'known' && inSc(r)).map((r) => r.date);
+      const gone = loadKnownGone_().filter(inSc);
+      at = (day) => knownTotal - added.filter((d) => d > day).length + gone.filter((g) => g.added <= day && g.gone > day).length;
+    }
+    const pts = buckets.map((b, i) => ({ label: b.label, v: Math.max(0, at(ends[i])) }));
+    if (pts.length) {
+      const startDay = addDaysKey_(cr ? cr.from : byMonth ? buckets[0].key + '-01' : buckets[0].key, -1);
+      const v0 = Math.max(0, at(startDay));
+      trend = { title: cat === 'people' ? 'Скільки людей у командах' : 'Скільки знаних по імені', sub: 'на кінець кожного ' + (byMonth ? 'місяця' : 'тижня'),
+        from: v0, to: pts[pts.length - 1].v, delta: pts[pts.length - 1].v - v0, points: pts };
+    }
+  }
   const roleBars = ROLES.filter((x) => x.level === 'team').map((x) => ({ label: { CAPTAIN: 'Кап', TEAM_ADMIN: 'Адм', DGL: 'DGL', LEADER: 'Лід', HELPER: 'Пом', SUGAR: 'Сах', VOLUNTEER: 'Вол' }[x.key] || x.label.slice(0, 3), v: uniq_(tRoles.filter((r) => r.key === x.key).map((r) => r.tgId)).length }));
   if (uRoles.length) roleBars.push({ label: 'Офіс', v: uniq_(uRoles.map((r) => r.tgId)).length });
   return {
@@ -3093,6 +3128,7 @@ function computeStats_(c, scope, cat, period, cats, scopes, cr) {
     kpis: K[cat].map((k) => ({ v: k[0], l: k[1] })),
     chart: cat === 'people' ? { title: titles[cat], sub: 'Капітан · Адмін · DGL · Лідер · Помічник · Сахарок · Волонтер' + (uRoles.length ? ' · Офіс (ролі ерій і регіонів)' : ''), bars: roleBars }
       : { title: titles[cat], sub: scope.level === 'team' && (cat === 'club' || cat === 'overview') && !byMonth ? 'по клубах — дата, коли клуб відбувся' + (cr ? '' : ', останні ' + chartWeeks + ' тижнів') : cr ? (byMonth ? 'по місяцях' : 'по тижнях') + ' · ' + fmtDue_(cr.from) + ' ' + cr.from.slice(0, 4) + ' – ' + fmtDue_(cr.to) + ' ' + cr.to.slice(0, 4) : period === 'year' ? 'по місяцях, останні 12' : 'по тижнях, останні ' + buckets.length, bars: buckets.map((b) => ({ label: b.label, v: b.v })) },
+    trend,
     breakdown: { title: cat === 'people' && scope.level === 'team' ? 'Ролі' : ({ nat: 'Регіони', region: 'Ерії', area: 'Команди', team: 'Люди', multi: 'Вибрані' }[scope.level]), metric: ML2[cat], repLabel: TYPE_LABEL[repType].toLowerCase(), rows: breakdown },
     path, report,
     weekLabel: weekLabel_(nowWk),

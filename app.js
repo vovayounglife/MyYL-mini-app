@@ -324,6 +324,30 @@
     if (screen === 'profile') { S.roleReq = null; S.profile = Object.assign({}, S.me.profile || {}); }
   }
 
+
+  // точкова діаграма: скільки було на кінець кожного тижня/місяця
+  function trendCard(t) {
+    const P = t.points, n = P.length, W = 320, H = 150, L = 14, R = 14, T = 22, B = 26;
+    const vs = P.map((p) => p.v).concat([t.from]);
+    let lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+    if (hi === lo) { lo = Math.max(0, lo - 1); hi = hi + 1; }
+    const pad = (hi - lo) * 0.15; lo = Math.max(0, lo - pad); hi += pad;
+    const X = (i) => n === 1 ? W / 2 : L + (W - L - R) * i / (n - 1), Y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+    const step = Math.max(1, Math.ceil(n / 6));
+    const delta = t.delta, cls = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+    const grid = [0, 0.5, 1].map((f) => `<line x1="${L}" x2="${W - R}" y1="${T + (H - T - B) * f}" y2="${T + (H - T - B) * f}" class="tr-grid"/>`).join('');
+    const line = P.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(' ');
+    const dots = P.map((p, i) => {
+      const chg = i === 0 ? p.v !== t.from : p.v !== P[i - 1].v, last = i === n - 1, show = last || i === 0 || (chg && n <= 14);
+      return `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="${last ? 6 : chg ? 4.5 : 3.2}" class="tr-dot${last ? ' last' : chg ? ' chg' : ''}"><title>${esc(p.label)}: ${p.v}</title></circle>` +
+        (show ? `<text x="${X(i).toFixed(1)}" y="${(Y(p.v) - 10).toFixed(1)}" class="tr-v${last ? ' last' : ''}" text-anchor="${i === 0 && n > 1 ? 'start' : last && n > 1 ? 'end' : 'middle'}">${nf(p.v)}</text>` : '');
+    }).join('');
+    const labels = P.map((p, i) => (i % step === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < step / 2) ? `<text x="${X(i).toFixed(1)}" y="${H - 6}" class="tr-l" text-anchor="${i === 0 && n > 1 ? 'start' : i === n - 1 && n > 1 ? 'end' : 'middle'}">${esc(p.label)}</text>` : '').join('');
+    return `<div class="card trend"><div class="row between" style="align-items:flex-start;gap:10px"><span><h2>${esc(t.title)}</h2><div class="small muted">${esc(t.sub)}</div></span>
+      <span class="tr-delta ${cls}">${delta > 0 ? '▲ +' + nf(delta) : delta < 0 ? '▼ −' + nf(-delta) : 'без змін'}</span></div>
+      <div class="xs muted" style="margin-top:4px">На початку періоду — <b>${nf(t.from)}</b>, зараз — <b>${nf(t.to)}</b></div>
+      <svg viewBox="0 0 ${W} ${H}" class="tr-svg">${grid}<path d="${line}" class="tr-line"/>${dots}${labels}</svg></div>`;
+  }
   // ───────────── завантаження ─────────────
   function route() {
     if (S.me.status === 'new') { S.reg.name = S.reg.name || ''; S.screen = 'onboarding'; return true; }
@@ -831,6 +855,7 @@
     h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
 
+    if (d.trend && d.trend.points.length) h += trendCard(d.trend);
     const bars = d.chart.bars, max = Math.max.apply(null, bars.map((x) => x.v).concat([1]));
     const short = (v) => d.cat === 'kr' ? df(v) : v >= 10000 ? Math.round(v / 1000) + 'k' : v >= 1000 ? df(v / 1000) + 'k' : nf(v);
     h += `<div class="card"><h2>${esc(d.chart.title)}</h2><div class="small muted" style="margin-bottom:12px">${esc(d.chart.sub)}</div>

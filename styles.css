@@ -512,3 +512,17 @@ html.dark .ach-ic-s { background: #2a2230; }
 .ptr.ready .ptr-c { color: #fff; background: var(--grad); }
 .ptr.spin .ptr-c { color: #fff; background: var(--grad); animation: ptrSpin .8s linear infinite; }
 @keyframes ptrSpin { to { transform: rotate(360deg); } }
+.trend .tr-svg { width: 100%; height: auto; display: block; margin-top: 8px; overflow: visible; }
+.tr-grid { stroke: var(--line, rgba(0,0,0,.07)); stroke-width: 1; stroke-dasharray: 3 4; }
+.tr-line { fill: none; stroke: var(--coral); stroke-width: 1.6; opacity: .35; vector-effect: non-scaling-stroke; }
+.tr-dot { fill: #fff; stroke: var(--coral); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.tr-dot.chg { fill: var(--coral); }
+.tr-dot.last { fill: var(--coral); stroke: #fff; stroke-width: 2.5; filter: drop-shadow(0 2px 4px rgba(226, 85, 42, .45)); }
+.tr-v { font-size: 10.5px; font-weight: 700; fill: var(--text, #222); }
+.tr-v.last { font-size: 12px; fill: var(--coral); }
+.tr-l { font-size: 9.5px; fill: var(--muted, #888); }
+.tr-delta { flex: none; font-weight: 800; font-size: 14px; padding: 6px 10px; border-radius: 12px; white-space: nowrap; }
+.tr-delta.up { color: #1d8a4e; background: rgba(29, 138, 78, .12); }
+.tr-delta.down { color: #c0392b; background: rgba(192, 57, 43, .12); }
+.tr-delta.flat { color: var(--muted); background: rgba(0, 0, 0, .05); }
+html.dark .tr-dot { fill: #1e1a24; }
