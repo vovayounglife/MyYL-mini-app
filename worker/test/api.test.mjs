@@ -1102,6 +1102,32 @@ r = await api(CAP, 'saveReport', { type: 'club', teamId: capTeam.id, mode: 'week
 const wkRow = env.DB.raw.prepare("SELECT mode FROM reports WHERE type = 'club' ORDER BY seq DESC LIMIT 1").get();
 ok(r.ok && wkRow.mode === 'подія', 'клуб: «підсумок тижня» для клубу не приймається — лише подія');
 
+// ── Національний офіс: особиста статистика, знані, статистика офісу й України, звіт лише по офісу ──
+me = await api(NO, 'me');
+ok(me.data.caps.reportSelf.mg && me.data.caps.reportSelf.kr && me.data.caps.knownNoTeam && me.data.caps.stats, 'нац. офіс: може вносити МГ, КР, знаних; бачить статистику');
+ok(me.data.myWeek && !me.data.myWeek.items.some((x) => x.key === 'club') && me.data.myWeek.items.some((x) => x.key === 'mg'), 'нац. офіс: «Мій тиждень» без клубу');
+ok((me.data.statScopes || []).map((x) => x.key).join(',') === 'nat,office', 'нац. офіс: статистика — Україна і Національний офіс ' + JSON.stringify((me.data.statScopes || []).map((x) => x.key)));
+r = await api(NO, 'saveReport', { type: 'mg', mode: 'event', teens: 4, newT: 1, leaders: 1 });
+ok(r.ok, 'нац. офіс: вніс малу групу');
+r = await api(NO, 'saveReport', { type: 'kr', mode: 'event', hours: 2 });
+ok(r.ok, 'нац. офіс: вніс КР');
+r = await api(NO, 'knownBulk', { teamId: '', stage: 'meet', names: 'Марта Тест' });
+ok(r.ok, 'нац. офіс: додав знаного');
+let so = await api(NO, 'stats', { units: ['office'], cat: 'mg', period: 'month' });
+ok(so.ok && so.data.kpis[0].v === '1', 'нац. офіс: статистика офісу рахує його МГ ' + JSON.stringify(so.data && so.data.kpis));
+so = await api(NO, 'stats', { units: ['nat'], cat: 'overview', period: 'month' });
+ok(so.ok && !so.data.breakdown.rows.length && !so.data.report.length, 'нац. офіс: Україна — лише загальні цифри');
+so = await api(NO, 'stats', { units: ['r:r0'], cat: 'overview', period: 'month' });
+ok(so.ok && so.data.scope.key !== 'r:r0', 'нац. офіс: регіон окремо не відкривається');
+r = await api(NO, 'report', { units: ['nat'], items: ['mg'], from: '2026-01-01', to: '2026-12-31' });
+ok(!r.ok, 'нац. офіс: звіт по всій Україні — ні');
+r = await api(NO, 'report', { units: ['office'], items: ['mg', 'kr'], from: '2026-01-01', to: '2026-12-31' });
+ok(r.ok && r.data.sections.length === 2, 'нац. офіс: звіт по Національному офісу');
+r = await api(NO, 'myStats', { period: 'all' });
+ok(r.ok, 'нац. офіс: моя статистика ' + JSON.stringify(r).slice(0, 200));
+r = await api(AD, 'report', { units: ['r:r0'], items: ['club'], from: '2026-01-01', to: '2026-12-31' });
+ok(!r.ok, 'звіт: директор ерії — не по всьому регіону, лише своя ерія');
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

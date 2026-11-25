@@ -543,7 +543,7 @@
     const canKnown = (c.knownTeams || []).length > 0 || !!c.knownNoTeam;
     // «Внести» — завжди; «Знані» — якщо є доступ; «Календар» — у «Ще»
     const tabs = [['home', 'Головна'], ['add', 'Внести'], ['known', 'Знані'], ['stats', 'Статистика'], ['more', 'Ще']]
-      .filter((t) => (t[0] !== 'known' || canKnown) && (t[0] !== 'stats' || ((S.me.scopes || []).length && c.stats !== false)) && (t[0] !== 'add' || !c.sugarOnly));
+      .filter((t) => (t[0] !== 'known' || canKnown) && (t[0] !== 'stats' || ((S.me.statScopes || S.me.scopes || []).length && c.stats !== false)) && (t[0] !== 'add' || !c.sugarOnly));
     const active = TOP.indexOf(S.screen) >= 0 ? S.screen : 'more';
     return `<nav class="tabs" aria-label="Розділи"><div class="in-nav">${tabs.map((t) =>
       `<button type="button" class="${t[0] === active ? 'on' : ''}" data-a="tab" data-s="${t[0]}">${icon(t[0], 24)}${t[1]}${t[0] === 'more' && (S.me.pendingCount || S.me.bugsOpen) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></nav>`;
@@ -955,7 +955,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const sc = S.me.scopes || [];
     // статистика: директор ерії бачить увесь свій регіон
     if ((scr === 'stats' || scr === 'dirs') && S.me.statScopes) return S.me.statScopes;
-    if (scr === 'report') return caps().isSuper ? sc : sc.filter((x) => x.depth <= 1);
+    if (scr === 'report') return S.me.reportScopes || (caps().isSuper ? sc : sc.filter((x) => x.depth <= 1));
     if (scr === 'event') {
       const f = S.evForm, u = f && evUnits(f)[Number(f.unit) || 0];
       if (!u) return [];
@@ -1242,16 +1242,17 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const MW_IC = { club: 'club', mg: 'mg', kr: 'kr' };
   const teamRole = () => activeRoles().some((r) => r.level === 'team');
   function myWeekCard(w) {
-    const all = w.done === 3;
+    const tot = w.items.length || 3;
+    const all = w.done === tot;
     const it = (k) => w.items.find((x) => x.key === k) || {};
     const club = it('club'), mg = it('mg'), kr = it('kr');
     const canClub = canType('club') && teamRole(), canMg = canType('mg'), canKr = canType('kr');
     const cs = ((me().week || {}).items || []).find((x) => x.type === 'club');
     const btn = (x, inner, attrs) => `<button type="button" class="mw-btn${x.on ? ' on' : ''}" ${attrs}>${inner}</button>`;
     let h = `<div class="card col mw${all ? ' mw-full' : ''}" style="gap:12px">
-      <div class="row between"><div><b>Мій тиждень</b><div class="xs muted">${esc(w.label)}</div></div><span class="mw-count">${w.done}<span class="muted">/3</span></span></div><div class="mw-row">`;
-    // клуб — просто галочка
-    h += btn(club, `<span class="mw-ic">${club.on ? icon('check', 20) : icon('club', 20)}</span><span>${esc(club.label)}</span><span class="xs mw-sub">${club.locked ? 'зі звіту клубу' : club.on ? 'так ✓' : 'натисни'}</span>`,
+      <div class="row between"><div><b>Мій тиждень</b><div class="xs muted">${esc(w.label)}</div></div><span class="mw-count">${w.done}<span class="muted">/${tot}</span></span></div><div class="mw-row${club.key ? '' : ' mw2'}">`;
+    // клуб — просто галочка (Національний офіс клубу не має)
+    if (club.key) h += btn(club, `<span class="mw-ic">${club.on ? icon('check', 20) : icon('club', 20)}</span><span>${esc(club.label)}</span><span class="xs mw-sub">${club.locked ? 'зі звіту клубу' : club.on ? 'так ✓' : 'натисни'}</span>`,
       `data-a="checkin" data-k="club" data-on="${club.on ? '' : 1}"${club.locked ? ' disabled' : ''} aria-pressed="${club.on ? 'true' : 'false'}"`);
     // мала група й КР — статистика: кожен дотик відкриває внесення, можна кілька разів на тиждень
     h += btn(mg, `<span class="mw-ic">${mg.n ? '<b>' + mg.n + '</b>' : icon('mg', 20)}</span><span>${esc(mg.label)}</span><span class="xs mw-sub">${mg.n ? 'за тиждень · ＋ ще' : '＋ внести'}</span>`,
@@ -1617,7 +1618,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (!units.length || !items.length) return h + '<div class="empty">Для твоєї ролі звіти недоступні</div>';
     const by = scopeBy();
     h += `<div class="sec">По кому · ${esc(pickLabel('report'))}</div>` + (units.length > 1 ? picker('report') : `<div class="small">${esc(pickLabel('report'))}</div>`);
-    const canSplit = S.pick.report.keys.some((k) => by[k] && by[k].level !== 'team');
+    const canSplit = S.pick.report.keys.some((k) => by[k] && by[k].level !== 'team' && by[k].level !== 'office');
     if (canSplit) h += `<div class="card" style="padding:4px 16px"><label class="toggle-row"><span><span class="b" style="display:block">Розбити на рівень нижче</span><span class="small muted">окремий рядок для кожної ерії / команди</span></span><input type="checkbox" data-bind="rep.split"${r.split ? ' checked' : ''}></label></div>`;
     h += `<div class="sec">Що включити</div><div class="card list">${items.map((k) => `<label class="check"><input type="checkbox" data-ch="repItem" data-k="${k}"${r.items[k] ? ' checked' : ''}><span class="grow">${REP_ITEMS[k]}</span></label>`).join('')}</div>`;
     h += `<div class="sec">Період</div><div class="pills" style="flex-wrap:wrap">${REP_PRESETS.map((p) => `<button type="button" class="pill${r.preset === p[0] ? ' on' : ''}" data-a="repPreset" data-p="${p[0]}">${p[1]}</button>`).join('')}</div>`;

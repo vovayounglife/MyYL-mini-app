@@ -685,7 +685,7 @@ function okR_(r, perm) {
   return v;
 }
 // контекст лише з тими ролями, яким дозволено perm
-const P_ = (c, perm) => Object.assign({}, c, { roles: c.roles.filter((r) => okR_(r, perm)), active: (c.active || c.roles).filter((r) => okR_(r, perm)) });
+const P_ = (c, perm) => Object.assign({}, c, { roles: c.roles.filter((r) => okR_(r, perm)), active: (c.active || c.roles).filter((r) => r.key === 'OFFICE' || okR_(r, perm)) });
 const teamRoles_ = (c, teamId, perm) => c.roles.filter((r) => r.level === 'team' && r.unitId === teamId && okR_(r, perm));
 const canViewTeam_ = (c, teamId) => c.roles.some((r) => covers_(r, 'team', teamId) && okR_(r, 'see.team'));
 const canTeam_ = (c, teamId, perm) => teamRoles_(c, teamId, perm).length > 0 || upperRoles_(c).some((r) => covers_(r, 'team', teamId) && okR_(r, perm));
@@ -698,6 +698,11 @@ const wideStats_ = (c) => {
 };
 const isSugarOnly_ = (c) => c.roles.length > 0 && c.roles.every((r) => r.key === 'SUGAR');
 const isSuper_ = (c) => c.roles.some((r) => r.key === 'SUPER');
+// Національний офіс: роль «лише перегляд», але своя особиста статистика (МГ, КР, знані) і статистика офісу та України
+const isOffice_ = (c) => (c.active || []).some((r) => r.key === 'OFFICE');
+const officeOnly_ = (c) => !c.roles.length && isOffice_(c);
+// контекст для статистики/звітів офісу: Україна (лише загальні цифри) + «Національний офіс»; withNat=false — без України
+const officeCtx_ = (c, withNat) => Object.assign({}, c, { officeView: true, roles: [{ id: 'office', key: 'OFFICE', level: 'nat', unitId: '', rank: 13, officeView: true, withNat: withNat !== false }] });
 
 function ruleMatch_(r, rule, target) {
   if (r.key !== rule[0]) return false;
@@ -752,6 +757,7 @@ function upperSelfUnit_(c) {
   const mainId = (getPerson_(c.id) || {}).main;
   const main = mainId && c.roles.filter((x) => x.id === mainId && x.level !== 'team')[0];
   const r = main || c.roles.filter((x) => x.level !== 'team').sort((a, b) => a.rank - b.rank)[0];
+  if (!r && isOffice_(c)) return { level: 'nat', unitId: '' };
   return r ? { level: r.level, unitId: r.unitId } : null;
 }
 const canSelf_ = (c, perm) => ownTeams_(c, perm).length > 0 || !!upperSelfUnit_(P_(c, perm));
@@ -760,6 +766,7 @@ function upperRowIn_(scope, r) {
   if (r.teamId) return false;
   if (scope.level === 'multi') return scope.members.some((m) => upperRowIn_(m, r));
   if (scope.level === 'nat') return true;
+  if (scope.level === 'office') return !r.areaId && !r.regionId;
   if (scope.level === 'region') return r.regionId === scope.unitId;
   if (scope.level === 'area') return r.areaId === scope.unitId;
   return false;
@@ -809,7 +816,7 @@ API.me = function (c) {
   c.roles.forEach((r) => { if (r.level === 'team' && st.team[r.unitId]) myTeams[r.unitId] = true; });
   out.caps = {
     report: { club: clubTeams_(c), mg: ownTeams_(c, 'rep.mg'), kr: ownTeams_(c, 'rep.kr') },
-    reportSelf: { mg: canSelf_(c, 'rep.mg'), kr: canSelf_(c, 'rep.kr'), unit: (() => { const u = !ownTeams_(c, 'rep.kr').length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
+    reportSelf: { mg: canSelf_(c, 'rep.mg'), kr: canSelf_(c, 'rep.kr'), unit: (() => { if (officeOnly_(c)) return 'Національному офісу'; const u = !ownTeams_(c, 'rep.kr').length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
     knownTeams: reportTeams_(c, 'see.known'),
     knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.known') && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
     knownNoTeam: canNoTeam_(c),
@@ -823,7 +830,7 @@ API.me = function (c) {
     surveys: false,
     manage: c.roles.some((r) => MANAGE_AREAS.indexOf(r.key) >= 0 || MANAGE_TEAMS.indexOf(r.key) >= 0),
     myyl: allowedScopes_(P_(c, 'see.myyl')).length > 0,
-    stats: P_(c, 'see.stats').roles.length > 0,
+    stats: P_(c, 'see.stats').roles.length > 0 || officeOnly_(c),
     perms: permUnits_(c).length > 0,
     addTeams: addTeams_(c),
     reportItems: reportItems_(c),
@@ -834,7 +841,9 @@ API.me = function (c) {
   out.myTeams = Object.keys(myTeams).map(teamOut_);
   out.scopes = allowedScopes_(c);
   const wide = wideStats_(P_(c, 'see.stats'));
-  if (wide.roles.some((r) => r.virtual)) out.statScopes = allowedScopes_(wide);
+  if (wide.roles.some((r) => r.virtual) || c.roles.some((r) => r.level === 'nat')) out.statScopes = allowedScopes_(wide, { office: true });
+  if (c.roles.some((r) => r.level === 'nat')) out.reportScopes = reportScopes_(c);
+  if (officeOnly_(c)) { out.statScopes = allowedScopes_(officeCtx_(c)); out.reportScopes = allowedScopes_(officeCtx_(c, false)); }
   out.week = weekStatus_(c);
   out.myWeek = myWeek_(c);
   if (c.view) out.viewAs = c.view; else out.viewRoles = viewRoles_(c);
@@ -1265,7 +1274,7 @@ API.saveReport = function (c, d) {
 // ── мій тиждень: відмітки члена команди (клуб, МГ, КР) ──
 const CK_KINDS = ['club', 'mg', 'kr'];
 function myWeek_(c) {
-  if (!c.roles.length) return null;
+  if (!c.roles.length && !isOffice_(c)) return null;
   const wk = weekKey_(new Date());
   const rows = loadLog_().filter((r) => r.week === wk);
   const ck = S.ck || {};
@@ -1280,6 +1289,7 @@ function myWeek_(c) {
     { key: 'mg', label: 'Мала група', n: mg.length, on: mg.length > 0 },
     { key: 'kr', label: 'Контактна робота', n: kr.length, hours: krH, on: kr.length > 0 },
   ];
+  if (!c.roles.length) items.splice(0, items.length, ...items.filter((x) => x.key !== 'club')); // офіс: без клубу
   return { key: wk, label: weekLabel_(wk), items: items, done: items.filter((x) => x.on).length };
 }
 API.checkin = function (c, d) {
@@ -1384,7 +1394,7 @@ const stageSum_ = (teamIds, stage) => teamIds.reduce((a, id) => a + (Number(((S.
 
 // бачать: команда (Помічник+) і вищі рівні; додають і змінюють — лише учасники цієї команди; «Без команди» — особистий список автора
 const canKnownEdit_ = (c, teamId) => teamRoles_(c, teamId, 'rep.known').length > 0;
-const canNoTeam_ = (c) => c.roles.length > 0 && !isSugarOnly_(c);
+const canNoTeam_ = (c) => (c.roles.length > 0 && !isSugarOnly_(c)) || isOffice_(c);
 const canRowView_ = (c, r) => (r.team_id ? canKnown_(c, r.team_id) : r.author_id === c.id);
 const canRowEdit_ = (c, r) => (r.team_id ? canKnownEdit_(c, r.team_id) : r.author_id === c.id);
 const NO_TEAM = 'Без команди';
@@ -1978,14 +1988,15 @@ const REPORT_ITEMS = {
   known: { label: 'Знані по імені', cols: [['total', 'Знаних зараз'], ['meet', 'Хочу познайомитись'], ['friends', 'Дружимо'], ['grow', 'Зростають у вірі'], ['own', 'Йдуть самі'], ['new', 'Нових за період']] },
   finance: { label: 'Фінанси', cols: [['inc', 'Надійшло, ₴'], ['out', 'Витрачено, ₴'], ['net', 'Різниця, ₴'], ['teams', 'Команд здали']] },
 };
-const reportScopes_ = (c) => (isSuper_(c) ? allowedScopes_(c) : allowedScopes_(c).filter((s) => s.depth <= 1));
+const reportScopes_ = (c) => (isSuper_(c) ? allowedScopes_(c, { office: true }) : allowedScopes_(c, { office: true }).filter((s) => s.depth <= 1));
 function reportItems_(c) {
+  if (officeOnly_(c)) c = officeCtx_(c, false);
   // лідери й нижче звіти не готують
   if (!c.roles.some((r) => r.level !== 'team' || r.rank < RANK.MG)) return [];
   const ok = {};
   reportScopes_(c).forEach((s) => statCats_(c, s).forEach((x) => { if (REPORT_ITEMS[x.key]) ok[x.key] = true; }));
   const out = Object.keys(REPORT_ITEMS).filter((k) => ok[k]);
-  if (ok.known) out.push('names'); // підлітки по іменах
+  if (ok.known && !c.officeView) out.push('names'); // підлітки по іменах
   return out;
 }
 // список підлітків (знаних) по іменах: команда, стадія, контакти
@@ -2071,9 +2082,11 @@ function reportRow_(teamIds, items, from, to, allowed, scope) {
 }
 
 API.report = function (c, d) {
+  // офіс: лише звіт по Національному офісу (не по всій Україні)
+  if (officeOnly_(c)) c = officeCtx_(c, false);
   const scopes = reportScopes_(c);
   const byKey = {};
-  allowedScopes_(c).forEach((s) => { byKey[s.key] = s; });
+  allowedScopes_(c, { office: true }).forEach((s) => { byKey[s.key] = s; });
   const keys = uniq_((d.units || []).map(String)).filter((k) => scopes.some((s) => s.key === k));
   if (!keys.length) bad_('Обери хоча б один регіон, ерію чи команду.');
   if (keys.length > 40) bad_('Забагато одиниць: максимум 40.');
@@ -2086,7 +2099,7 @@ API.report = function (c, d) {
   if (d.from < addDaysKey_(d.to, -400)) bad_('Період — не довше року.');
   const from = d.from, to = d.to;
   const allowedFor = (s) => { const a = {}; statCats_(c, s).forEach((x) => { a[x.key] = true; }); return a; };
-  const LVL = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '' };
+  const LVL = { nat: '', region: 'Регіон ', area: 'Ерія ', team: '', office: '' };
   const rows = [];
   const union = {};
   keys.forEach((k) => {
@@ -2587,8 +2600,8 @@ API.permReset = function (c, d) {
 };
 
 // ── вибір однієї або кількох одиниць ──
-function pickScope_(c, keys) {
-  const scopes = allowedScopes_(c);
+function pickScope_(c, keys, opt) {
+  const scopes = allowedScopes_(c, opt);
   const by = {};
   scopes.forEach((x) => { by[x.key] = x; });
   const sel = uniq_((keys || []).map(String)).map((k) => by[k]).filter(Boolean).slice(0, 60);
@@ -2607,15 +2620,17 @@ function pickTeams_(c, d, can) {
 
 // ── статистика ──
 API.stats = function (c0, d) {
-  const c = wideStats_(P_(c0, 'see.stats'));
+  const c = officeOnly_(c0) ? officeCtx_(c0) : wideStats_(P_(c0, 'see.stats'));
   if (!c.roles.length) deny_('Статистику для твоєї ролі вимкнено.');
-  const p = pickScope_(c, keysOf_(d));
+  const p = pickScope_(c, keysOf_(d), { office: true });
   const scopes = p.scopes;
   const scope = p.scope || scopes[0];
   if (!scope) deny_();
   const cats = statCats_(c, scope);
   const cat = cats.some((x) => x.key === d.cat) ? d.cat : cats[0].key;
   const out = computeStats_(c, scope, cat, d.period || 'month', cats, scopes, customRange_(d));
+  // офіс бачить по Україні лише загальні цифри — без розбивки по регіонах і командах
+  if (c.officeView && scope.level === 'nat') { out.breakdown.rows = []; out.breakdown.title = ''; out.report = []; out.canNudge = false; }
   // коли команда востаннє звітувала за клуб; для однієї команди — історія звітів за клуб
   const last = lastClubs_();
   const st = loadStruct_();
@@ -2686,7 +2701,7 @@ function statsFromWeek(period, d) {
   return addDaysKey_(nowWk, -7 * weeks);
 }
 
-function allowedScopes_(c) {
+function allowedScopes_(c, opt) {
   const st = loadStruct_();
   const seen = {};
   const out = [];
@@ -2695,7 +2710,8 @@ function allowedScopes_(c) {
   const addArea = (a, depth) => { add('a:' + a.id, 'Ерія ' + a.name, depth, 'area', a.id, 'регіон ' + ((st.region[a.regionId] || {}).name || ''), a.name, 'r:' + a.regionId); st.teams.filter((t) => t.areaId === a.id).forEach((t) => addTeam(t, depth + 1)); };
   const addRegion = (r, depth) => { add('r:' + r.id, 'Регіон ' + r.name, depth, 'region', r.id, '', r.name, 'nat'); st.areas.filter((a) => a.regionId === r.id).forEach((a) => addArea(a, depth + 1)); };
   c.roles.slice().sort((a, b) => a.rank - b.rank).forEach((r) => {
-    if (r.level === 'nat') { add('nat', 'Уся Україна', 0, 'nat', '', '', 'Україна'); st.regions.forEach((x) => addRegion(x, 1)); }
+    if (r.officeView) { if (r.withNat) add('nat', 'Уся Україна', 0, 'nat', '', '', 'Україна'); add('office', 'Національний офіс', 0, 'office', '', '', 'Національний офіс', 'nat'); return; }
+    if (r.level === 'nat') { add('nat', 'Уся Україна', 0, 'nat', '', '', 'Україна'); if (opt && opt.office) add('office', 'Національний офіс', 1, 'office', '', '', 'Національний офіс', 'nat'); st.regions.forEach((x) => addRegion(x, 1)); }
     if (r.level === 'region' && st.region[r.unitId]) addRegion(st.region[r.unitId], 0);
     if (r.level === 'area' && st.area[r.unitId]) addArea(st.area[r.unitId], 0);
     if (r.level === 'team' && st.team[r.unitId]) addTeam(st.team[r.unitId], 0);
@@ -2717,6 +2733,8 @@ function scopeTeamIds_(scope) {
 
 function statCats_(c, scope) {
   if (isSugarOnly_(c)) return [{ key: 'club', label: 'Клуби' }];
+  if (scope.level === 'office') return [{ key: 'mg', label: 'Малі групи' }, { key: 'kr', label: 'Контактна робота' }, { key: 'known', label: 'Знані' }];
+  if (c.officeView) return [{ key: 'overview', label: 'Огляд' }, { key: 'club', label: 'Клуби' }, { key: 'mg', label: 'Малі групи' }, { key: 'kr', label: 'Контактна робота' }];
   if (scope.level === 'multi') {
     const lists = scope.members.map((m) => statCats_(c, m).map((x) => x.key));
     return statCats_(c, scope.members[0]).filter((x) => lists.every((l) => l.indexOf(x.key) >= 0));
