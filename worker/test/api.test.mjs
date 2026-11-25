@@ -956,7 +956,14 @@ ok(r.ok && r.data.myWeek.items.find((x) => x.key === 'kr').n === mwKr0 + 2 && r.
 r = await api(LEAD, 'checkin', { kind: 'zzz', on: true });
 ok(!r.ok, 'мій тиждень: невідома відмітка');
 r = await api(LEAD, 'myStats', { period: 'all' });
-ok(r.ok && r.data.kpi.clubs >= 1 && r.data.kpi.streak >= 1 && r.data.ach.find((a) => a.key === 'first').done && r.data.cats.length === 6 && r.data.trail.length === 12, 'моя статистика: клуби, серія, ачівка «Перший крок»');
+ok(r.ok && r.data.kpi.clubs >= 1 && r.data.kpi.streak >= 1 && r.data.ach.find((a) => a.key === 'first').done && r.data.cats.length === 9 && r.data.trail.length === 12, 'моя статистика: клуби, серія, ачівка «Перший крок»');
+{
+  const A = r.data.ach, by = (k) => A.find((a) => a.key === k);
+  ok(A.length >= 80, 'ачівок стало багато: ' + A.length);
+  ok(by('comeback') && (by('comeback').done || (by('comeback').secret && by('comeback').title === 'Секретна ачівка' && by('comeback').have === 0)), 'секретна ачівка прихована до отримання');
+  console.log('   отримано:', A.filter((a) => a.done).map((a) => a.key).join(' '));
+  ok(by('mgNew1') && by('rsvp1') && by('prof3') && by('clubRep1') && A.every((a) => typeof a.have === 'number' && a.need > 0), 'нові ачівки: МГ, спільнота, профіль, клуби');
+}
 // ── «Відобразити як для» ──
 const asView = async (user, action, data, viewAs) => (await req('/', { initData: initData(user), action, data, viewAs })).json();
 me = await api(CAP, 'me');

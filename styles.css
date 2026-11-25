@@ -503,3 +503,7 @@ html.dark .ach-c.got .ach-ic { background: #2a2230; }
 .cc-yellow { --cc: #d9900f; --cc-bg: rgba(217,144,15,.15); }
 .cc-green { --cc: #2f9e5b; --cc-bg: rgba(47,158,91,.14); }
 .stat-who { font-size: 13.5px; padding: 8px 12px; border-radius: 12px; background: rgba(20,163,148,.10); border: 1px solid rgba(20,163,148,.22); }
+.ach-lv { width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #fff; background: var(--grad); box-shadow: 0 6px 16px -6px rgba(226, 85, 42, .6); flex: none; }
+.ach-near { gap: 12px; align-items: center; }
+.ach-ic-s { width: 40px; height: 40px; border-radius: 50%; background: #fff8f1; display: flex; align-items: center; justify-content: center; font-size: 20px; flex: none; }
+html.dark .ach-ic-s { background: #2a2230; }

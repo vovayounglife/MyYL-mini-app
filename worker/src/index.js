@@ -336,13 +336,21 @@ class Store {
   // усе «моє» для особистої статистики: звіти МГ/КР, клуби з відміткою присутності, відмітки тижнів, знані
   async loadMine(tgId) {
     const like = '%,' + tgId + ',%';
-    const [rep, att, ck, kn] = await this.db.batch([
-      this.db.prepare("SELECT week, date, type, mode, hours, count, pid FROM reports WHERE author_id = ? AND type IN ('mg','kr')").bind(tgId),
+    const [rep, att, ck, kn, cr, rs, tp, pv, bg, pp] = await this.db.batch([
+      this.db.prepare("SELECT week, date, type, mode, hours, count, new_t, topic, note, created, pid FROM reports WHERE author_id = ? AND type IN ('mg','kr')").bind(tgId),
       this.db.prepare("SELECT DISTINCT week FROM reports WHERE type = 'club' AND (',' || COALESCE(attendees, '') || ',') LIKE ?").bind(like),
       this.db.prepare('SELECT * FROM checkins WHERE tg_id = ?').bind(tgId),
-      this.db.prepare('SELECT stage, added FROM known WHERE author_id = ? AND active = 1').bind(tgId),
+      this.db.prepare('SELECT stage, added, note, bday, phone FROM known WHERE author_id = ? AND active = 1').bind(tgId),
+      this.db.prepare("SELECT COUNT(*) AS n, MAX(count) AS mx, COUNT(DISTINCT team_id) AS teams FROM reports WHERE author_id = ? AND type = 'club' AND COALESCE(mode, '') <> 'none'").bind(tgId),
+      this.db.prepare('SELECT COUNT(*) AS n FROM rsvp WHERE tg_id = ?').bind(tgId),
+      this.db.prepare("SELECT COUNT(*) AS n FROM task_people WHERE tg_id = ? AND status = 'done'").bind(tgId),
+      this.db.prepare('SELECT COUNT(DISTINCT poll_id) AS n FROM poll_votes WHERE tg_id = ?').bind(tgId),
+      this.db.prepare('SELECT COUNT(*) AS n FROM bugs WHERE tg_id = ?').bind(tgId),
+      this.db.prepare('SELECT phone, email, bday, repent, baptism, ig, lpyl, registered FROM people WHERE tg_id = ?').bind(tgId),
     ]);
-    this.mine = { rep: rep.results || [], att: (att.results || []).map((r) => r.week), ck: ck.results || [], known: kn.results || [] };
+    const one = (x) => ((x && x.results) || [])[0] || {};
+    this.mine = { rep: rep.results || [], att: (att.results || []).map((r) => r.week), ck: ck.results || [], known: kn.results || [],
+      club: one(cr), rsvp: one(rs).n || 0, tasks: one(tp).n || 0, polls: one(pv).n || 0, bugs: one(bg).n || 0, person: one(pp) };
   }
   async loadKnownMine(tgId) {
     const rs = await this.db.prepare('SELECT * FROM known WHERE author_id = ?').bind(tgId).all();
@@ -1316,46 +1324,135 @@ API.checkin = function (c, d) {
 };
 
 // ── моя статистика й ачівки ──
-// ачівки: [ключ, категорія, назва, опис, показник, поріг]
-const ACH_CATS = [['start', 'Старт', '🌱'], ['streak', 'Постійність', '🔥'], ['club', 'Клуби', '🎉'], ['mg', 'Малі групи', '📖'], ['kr', 'Контактна робота', '🤝'], ['known', 'Знані по імені', '🙏']];
+// ачівки: [ключ, категорія, назва, опис, показник, поріг, секретна]
+const ACH_CATS = [['start', 'Старт', '🌱'], ['streak', 'Постійність', '🔥'], ['club', 'Клуби', '🎉'], ['mg', 'Малі групи', '📖'], ['kr', 'Контактна робота', '🤝'],
+  ['known', 'Знані по імені', '🙏'], ['team', 'Спільнота', '🤲'], ['me', 'Я в MyYL', '🪪'], ['special', 'Особливі', '✨']];
 const ACH = [
   ['first', 'start', 'Перший крок', 'Перша відмітка чи звіт', 'acts', 1],
   ['month1', 'start', 'Перший місяць', '4 тижні з активністю', 'acts', 4],
   ['half', 'start', 'Півроку в служінні', '26 активних тижнів', 'acts', 26],
   ['year1', 'start', 'Рік служіння', '52 активні тижні', 'acts', 52],
+  ['year2', 'start', 'Два роки вірності', '104 активні тижні', 'acts', 104],
+  ['months6', 'start', 'Пів року поруч', 'Активність у 6 різних місяцях', 'months', 6],
+  ['months12', 'start', 'Кожен місяць', 'Активність у 12 різних місяцях', 'months', 12],
   ['streak4', 'streak', 'Вогник', '4 тижні поспіль', 'streak', 4],
   ['streak12', 'streak', 'Марафонець', '12 тижнів поспіль', 'streak', 12],
   ['streak26', 'streak', 'Незгасний', '26 тижнів поспіль', 'streak', 26],
+  ['streak52', 'streak', 'Рік без пропусків', '52 тижні поспіль', 'streak', 52],
   ['full', 'streak', 'Повний тиждень', 'Клуб, мала група і КР за тиждень', 'full', 1],
   ['full5', 'streak', 'П’ять повних', '5 повних тижнів', 'full', 5],
   ['full20', 'streak', 'Усе й завжди', '20 повних тижнів', 'full', 20],
+  ['full50', 'streak', 'Пʼятдесят повних', '50 повних тижнів', 'full', 50],
+  ['fullRun3', 'streak', 'Три в ряд', '3 повні тижні поспіль', 'fullRun', 3],
+  ['fullRun8', 'streak', 'Повна сила', '8 повних тижнів поспіль', 'fullRun', 8],
   ['club1', 'club', 'Перший клуб', 'Відмітка про клуб', 'clubs', 1],
   ['club10', 'club', 'Свій на клубі', '10 клубів', 'clubs', 10],
   ['club30', 'club', 'Серце клубу', '30 клубів', 'clubs', 30],
   ['club75', 'club', 'Легенда клубу', '75 клубів', 'clubs', 75],
+  ['club150', 'club', 'Клуб — це дім', '150 клубів', 'clubs', 150],
+  ['clubRep1', 'club', 'Літописець', 'Перший внесений звіт за клуб', 'clubRep', 1],
+  ['clubRep25', 'club', 'Хроніст', '25 звітів за клуб', 'clubRep', 25],
+  ['clubRep100', 'club', 'Памʼять команди', '100 звітів за клуб', 'clubRep', 100],
+  ['clubBig30', 'club', 'Повна зала', 'Клуб на 30+ підлітків', 'clubMax', 30],
+  ['clubBig60', 'club', 'Аншлаг', 'Клуб на 60+ підлітків', 'clubMax', 60],
+  ['clubTeams2', 'club', 'Міст між командами', 'Звіти за клуби двох і більше команд', 'clubTeams', 2],
   ['mg1', 'mg', 'Перша група', 'Перша мала група', 'mgs', 1],
   ['mg10', 'mg', 'Пастир групи', '10 малих груп', 'mgs', 10],
   ['mg40', 'mg', 'Наставник', '40 малих груп', 'mgs', 40],
   ['mg100', 'mg', 'Сотня зустрічей', '100 малих груп', 'mgs', 100],
+  ['mg200', 'mg', 'Двісті зустрічей', '200 малих груп', 'mgs', 200],
   ['mgT50', 'mg', 'Повна кімната', '50 відвідувань підлітків на МГ', 'mgTeens', 50],
   ['mgT200', 'mg', 'Сотні сердець', '200 відвідувань підлітків на МГ', 'mgTeens', 200],
+  ['mgT500', 'mg', 'Пʼятсот облич', '500 відвідувань підлітків на МГ', 'mgTeens', 500],
+  ['mgNew1', 'mg', 'Нове обличчя', 'Перший новий підліток на МГ', 'mgNew', 1],
+  ['mgNew10', 'mg', 'Відкриті двері', '10 нових підлітків на МГ', 'mgNew', 10],
+  ['mgNew30', 'mg', 'Широке коло', '30 нових підлітків на МГ', 'mgNew', 30],
+  ['mgTopic10', 'mg', 'Слово до серця', '10 малих груп із темою', 'mgTopic', 10],
+  ['mgPray10', 'mg', 'Молитовна група', '10 малих груп із молитовною нотаткою', 'mgPray', 10],
   ['kr1', 'kr', 'Перша зустріч', 'Перша контактна робота', 'krN', 1],
   ['krN20', 'kr', 'Завжди поруч', '20 зустрічей КР', 'krN', 20],
+  ['krN50', 'kr', 'На звʼязку', '50 зустрічей КР', 'krN', 50],
+  ['krN100', 'kr', 'Сотня зустрічей поруч', '100 зустрічей КР', 'krN', 100],
   ['kr10', 'kr', 'Поруч', '10 годин КР', 'kr', 10],
   ['kr50', 'kr', 'Друг на кожен день', '50 годин КР', 'kr', 50],
   ['kr150', 'kr', 'Життя поруч', '150 годин КР', 'kr', 150],
+  ['kr300', 'kr', 'Триста годин дружби', '300 годин КР', 'kr', 300],
+  ['krLong', 'kr', 'Довга розмова', 'Одна КР на 3+ години', 'krMax', 3],
+  ['krWeek10', 'kr', 'Тиждень поруч', '10 годин КР за один тиждень', 'krWeekMax', 10],
   ['known1', 'known', 'Перше імʼя', 'Перший підліток у «Знаних»', 'known', 1],
   ['known10', 'known', 'Знаю по імені', '10 підлітків', 'known', 10],
   ['known30', 'known', 'Молитовник', '30 підлітків', 'known', 30],
   ['known75', 'known', 'Великі ворота', '75 підлітків', 'known', 75],
+  ['known150', 'known', 'Ціле покоління', '150 підлітків', 'known', 150],
   ['friends10', 'known', 'Справжні друзі', '10 підлітків у стадії «Дружимо» і далі', 'friends', 10],
+  ['friends30', 'known', 'Коло довіри', '30 підлітків у стадії «Дружимо» і далі', 'friends', 30],
   ['grow5', 'known', 'Зростаємо разом', '5 підлітків зростають у вірі', 'grow', 5],
+  ['grow15', 'known', 'Сад, що росте', '15 підлітків зростають у вірі', 'grow', 15],
   ['own1', 'known', 'Йдуть самі', 'Підліток у стадії «Йдуть самі»', 'own', 1],
   ['own5', 'known', 'Учні, що ведуть', '5 підлітків «Йдуть самі»', 'own', 5],
+  ['knownPray10', 'known', 'Молюсь конкретно', '10 знаних із молитовною нотаткою', 'knownNote', 10],
+  ['knownBday10', 'known', 'Памʼятаю дні народження', '10 знаних із днем народження', 'knownBday', 10],
+  ['rsvp1', 'team', 'Йду!', 'Перша подія з календаря', 'rsvp', 1],
+  ['rsvp10', 'team', 'Завжди разом', '10 подій', 'rsvp', 10],
+  ['rsvp30', 'team', 'Душа спільноти', '30 подій', 'rsvp', 30],
+  ['task1', 'team', 'Зроблено', 'Перша виконана задача', 'tasks', 1],
+  ['task10', 'team', 'Надійний', '10 виконаних задач', 'tasks', 10],
+  ['task50', 'team', 'Опора команди', '50 виконаних задач', 'tasks', 50],
+  ['poll1', 'team', 'Мій голос', 'Перше опитування', 'polls', 1],
+  ['poll15', 'team', 'Голос команди', '15 опитувань', 'polls', 15],
+  ['prof3', 'me', 'Привіт, це я', '3 поля профілю заповнено', 'profile', 3],
+  ['prof7', 'me', 'Відкрита книга', 'Увесь профіль заповнено', 'profile', 7],
+  ['days30', 'me', 'Свій', '30 днів у MyYL', 'days', 30],
+  ['days365', 'me', 'Рік у MyYL', '365 днів у MyYL', 'days', 365],
+  ['bug1', 'me', 'Пильне око', 'Перше повідомлення про помилку', 'bugs', 1],
+  ['bug5', 'me', 'Тестувальник', '5 повідомлень про помилки', 'bugs', 5],
+  ['fast20', 'special', 'Блискавка', '20 звітів, внесених у день зустрічі', 'fast', 20, 1],
+  ['weekend10', 'special', 'Без вихідних', '10 зустрічей МГ чи КР у вихідні', 'weekend', 10, 1],
+  ['summer8', 'special', 'Літо в служінні', '8 активних тижнів за одне літо', 'summer', 8, 1],
+  ['winter8', 'special', 'Зимовий вогонь', '8 активних тижнів за одну зиму', 'winter', 8, 1],
+  ['newyear', 'special', 'Новорічне служіння', 'Активність у тиждень Нового року', 'newyear', 1, 1],
+  ['comeback', 'special', 'Повернення', 'Повернувся до служіння після перерви в місяць і більше', 'comeback', 1, 1],
 ];
+// додаткові показники для ачівок
+function achExtra_(m, W, weeks, reps) {
+  const cl = m.club || {}, pr = m.person || {};
+  const mg = reps.filter((r) => r.type === 'mg'), kr = reps.filter((r) => r.type === 'kr');
+  const txt = (x) => String(x || '').trim() !== '';
+  const dow = (d) => { if (!d) return -1; const p = String(d).slice(0, 10).split('-').map(Number); return new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay(); };
+  let fullRun = 0, run = 0, prev = '', comeback = 0;
+  const isFull = (x) => x.club && (x.mg || x.mgN) && (x.kr || x.krH);
+  weeks.forEach((w) => {
+    if (prev && weekShift_(prev, 5) <= w) comeback = 1;
+    run = isFull(W[w]) ? (prev && weekShift_(prev, 1) === w && isFull(W[prev]) ? run + 1 : 1) : 0;
+    fullRun = Math.max(fullRun, run); prev = w;
+  });
+  const summer = {}, winter = {}, months = {};
+  let newyear = 0;
+  weeks.forEach((w) => {
+    const y = Number(w.slice(0, 4)), mo = Number(w.slice(5, 7)), d = Number(w.slice(8, 10));
+    months[w.slice(0, 7)] = 1;
+    if (mo >= 6 && mo <= 8) summer[y] = (summer[y] || 0) + 1;
+    if (mo === 12 || mo <= 2) { const k = mo === 12 ? y + 1 : y; winter[k] = (winter[k] || 0) + 1; }
+    if ((mo === 12 && d >= 26) || (mo === 1 && d === 1)) newyear = 1;
+  });
+  const mx = (o) => Object.keys(o).reduce((a, k) => Math.max(a, o[k]), 0);
+  const regDays = pr.registered ? Math.floor((Date.now() - new Date(pr.registered).getTime()) / 864e5) : 0;
+  return {
+    clubRep: Number(cl.n) || 0, clubMax: Number(cl.mx) || 0, clubTeams: Number(cl.teams) || 0,
+    mgNew: mg.reduce((a, r) => a + (Number(r.new_t) || 0), 0), mgTopic: mg.filter((r) => txt(r.topic)).length, mgPray: mg.filter((r) => txt(r.note)).length,
+    krMax: kr.reduce((a, r) => Math.max(a, Number(r.hours) || 0), 0), krWeekMax: weeks.reduce((a, w) => Math.max(a, W[w].krH || 0), 0),
+    knownNote: m.known.filter((k) => txt(k.note)).length, knownBday: m.known.filter((k) => txt(k.bday)).length,
+    rsvp: m.rsvp || 0, tasks: m.tasks || 0, polls: m.polls || 0, bugs: m.bugs || 0,
+    profile: ['phone', 'email', 'bday', 'repent', 'baptism', 'ig', 'lpyl'].filter((k) => txt(pr[k])).length, days: isNaN(regDays) ? 0 : regDays,
+    fast: reps.filter((r) => r.created && r.date && String(r.created).slice(0, 10) === String(r.date).slice(0, 10)).length,
+    weekend: reps.filter((r) => { const x = dow(r.date); return x === 0 || x === 6; }).length,
+    summer: mx(summer), winter: mx(winter), months: Object.keys(months).length, newyear: newyear, comeback: comeback, fullRun: fullRun,
+  };
+}
 function weekShift_(wk, n) { const d = new Date(wk + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 7 * n); return d.toISOString().slice(0, 10); }
 API.myStats = function (c, d) {
   const m = S.mine || { rep: [], att: [], ck: [], known: [] };
+  m.known = m.known || [];
   const period = ['month', 'quarter', 'year', 'all'].indexOf(d.period) >= 0 ? d.period : 'all';
   const nowWk = weekKey_(new Date());
   const from = period === 'all' ? '' : weekShift_(nowWk, -({ month: 4, quarter: 13, year: 52 }[period]) + 1);
@@ -1387,8 +1484,12 @@ API.myStats = function (c, d) {
   const known = m.known.length, own = m.known.filter((k) => k.stage === 'own').length;
   const grow = m.known.filter((k) => k.stage === 'grow' || k.stage === 'own').length, friends = m.known.filter((k) => k.stage && k.stage !== 'meet').length;
   const all = totals(false), cur = totals(true);
-  const val = { acts: all.active, full: all.full, streak: best, clubs: all.clubs, mgs: all.mgs, kr: all.kr, known: known, own: own, grow: grow, friends: friends, mgTeens: mgTeens, krN: krN };
-  const ach = ACH.map((a) => ({ key: a[0], cat: a[1], title: a[2], desc: a[3], have: Math.min(val[a[4]] || 0, a[5]), need: a[5], done: (val[a[4]] || 0) >= a[5] }));
+  const val = Object.assign({ acts: all.active, full: all.full, streak: best, clubs: all.clubs, mgs: all.mgs, kr: all.kr, known: known, own: own, grow: grow, friends: friends, mgTeens: mgTeens, krN: krN },
+    achExtra_(m, W, weeks, reps));
+  const ach = ACH.map((a) => {
+    const v = val[a[4]] || 0, done = v >= a[5], secret = !!a[6] && !done;
+    return { key: a[0], cat: a[1], title: secret ? 'Секретна ачівка' : a[2], desc: secret ? 'Відкриється сама, коли настане момент' : a[3], have: secret ? 0 : Math.min(v, a[5]), need: a[5], done: done, secret: secret };
+  });
   // останні 12 тижнів для «доріжки»
   const trail = [];
   for (let i = 11; i >= 0; i--) { const w = weekShift_(nowWk, -i); const x = W[w] || {}; trail.push({ week: w, club: !!x.club, mg: !!(x.mg || x.mgN), kr: !!(x.kr || x.krH) }); }

@@ -1316,15 +1316,35 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   // ── моя статистика й ачівки ──
   const ACH_IC = { first: '👣', month1: '🌱', half: '🌿', year1: '🌳', streak4: '⚡', streak12: '🏃', streak26: '🔥', full: '⭐', full5: '🌟', full20: '💫',
     club1: '🎈', club10: '🎉', club30: '💛', club75: '👑', mg1: '📖', mg10: '🧑‍🤝‍🧑', mg40: '🧭', mg100: '💯', mgT50: '🏠', mgT200: '❤️',
-    kr1: '☕', krN20: '🚶', kr10: '🤝', kr50: '🫂', kr150: '🏔️', known1: '✍️', known10: '🙏', known30: '🕊️', known75: '🚪', friends10: '🤗', grow5: '🌾', own1: '🌱', own5: '🔦' };
+    kr1: '☕', krN20: '🚶', kr10: '🤝', kr50: '🫂', kr150: '🏔️', known1: '✍️', known10: '🙏', known30: '🕊️', known75: '🚪', friends10: '🤗', grow5: '🌾', own1: '🌱', own5: '🔦',
+    year2: '🌲', months6: '📅', months12: '🗓️', streak52: '☀️', full50: '🏆', fullRun3: '🎯', fullRun8: '💪', club150: '🏡', clubRep1: '📝', clubRep25: '📚', clubRep100: '🏛️',
+    clubBig30: '🎪', clubBig60: '🎆', clubTeams2: '🌉', mg200: '🔥', mgT500: '🌍', mgNew1: '👋', mgNew10: '🚪', mgNew30: '⭕', mgTopic10: '💬', mgPray10: '🛐',
+    krN50: '📱', krN100: '🥾', kr300: '⛰️', krLong: '🌙', krWeek10: '🗺️', known150: '👥', friends30: '💞', grow15: '🌻', knownPray10: '📿', knownBday10: '🎂',
+    rsvp1: '✋', rsvp10: '🎟️', rsvp30: '🎊', task1: '✅', task10: '🧱', task50: '🏗️', poll1: '🗳️', poll15: '📣', prof3: '👤', prof7: '📖', days30: '🏠', days365: '🎉',
+    bug1: '🔍', bug5: '🛠️', fast20: '⚡', weekend10: '🌅', summer8: '🏕️', winter8: '❄️', newyear: '🎄', comeback: '🔄' };
+  const ACH_LV = [[0, 'Новачок'], [5, 'Учень'], [12, 'Помічник'], [22, 'Служитель'], [35, 'Наставник'], [50, 'Пастир'], [65, 'Легенда'], [80, 'Світло для покоління']];
+  function achLevel(n) {
+    let i = 0; while (i + 1 < ACH_LV.length && n >= ACH_LV[i + 1][0]) i++;
+    const nx = ACH_LV[i + 1];
+    return { n: i + 1, title: ACH_LV[i][1], next: nx ? nx[1] : '', left: nx ? nx[0] - n : 0, pct: nx ? Math.round((n - ACH_LV[i][0]) / (nx[0] - ACH_LV[i][0]) * 100) : 100 };
+  }
+  // нові ачівки — святкуємо один раз
+  function achCelebrate(d) {
+    if (!d || !d.ach) return;
+    const got = d.ach.filter((a) => a.done).map((a) => a.key), seen = LS.get('achSeen');
+    LS.set('achSeen', got);
+    if (!seen) return;
+    const fresh = d.ach.filter((a) => a.done && seen.indexOf(a.key) < 0);
+    if (fresh.length) { toast('🏅 Нова ачівка' + (fresh.length > 1 ? ' (' + fresh.length + ')' : '') + ': ' + fresh.map((a) => a.title).join(', '), 'success'); }
+  }
   const MS_P = [['month', 'Місяць'], ['quarter', '3 міс'], ['year', 'Рік'], ['all', 'Увесь час']];
   async function loadMyStats() {
     const P = S.myStatsP || 'all';
-    try { S.myStats = await api('myStats', { period: P }); } catch (e) { toast(e.message, 'error'); }
+    try { S.myStats = await api('myStats', { period: P }); if (P === 'all') achCelebrate(S.myStats); } catch (e) { toast(e.message, 'error'); }
     if (S.screen === 'mystats') render();
   }
   async function loadAch() {
-    try { S.achD = await api('myStats', { period: 'all' }); } catch (e) { toast(e.message, 'error'); }
+    try { S.achD = await api('myStats', { period: 'all' }); achCelebrate(S.achD); } catch (e) { toast(e.message, 'error'); }
     if (S.screen === 'ach') render();
   }
   VIEWS.mystats = function () {
@@ -1349,17 +1369,23 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const d = S.achD;
     if (!d) return h + loading();
     const done = d.ach.filter((a) => a.done).length;
-    h += `<div class="ach-head card row"><span class="ms-fire">🏅</span><span class="grow"><b>Ачівки · ${done} з ${d.ach.length}</b><span class="track" style="height:8px;margin-top:6px;display:block"><i style="width:${Math.round(done / d.ach.length * 100)}%;background:var(--grad)"></i></span></span></div>`;
+    const lv = achLevel(done);
+    h += `<div class="ach-head card"><div class="row" style="gap:12px;align-items:center"><span class="ach-lv">${lv.n}</span><span class="grow"><span class="xs muted">рівень служіння</span><br><b>${esc(lv.title)}</b></span><span class="small muted">${done} з ${d.ach.length}</span></div>
+      <span class="track" style="height:8px;margin-top:10px;display:block"><i style="width:${lv.pct}%;background:var(--grad)"></i></span>
+      <div class="xs muted" style="margin-top:6px">${lv.next ? 'До рівня «' + esc(lv.next) + '» — ще ' + plural(lv.left, 'ачівка', 'ачівки', 'ачівок') : 'Найвищий рівень. Дякуємо за вірність!'}</div></div>`;
+    const near = d.ach.filter((a) => !a.done && !a.secret && a.have > 0).sort((a, b) => b.have / b.need - a.have / a.need).slice(0, 3);
+    if (near.length) h += `<div class="sec">🎯 Найближчі</div><div class="card list">${near.map((a) => `<div class="li ach-near"><span class="ach-ic-s">${ACH_IC[a.key] || '⭐'}</span><span class="grow"><b>${esc(a.title)}</b><br><span class="xs muted">${esc(a.desc)}</span>
+      <span class="track" style="height:6px;margin-top:6px;display:block"><i style="width:${Math.round(a.have / a.need * 100)}%;background:var(--grad)"></i></span></span><span class="small muted">${fmtNum(a.have)}/${a.need}</span></div>`).join('')}</div>`;
     (d.cats || [{ key: '', title: 'Усі', ic: '🏅' }]).forEach((cat) => {
       const list = d.ach.filter((a) => !cat.key || a.cat === cat.key);
       if (!list.length) return;
       h += `<div class="sec">${cat.ic} ${esc(cat.title)} · ${list.filter((a) => a.done).length}/${list.length}</div><div class="card ach-grid">${list.map((a) => {
         const pct = Math.round(a.have / a.need * 100);
-        return `<button type="button" class="ach-c${a.done ? ' got' : ''}" data-a="achInfo" data-t="${esc(a.title)}" data-d="${esc(a.desc)}" data-p="${a.done ? 'Отримано ✓' : fmtNum(a.have) + ' з ' + a.need}">
-          <span class="ach-ring" style="--p:${a.done ? 100 : pct}"><span class="ach-ic">${ACH_IC[a.key] || '⭐'}</span></span><span class="ach-n">${esc(a.title)}</span></button>`;
+        return `<button type="button" class="ach-c${a.done ? ' got' : ''}" data-a="achInfo" data-t="${esc(a.title)}" data-d="${esc(a.desc)}" data-p="${a.done ? 'Отримано ✓' : a.secret ? 'секрет' : fmtNum(a.have) + ' з ' + a.need}">
+          <span class="ach-ring" style="--p:${a.done ? 100 : pct}"><span class="ach-ic">${a.secret ? '❓' : ACH_IC[a.key] || '⭐'}</span></span><span class="ach-n">${esc(a.title)}</span></button>`;
       }).join('')}</div>`;
     });
-    h += '<div class="xs muted" style="text-align:center">Натисни на кружечок — побачиш, що треба для ачівки. Рахується за весь час служіння.</div>';
+    h += '<div class="xs muted" style="text-align:center">Натисни на кружечок — побачиш, що треба для ачівки. ❓ — секретні: відкриваються самі. Рахується за весь час служіння.</div>';
     h += '<button type="button" class="linkish small" style="align-self:center" data-a="tabGo" data-s="mystats">Моя статистика →</button>';
     return h;
   };
