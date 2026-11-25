@@ -823,6 +823,11 @@
     const CAT_IC = { overview: ['stats', 'cc-teal'], people: ['profile', 'cc-blue'], club: ['club', 'cc-coral'], mg: ['mg', 'cc-purple'], kr: ['kr', 'cc-blue'], known: ['known', 'cc-yellow'], finance: ['doc', 'cc-green'] };
     if (d.cats.length > 1) h += `<div class="sec" style="margin-bottom:-4px">Що показати</div><div class="cat-strip">${d.cats.map((c) => { const k = CAT_IC[c.key] || ['stats', 'cc-teal']; return `<button type="button" class="cat-t ${k[1]}${c.key === (st.loading ? st.cat : d.cat) ? ' on' : ''}" data-a="statsCat" data-c="${c.key}"><span class="cat-i">${icon(k[0], 20)}</span><span>${esc(c.label)}</span></button>`; }).join('')}</div>`;
     h += periodBar(st, 'stats');
+    // за кого зараз показано статистику
+    { const LV = { region: 'Регіон ', area: 'Ерія ', team: 'Команда ' }; const sc = d.scope || {}; const pth = d.path || [];
+      const main = sc.level === 'nat' ? 'Уся Україна' : sc.level === 'multi' ? sc.label : sc.level === 'office' ? 'Національний офіс' : (LV[sc.level] || '') + (pth.length ? pth[pth.length - 1].label : sc.name || '');
+      const up = sc.level === 'multi' || sc.level === 'nat' || sc.level === 'office' ? '' : pth.slice(0, -1).map((p) => p.label).join(' › ');
+      h += `<div class="stat-who">📍 Показано: <b>${esc(main)}</b>${up ? `<span class="xs muted"> · ${esc(up)}</span>` : ''}</div>`; }
     h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
 
