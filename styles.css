@@ -485,3 +485,20 @@ html.dark .ach-c.got .ach-ic { background: #2a2230; }
 .ch-n b { font-size: 17px; }
 .tag.self { background: rgba(155,93,229,.14); color: #7b3fc4; }
 .mw-row.mw2 { grid-template-columns: 1fr 1fr; }
+
+/* статистика: вибір показника — плитки з іконками */
+.cat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; margin: 0 -2px; scrollbar-width: none; }
+.cat-strip::-webkit-scrollbar { display: none; }
+.cat-t { flex: 0 0 auto; min-width: 78px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 10px 9px; border-radius: 18px;
+  border: 1.5px solid var(--glass-brd, rgba(255,255,255,.7)); background: var(--glass, rgba(255,255,255,.6)); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600;
+  backdrop-filter: blur(var(--blur, 16px)); -webkit-backdrop-filter: blur(var(--blur, 16px)); transition: transform .2s var(--spring, ease), box-shadow .2s; }
+.cat-t:active { transform: scale(.95); }
+.cat-i { width: 38px; height: 38px; border-radius: 13px; display: flex; align-items: center; justify-content: center; background: var(--cc-bg); color: var(--cc); }
+.cat-t.on { background: var(--cc); color: #fff; border-color: transparent; box-shadow: 0 8px 20px -8px var(--cc); }
+.cat-t.on .cat-i { background: rgba(255,255,255,.22); color: #fff; }
+.cc-teal { --cc: #14a394; --cc-bg: rgba(20,163,148,.14); }
+.cc-blue { --cc: #3b7be0; --cc-bg: rgba(59,123,224,.14); }
+.cc-coral { --cc: #e8592c; --cc-bg: rgba(232,89,44,.14); }
+.cc-purple { --cc: #8b52d6; --cc-bg: rgba(139,82,214,.14); }
+.cc-yellow { --cc: #d9900f; --cc-bg: rgba(217,144,15,.15); }
+.cc-green { --cc: #2f9e5b; --cc-bg: rgba(47,158,91,.14); }

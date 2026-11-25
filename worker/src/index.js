@@ -151,7 +151,7 @@ const NEEDS = {
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
   events: { events: true }, eventSave: { events: true }, eventDelete: { events: true }, rsvp: { events: true },
-  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
+  structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, clubPick: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
   dirStats: { log: 'stats' }, installStats: {},
@@ -467,9 +467,10 @@ function indexBase(b) {
   b.teamRegion = (teamId) => { const t = b.team[teamId]; return t && b.area[t.areaId] ? b.area[t.areaId].regionId : ''; };
 }
 function personFromRow(r) {
-  let notif = {};
+  let notif = {}, prefs = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
-  return { main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif };
+  try { prefs = r.prefs ? JSON.parse(r.prefs) : {}; } catch (e) { prefs = {}; }
+  return { prefs: prefs, main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -815,7 +816,8 @@ API.me = function (c) {
   const myTeams = {};
   c.roles.forEach((r) => { if (r.level === 'team' && st.team[r.unitId]) myTeams[r.unitId] = true; });
   out.caps = {
-    report: { club: clubTeams_(c), mg: ownTeams_(c, 'rep.mg'), kr: ownTeams_(c, 'rep.kr') },
+    report: { club: myClubTeams_(c), mg: ownTeams_(c, 'rep.mg'), kr: ownTeams_(c, 'rep.kr') },
+    clubAll: clubTeams_(c),
     reportSelf: { mg: canSelf_(c, 'rep.mg'), kr: canSelf_(c, 'rep.kr'), unit: (() => { if (officeOnly_(c)) return 'Національному офісу'; const u = !ownTeams_(c, 'rep.kr').length && upperSelfUnit_(c); return u ? levelLabel_(u.level, u.unitId) : ''; })() },
     knownTeams: reportTeams_(c, 'see.known'),
     knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.known') && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
@@ -843,7 +845,7 @@ API.me = function (c) {
   const wide = wideStats_(P_(c, 'see.stats'));
   if (wide.roles.some((r) => r.virtual) || c.roles.some((r) => r.level === 'nat')) out.statScopes = allowedScopes_(wide, { office: true });
   if (c.roles.some((r) => r.level === 'nat')) out.reportScopes = reportScopes_(c);
-  if (officeOnly_(c)) { out.statScopes = allowedScopes_(officeCtx_(c)); out.reportScopes = allowedScopes_(officeCtx_(c, false)); }
+  if (officeOnly_(c)) { out.statScopes = allowedScopes_(officeCtx_(c)); out.reportScopes = allowedScopes_(officeCtx_(c)); }
   out.week = weekStatus_(c);
   out.myWeek = myWeek_(c);
   if (c.view) out.viewAs = c.view; else out.viewRoles = viewRoles_(c);
@@ -1990,7 +1992,7 @@ const REPORT_ITEMS = {
 };
 const reportScopes_ = (c) => (isSuper_(c) ? allowedScopes_(c, { office: true }) : allowedScopes_(c, { office: true }).filter((s) => s.depth <= 1));
 function reportItems_(c) {
-  if (officeOnly_(c)) c = officeCtx_(c, false);
+  if (officeOnly_(c)) c = officeCtx_(c);
   // лідери й нижче звіти не готують
   if (!c.roles.some((r) => r.level !== 'team' || r.rank < RANK.MG)) return [];
   const ok = {};
@@ -2082,8 +2084,9 @@ function reportRow_(teamIds, items, from, to, allowed, scope) {
 }
 
 API.report = function (c, d) {
-  // офіс: лише звіт по Національному офісу (не по всій Україні)
-  if (officeOnly_(c)) c = officeCtx_(c, false);
+  // офіс: звіт по Україні (лише загальні цифри, без розбивки) і по Національному офісу
+  const office = officeOnly_(c);
+  if (office) { c = officeCtx_(c); d = Object.assign({}, d, { split: false }); }
   const scopes = reportScopes_(c);
   const byKey = {};
   allowedScopes_(c, { office: true }).forEach((s) => { byKey[s.key] = s; });
@@ -2125,7 +2128,7 @@ API.report = function (c, d) {
     sections: items.map((it) => ({ key: it, label: REPORT_ITEMS[it].label, cols: REPORT_ITEMS[it].cols.map((x) => ({ key: x[0], label: x[1] })) })),
     rows, total,
   };
-  if (items.indexOf('club') >= 0) {
+  if (items.indexOf('club') >= 0 && !office) {
     // кожен внесений клуб окремо (лише команди, де клуби можна бачити)
     const okT = {};
     keys.filter((k) => allowedFor(byKey[k]).club).forEach((k) => scopeTeamIds_(byKey[k]).forEach((id) => { okT[id] = true; }));
@@ -2629,8 +2632,18 @@ API.stats = function (c0, d) {
   const cats = statCats_(c, scope);
   const cat = cats.some((x) => x.key === d.cat) ? d.cat : cats[0].key;
   const out = computeStats_(c, scope, cat, d.period || 'month', cats, scopes, customRange_(d));
+  // «Останні внесені»: свіжі записи (клуб, МГ, КР) у вибраній ланці
+  {
+    const ids = {}; scopeTeamIds_(scope).forEach((id) => { ids[id] = true; });
+    const typeOk = { club: cats.some((x) => x.key === 'club'), mg: cats.some((x) => x.key === 'mg'), kr: cats.some((x) => x.key === 'kr') };
+    const stR = loadStruct_();
+    out.recent = dd_(loadLog_().filter((r) => typeOk[r.type] && (ids[r.teamId] || upperRowIn_(scope, r))))
+      .sort((a, b) => ((b.created || b.date) > (a.created || a.date) ? 1 : -1)).slice(0, 30)
+      .map((r) => ({ type: r.type, date: r.date, created: r.created || '', team: r.teamId ? (stR.team[r.teamId] || {}).name || '' : '', author: r.author || '', none: r.mode === MODE.none, week: r.mode === MODE.week,
+        teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, hours: r.hours }));
+  }
   // офіс бачить по Україні лише загальні цифри — без розбивки по регіонах і командах
-  if (c.officeView && scope.level === 'nat') { out.breakdown.rows = []; out.breakdown.title = ''; out.report = []; out.canNudge = false; }
+  if (c.officeView && scope.level === 'nat') { out.breakdown.rows = []; out.breakdown.title = ''; out.recent = []; out.report = []; out.canNudge = false; }
   // коли команда востаннє звітувала за клуб; для однієї команди — історія звітів за клуб
   const last = lastClubs_();
   const st = loadStruct_();
@@ -2646,6 +2659,22 @@ API.stats = function (c0, d) {
 function lastClubs_() { const o = {}; (S.clubs || []).forEach((r) => { if (r.teamId && !o[r.teamId]) o[r.teamId] = r; }); return o; }
 const clubOut_ = (r) => ({ id: r.id, date: r.date, none: r.mode === MODE.none, week: r.mode === MODE.week, teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note, author: r.author });
 
+// «За кого вношу клуб»: людина сама обирає команди (за замовчуванням — усі, де може; порожньо — лише за себе)
+function myClubTeams_(c) {
+  const all = clubTeams_(c);
+  const pick = ((getPerson_(c.id) || {}).prefs || {}).clubTeams;
+  return Array.isArray(pick) ? all.filter((id) => pick.indexOf(id) >= 0) : all;
+}
+API.clubPick = function (c, d) {
+  const p = getPerson_(c.id);
+  if (!p) bad_('Спершу заповни профіль.');
+  const all = clubTeams_(c);
+  const prefs = Object.assign({}, p.prefs || {});
+  if (d.all) delete prefs.clubTeams; else prefs.clubTeams = uniq_((d.teams || []).map(String)).filter((id) => all.indexOf(id) >= 0);
+  p.prefs = prefs;
+  S.run('UPDATE people SET prefs = ? WHERE tg_id = ?', [JSON.stringify(prefs), c.id], true);
+  return { club: myClubTeams_(c) };
+};
 // змінити чи видалити звіт за клуб: хто вносить клуб у цій команді, а також Еріа Директор і Еріа Адмін
 function canClubFix_(c, teamId) {
   return isSuper_(c) || clubTeams_(c).indexOf(teamId) >= 0 || c.roles.some((r) => (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && covers_(r, 'team', teamId));

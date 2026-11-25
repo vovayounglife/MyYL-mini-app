@@ -638,7 +638,24 @@
     mg: [['teens', 'Підлітків', 1], ['newT', 'З них нових', 1], ['leaders', 'Лідерів', 1]],
     kr: [['hours', 'Годин з підлітками', 0.5]],
   };
+  // «За які команди я вношу клуб» — щоб не перевантажувати «Внести»
+  function clubPickView() {
+    const c = caps(), all = c.clubAll || [], sel = c.report.club || [];
+    const P = S.clubPick || (S.clubPick = { on: {} });
+    let h = header('За які команди я вношу клуб', 'Решту команд вносять їхні капітани чи адміни');
+    h += `<div class="card list"><label class="check"><input type="checkbox" data-ch="clubPickAll"${all.every((id) => P.on[id]) ? ' checked' : ''}><span class="grow b">Усі команди (${all.length})</span></label>
+      ${all.map((id) => { const t = teamById(id) || {}; return `<label class="check"><input type="checkbox" data-ch="clubPickT" data-id="${esc(id)}"${P.on[id] ? ' checked' : ''}><span class="grow"><span style="display:block">${esc(t.name || id)}</span>${(() => { const ar = (struct().areas || []).filter((x) => x.id === t.areaId)[0]; return ar ? `<span class="xs muted">Ерія ${esc(ar.name)}</span>` : ''; })()}</span></label>`; }).join('')}</div>
+      <div class="small muted">Нічого не обрано — вкладки «Клуб» у тебе не буде: вносиш лише свою статистику. Право вносити клуб лишається — можна повернути будь-коли.</div>
+      <div class="grid2"><button type="button" class="btn ghost" data-a="clubPickClose">Скасувати</button><button type="button" class="btn" data-a="clubPickSave">Зберегти</button></div>`;
+    return h;
+  }
   VIEWS.add = function () {
+    if (S.clubPickOpen) return clubPickView();
+    const c = caps();
+    const link = (c.clubAll || []).length ? `<button type="button" class="link-btn small" style="align-self:center;margin-top:6px" data-a="clubPickOpen">⚙ За кого я вношу клуб · ${(c.report.club || []).length ? (c.report.club.length === c.clubAll.length ? 'усі команди' : c.report.club.length + ' з ' + c.clubAll.length) : 'лише за себе'}</button>` : '';
+    return addViewInner() + link;
+  };
+  function addViewInner() {
     const c = caps(), a = S.add;
     const types = TYPES.filter((t) => canType(t.k));
     const kn = canKnownAdd();
@@ -694,7 +711,7 @@
     h += `<button type="button" class="btn" data-a="addSave">Зберегти</button>`;
     h += `<button type="button" class="btn ghost" data-a="markNone" data-type="${a.type}" data-team="${esc(a.teamId)}">${typeOf(a.type).none}</button>`;
     return h;
-  };
+  }
 
   // ───────────── КАЛЕНДАР ─────────────
   const LVL = { nat: 'Національні', region: 'Регіон', area: 'Ерія', team: 'Команда' };
@@ -802,7 +819,9 @@
     // єдиний вибір рівня й одиниць — без гортання
     h += picker('stats');
     if (!d) return h + loading();
-    if (d.cats.length > 1) h += `<div class="pills">${d.cats.map((c) => `<button type="button" class="pill${c.key === (st.loading ? st.cat : d.cat) ? ' on' : ''}" data-a="statsCat" data-c="${c.key}">${esc(c.label)}</button>`).join('')}</div>`;
+    // що показати — окремі плитки з іконками (інший вигляд, ніж вибір регіону / ерії / команди)
+    const CAT_IC = { overview: ['stats', 'cc-teal'], people: ['profile', 'cc-blue'], club: ['club', 'cc-coral'], mg: ['mg', 'cc-purple'], kr: ['kr', 'cc-blue'], known: ['known', 'cc-yellow'], finance: ['doc', 'cc-green'] };
+    if (d.cats.length > 1) h += `<div class="sec" style="margin-bottom:-4px">Що показати</div><div class="cat-strip">${d.cats.map((c) => { const k = CAT_IC[c.key] || ['stats', 'cc-teal']; return `<button type="button" class="cat-t ${k[1]}${c.key === (st.loading ? st.cat : d.cat) ? ' on' : ''}" data-a="statsCat" data-c="${c.key}"><span class="cat-i">${icon(k[0], 20)}</span><span>${esc(c.label)}</span></button>`; }).join('')}</div>`;
     h += periodBar(st, 'stats');
     h += `<div class="xs muted">${st.loading ? 'Оновлюю…' : 'Дані живі: оновлюються одразу після внесення' + (st.at ? ' · ' + st.at : '')} · <button type="button" class="link-btn xs" data-a="statsReload">↻ оновити</button>${d.cat === 'known' ? '<br>Знані «Без команди» рахуються на рівні ерії чи регіону того, хто вніс.' : ''}</div>`;
     h += `<div class="kpis">${d.kpis.map((k) => `<div class="card kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join('')}</div>`;
@@ -857,8 +876,19 @@
         ${d.canNudge && rep.missing.length ? `<button type="button" class="btn sec2 sm" data-a="nudge" data-type="${rep.type}">Нагадати їм у Telegram</button>` : ''}</div>`;
     }
     if (d.club) h += clubHistory(d.club);
+    if ((d.recent || []).length) h += recentCard(d.recent);
     return h;
   };
+  // «Останні внесені» — свіжі записи в цій ланці
+  function recentCard(list) {
+    const T = { club: 'Клуб', mg: 'Мала група', kr: 'КР' };
+    const shown = S.stats.recentAll ? list : list.slice(0, 5);
+    const nums = (r) => (r.none ? 'не було' : r.type === 'kr' ? fmtNum(r.hours) + ' год' : r.teens + ' п' + (r.newT ? ' (нових ' + r.newT + ')' : '') + (r.leaders ? ' · ' + r.leaders + ' л' : '') + (r.parents ? ' · ' + r.parents + ' батьків' : ''));
+    return `<div class="card col" style="gap:6px"><div class="row between"><h2>Останні внесені</h2><span class="xs muted">${list.length}</span></div>
+      ${shown.map((r) => `<div class="ch-row"><div class="row between" style="gap:8px"><span><span class="tag">${T[r.type]}</span> <span class="b">${esc(fmtDay(r.date))}</span></span><span class="small b">${esc(nums(r))}</span></div>
+        <div class="xs muted">${r.team ? esc(r.team) + ' · ' : ''}${esc(r.author || '—')}${r.created ? ' · внесено ' + esc(fmtDay(String(r.created).slice(0, 10))) : ''}</div></div>`).join('')}
+      ${list.length > 5 ? `<button type="button" class="link-btn" data-a="recentMore">${S.stats.recentAll ? 'Згорнути' : 'Показати ще (' + (list.length - 5) + ')'}</button>` : ''}</div>`;
+  }
   // історія звітів за клуб однієї команди (внизу статистики) + «змінити»
   function clubHistory(cl) {
     const E = S.stats.clubEdit;
@@ -2440,6 +2470,16 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.statsSort = (d) => { S.stats.sort = d.s; render(); };
   A.clubEditOpen = (d) => { const r = ((S.stats.data && S.stats.data.club) || { history: [] }).history.filter((x) => x.id === d.id)[0]; if (!r) return; S.stats.clubEdit = Object.assign({}, r); render(); };
   A.clubEditCancel = () => { S.stats.clubEdit = null; render(); };
+  A.clubPickOpen = () => { const on = {}; (caps().report.club || []).forEach((id) => { on[id] = true; }); S.clubPick = { on: on }; S.clubPickOpen = true; render(); };
+  A.clubPickClose = () => { S.clubPickOpen = false; render(); };
+  A.clubPickAll = (d, el) => { (caps().clubAll || []).forEach((id) => { S.clubPick.on[id] = el.checked; }); render(); };
+  A.clubPickT = (d, el) => { S.clubPick.on[d.id] = el.checked; render(); };
+  A.clubPickSave = async () => {
+    const all = caps().clubAll || [], on = all.filter((id) => S.clubPick.on[id]);
+    const res = await run(() => api('clubPick', on.length === all.length ? { all: true } : { teams: on }), 'Збережено');
+    if (res) { caps().report.club = res.club; S.clubPickOpen = false; if (S.add && S.add.type === 'club' && !res.club.length) S.add = null; render(); }
+  };
+  A.recentMore = () => { S.stats.recentAll = !S.stats.recentAll; render(); };
   A.histAll = () => { S.stats.histAll = !S.stats.histAll; render(); };
   A.clubDelete = async (d) => {
     const r = ((S.stats.data && S.stats.data.club) || { history: [] }).history.filter((x) => x.id === d.id)[0]; if (!r) return;

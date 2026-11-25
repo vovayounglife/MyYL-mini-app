@@ -1119,14 +1119,34 @@ so = await api(NO, 'stats', { units: ['nat'], cat: 'overview', period: 'month' }
 ok(so.ok && !so.data.breakdown.rows.length && !so.data.report.length, 'нац. офіс: Україна — лише загальні цифри');
 so = await api(NO, 'stats', { units: ['r:r0'], cat: 'overview', period: 'month' });
 ok(so.ok && so.data.scope.key !== 'r:r0', 'нац. офіс: регіон окремо не відкривається');
-r = await api(NO, 'report', { units: ['nat'], items: ['mg'], from: '2026-01-01', to: '2026-12-31' });
-ok(!r.ok, 'нац. офіс: звіт по всій Україні — ні');
+r = await api(NO, 'report', { units: ['nat'], items: ['club', 'mg'], split: true, from: '2026-01-01', to: '2026-12-31' });
+ok(r.ok && r.data.rows.length === 1 && !r.data.clubList, 'нац. офіс: звіт по всій Україні — без розбивки ' + JSON.stringify(r.data && r.data.rows && r.data.rows.map((x) => x.name)));
 r = await api(NO, 'report', { units: ['office'], items: ['mg', 'kr'], from: '2026-01-01', to: '2026-12-31' });
 ok(r.ok && r.data.sections.length === 2, 'нац. офіс: звіт по Національному офісу');
 r = await api(NO, 'myStats', { period: 'all' });
 ok(r.ok, 'нац. офіс: моя статистика ' + JSON.stringify(r).slice(0, 200));
 r = await api(AD, 'report', { units: ['r:r0'], items: ['club'], from: '2026-01-01', to: '2026-12-31' });
 ok(!r.ok, 'звіт: директор ерії — не по всьому регіону, лише своя ерія');
+
+// ── «За кого вношу клуб» ──
+me = await api(VOVA, 'me');
+const allClub = me.data.caps.clubAll.length;
+ok(allClub > 0 && me.data.caps.report.club.length === allClub, 'клуб: за замовчуванням — усі команди');
+r = await api(VOVA, 'clubPick', { teams: [] });
+me = await api(VOVA, 'me');
+ok(r.ok && me.data.caps.report.club.length === 0 && me.data.caps.clubAll.length === allClub, 'клуб: Раб Божий — лише за себе');
+r = await api(VOVA, 'clubPick', { teams: [capTeam.id] });
+me = await api(VOVA, 'me');
+ok(me.data.caps.report.club.join() === capTeam.id, 'клуб: обрана одна команда');
+r = await api(VOVA, 'clubPick', { all: true });
+me = await api(VOVA, 'me');
+ok(me.data.caps.report.club.length === allClub, 'клуб: знову всі');
+
+// ── «Останні внесені» у статистиці ──
+r = await api(CAP, 'stats', { units: ['t:' + capTeam.id], cat: 'overview', period: 'month' });
+ok(r.ok && Array.isArray(r.data.recent) && r.data.recent.length > 0 && r.data.recent[0].type, 'статистика: «Останні внесені»');
+r = await api(NO, 'stats', { units: ['nat'], cat: 'overview', period: 'month' });
+ok(r.ok && !r.data.recent.length, 'статистика: офіс по Україні — без останніх записів');
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
