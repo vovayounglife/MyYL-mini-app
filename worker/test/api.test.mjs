@@ -1148,6 +1148,34 @@ ok(r.ok && Array.isArray(r.data.recent) && r.data.recent.length > 0 && r.data.re
 r = await api(NO, 'stats', { units: ['nat'], cat: 'overview', period: 'month' });
 ok(r.ok && !r.data.recent.length, 'статистика: офіс по Україні — без останніх записів');
 
+// ── зміни з таблиці доступів (25.11) ──
+{
+  const AA = { id: 501, first_name: 'Ерія', last_name: 'Адмін' }, TA = { id: 502, first_name: 'Адмін', last_name: 'Команди' }, HL = { id: 503, first_name: 'Нова', last_name: 'Помічниця' };
+  await api(AA, 'register', { name: 'Анна Адмін', roles: ['VOLUNTEER'], teamId: capTeam.id, areaId: 'a1' });
+  await api(TA, 'register', { name: 'Тетяна Адмін', roles: ['VOLUNTEER'], teamId: capTeam.id, areaId: 'a1' });
+  await api(VOVA, 'roleGrant', { tgId: '501', key: 'AREA_ADMIN', unit: 'a:a1' });
+  await api(VOVA, 'roleGrant', { tgId: '502', key: 'TEAM_ADMIN', unit: 't:' + capTeam.id });
+  let m = await api(AA, 'me');
+  ok(m.data.caps.report.club.indexOf(capTeam.id) >= 0, 'доступи: Еріа адмін вносить клуб');
+  ok(m.data.caps.financeEdit.indexOf(capTeam.id) >= 0, 'доступи: Еріа адмін вносить касу команди');
+  ok(m.data.caps.manage, 'доступи: Еріа адмін керує командами');
+  ok((m.data.statScopes || []).some((x) => x.key === 'r:r0'), 'доступи: Еріа адмін бачить статистику регіону');
+  m = await api(AD, 'me');
+  ok(m.data.caps.financeEdit.indexOf(capTeam.id) >= 0, 'доступи: Еріа директор вносить касу команди');
+  m = await api(RD, 'me');
+  ok(m.data.caps.report.club.indexOf(capTeam.id) < 0, 'доступи: Регіональний директор клуб не вносить');
+  m = await api(TA, 'me');
+  ok(m.data.caps.approve && m.data.caps.broadcast, 'доступи: Адмін команди підтверджує заявки й робить розсилки');
+  await api(HL, 'register', { name: 'Ніна Помічниця', roles: ['HELPER'], teamId: capTeam.id, areaId: 'a1' });
+  const rq = await api(TA, 'requests');
+  const hp = [].concat(rq.data || []).find((p) => p.tgId === '503');
+  ok(hp && hp.roles.length, 'доступи: Адмін команди бачить заявку помічниці');
+  r = await api(TA, 'decide', { roleIds: [hp.roles[0].id], approve: true });
+  ok(r.ok, 'доступи: Адмін команди підтвердив помічницю');
+  r = await api(TA, 'roleGrant', { tgId: '503', key: 'CAPTAIN', unit: 't:' + capTeam.id });
+  ok(!r.ok, 'доступи: Адмін команди не дає роль Капітана');
+}
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

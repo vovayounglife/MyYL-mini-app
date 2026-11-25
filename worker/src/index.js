@@ -46,11 +46,11 @@ const OFFICE_TITLES = [
 const RANK = { CLUB: 7, MG: 9, KR: 10, KNOWN: 10, FINANCE: 7, APPROVE: 6, EVENT: 9, GMAIL: 6 };
 // ── дозволи: типові значення = як було до налаштувань; вища ланка задає рамки, нижча може лише звузити ──
 const PERMS = [
-  { key: 'rep.club', group: 'rep', label: 'Вносити клуб', def: (r) => (r.level === 'team' ? r.rank <= RANK.CLUB : CLUB_UPPER.indexOf(r.key) >= 0), levels: ['team', 'area'] },
+  { key: 'rep.club', group: 'rep', label: 'Вносити клуб', def: (r) => (r.level === 'team' ? r.rank <= RANK.CLUB : CLUB_UPPER.indexOf(r.key) >= 0), levels: ['team', 'area', 'region'] },
   { key: 'rep.mg', group: 'rep', label: 'Вносити малу групу (за себе)', def: (r) => r.level !== 'team' || r.rank <= RANK.MG },
   { key: 'rep.kr', group: 'rep', label: 'Вносити контактну роботу (за себе)', def: (r) => r.level !== 'team' || r.rank <= RANK.KR },
   { key: 'rep.known', group: 'rep', label: 'Додавати знаних у команду', def: (r) => r.level === 'team' && r.rank <= RANK.KNOWN, levels: ['team'] },
-  { key: 'rep.fin', group: 'rep', label: 'Вносити фінанси команди', def: (r) => r.level === 'team' && r.rank <= RANK.FINANCE, levels: ['team'] },
+  { key: 'rep.fin', group: 'rep', label: 'Вносити фінанси команди', def: (r) => (r.level === 'team' ? r.rank <= RANK.FINANCE : FIN_UPPER.indexOf(r.key) >= 0), levels: ['team', 'area'] },
   { key: 'see.stats', group: 'see', label: 'Статистика', def: () => true },
   { key: 'see.team', group: 'see', label: 'Склад команди', def: () => true },
   { key: 'see.known', group: 'see', label: 'Знані команди', def: (r) => r.level !== 'team' || r.rank <= RANK.KNOWN },
@@ -82,8 +82,10 @@ const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', '
 const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
 const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
 // клуб за команду вносять Капітан, Адмін команди і ці вищі ролі (у своїх межах); МГ і КР — кожен лише за себе
-const CLUB_UPPER = ['AREA_DIRECTOR'];
-const MANAGE_TEAMS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
+const CLUB_UPPER = ['AREA_DIRECTOR', 'AREA_ADMIN', 'REGIONAL_ADMIN'];
+const MANAGE_TEAMS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR', 'AREA_ADMIN'];
+// касу команди вносять Капітан, Адмін команди, а також керівництво ерії
+const FIN_UPPER = ['AREA_DIRECTOR', 'AREA_ADMIN'];
 
 // ───────────────────────────── ВХІД ─────────────────────────────
 
@@ -693,7 +695,7 @@ const canTeam_ = (c, teamId, perm) => teamRoles_(c, teamId, perm).length > 0 || 
 // директор ерії бачить статистику всього свого регіону (лише перегляд статистики)
 const wideStats_ = (c) => {
   const st = loadStruct_();
-  const extra = c.roles.filter((r) => r.key === 'AREA_DIRECTOR' && r.level === 'area' && st.area[r.unitId])
+  const extra = c.roles.filter((r) => (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && r.level === 'area' && st.area[r.unitId])
     .map((r) => Object.assign({}, r, { id: r.id + ':r', level: 'region', unitId: st.area[r.unitId].regionId, virtual: true }));
   return extra.length ? Object.assign({}, c, { roles: c.roles.concat(extra) }) : c;
 };
@@ -716,7 +718,9 @@ function canDecide_(c, target) {
   if (isSuper_(c)) return true;
   const rules = APPROVAL[def.key];
   if (rules) return c.roles.some((r) => rules.some((rule) => ruleMatch_(r, rule, target)));
-  return c.roles.some((r) => r.rank <= RANK.APPROVE && r.rank < def.rank && covers_(r, target.level, target.unitId));
+  // Адмін команди підтверджує й додає ролі нижчі за свою у своїй команді
+  return c.roles.some((r) => (r.rank <= RANK.APPROVE && r.rank < def.rank && covers_(r, target.level, target.unitId)) ||
+    (r.key === 'TEAM_ADMIN' && def.level === 'team' && target.level === 'team' && r.unitId === target.unitId && def.rank > r.rank));
 }
 function primaryApprovers_(target) {
   const def = roleDef_(target.key);
@@ -785,7 +789,7 @@ function reportTeams_(c, perm) {
   });
   return Object.keys(ids);
 }
-const canApproveAny_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE || r.key === 'REGIONAL_ADMIN' || r.key === 'AREA_ADMIN');
+const canApproveAny_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE || r.key === 'REGIONAL_ADMIN' || r.key === 'AREA_ADMIN' || r.key === 'TEAM_ADMIN');
 const pendingFor_ = (c) => loadRoles_().filter((r) => r.status === ST.PENDING && r.tgId !== c.id && canDecide_(c, r));
 
 // ───────────────────────────── API ─────────────────────────────
@@ -823,7 +827,7 @@ API.me = function (c) {
     knownEditTeams: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.known') && loadStruct_().team[r.unitId] && loadStruct_().team[r.unitId].active).map((r) => r.unitId)),
     knownNoTeam: canNoTeam_(c),
     financeTeams: reportTeams_(c, 'see.fin'),
-    financeEdit: uniq_(c.roles.filter((r) => r.level === 'team' && okR_(r, 'rep.fin')).map((r) => r.unitId)),
+    financeEdit: st.teams.filter((t) => t.active && canFinEdit_(c, t.id)).map((t) => t.id),
     viewTeams: st.teams.filter((t) => t.active && canViewTeam_(c, t.id)).map((t) => t.id),
     approve: canApproveAny_(c),
     eventUnits: eventUnits_(c),
@@ -1530,7 +1534,7 @@ API.teamMembers = function (c, d) {
 
 // ── фінанси ──
 // вносять лише Капітан і Адмін саме цієї команди; вищі рівні — тільки дивляться
-const canFinEdit_ = (c, teamId) => teamRoles_(c, teamId, 'rep.fin').length > 0;
+const canFinEdit_ = (c, teamId) => teamRoles_(c, teamId, 'rep.fin').length > 0 || c.roles.some((r) => FIN_UPPER.indexOf(r.key) >= 0 && covers_(r, 'team', teamId) && okR_(r, 'rep.fin'));
 
 API.financeGet = function (c, d) {
   if (!isSingleTeam_(d)) return financeOverview_(c, d);
@@ -2178,7 +2182,7 @@ function reportHtml_(r) {
 }
 
 // ── розсилка від Раба Божого ──
-const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE);
+const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE || r.key === 'TEAM_ADMIN');
 // хто потрапляє у вибір «де + які ролі» (без автора)
 function audience_(c, d, perm) {
   const p = pickScope_(c, Array.isArray(d.units) && d.units.length ? d.units : [allowedScopes_(c)[0] && allowedScopes_(c)[0].key]);
