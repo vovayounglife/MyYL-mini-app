@@ -2983,6 +2983,51 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     S.loginTimer = setTimeout(pollLogin, 2500);
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.login) pollLogin(); });
+  // ── потягни вниз — оновити поточний екран ──
+  const PULL_RELOAD = {
+    home: () => Promise.all([refreshMe(), loadEvents()]), more: refreshMe, calendar: loadEvents, stats: loadStats, known: () => loadKnown(true), team: loadTeam, finance: loadFin,
+    requests: loadReqs, perms: loadPerms, inst: loadInst, mystats: loadMyStats, ach: loadAch, bugs: loadBugs, dupes: loadDupes, res: loadRes, dirs: loadDirs,
+    tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe,
+  };
+  async function pullRefresh() {
+    const f = PULL_RELOAD[S.screen];
+    S.statsMem = {}; S.knownMem = {};
+    try { await Promise.all([f ? f() : refreshMe(), S.screen === 'home' || S.screen === 'more' ? null : refreshMe()]); } catch (e) { /* лоадери самі показують помилку */ }
+    if (S.me && S.me.status === 'active') LS.set('me', S.me);
+    if (S.me && S.me.status === 'active' && (S.screen === 'pending' || S.screen === 'onboarding')) { S.screen = 'home'; }
+    if (safeToRender()) render();
+  }
+  (function pullToRefresh() {
+    const MAX = 110, NEED = 72;
+    let ind = null, y0 = 0, x0 = 0, dy = 0, on = false, busy = false;
+    const el = () => { if (!ind) { ind = document.createElement('div'); ind.className = 'ptr'; ind.innerHTML = '<span class="ptr-c"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'; document.body.appendChild(ind); } return ind; };
+    const set = (d, anim) => { const i = el(); i.style.transition = anim ? 'transform .3s var(--spring), opacity .3s' : 'none'; i.style.opacity = d > 4 ? Math.min(1, d / NEED) : 0; i.style.transform = `translate(-50%, ${d - 46}px)`; i.firstChild.style.transform = `rotate(${d * 3.2}deg)`; i.classList.toggle('ready', d >= NEED); };
+    const blocked = (t) => !S.me || !S.me.status || document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) ||
+      (t && t.closest && t.closest('.sheet, .modal, .overlay, [data-noptr], .hscroll, .seg-scroll, .cat-strip, .chips, .tabs-scroll'));
+    document.addEventListener('touchstart', (e) => {
+      if (busy || e.touches.length !== 1 || window.scrollY > 0 || blocked(e.target)) { on = false; return; }
+      on = true; y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0;
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (!on) return;
+      const ry = e.touches[0].clientY - y0, rx = Math.abs(e.touches[0].clientX - x0);
+      if (ry <= 0 || window.scrollY > 0 || (dy === 0 && rx > ry)) { if (dy > 0) set(0, true); on = dy > 0 && ry > 0; dy = 0; return; }
+      dy = Math.min(MAX, ry * 0.5);
+      if (e.cancelable) e.preventDefault();
+      set(dy);
+    }, { passive: false });
+    const end = async () => {
+      if (!on) return; on = false;
+      if (dy < NEED) { set(0, true); dy = 0; return; }
+      busy = true; haptic('success'); set(56, true); el().classList.add('spin');
+      const t0 = Date.now();
+      await pullRefresh();
+      await new Promise((r) => setTimeout(r, Math.max(0, 500 - (Date.now() - t0))));
+      el().classList.remove('spin'); set(0, true); dy = 0; busy = false;
+    };
+    document.addEventListener('touchend', end, { passive: true });
+    document.addEventListener('touchcancel', end, { passive: true });
+  })();
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.screen === 'install') render(); });
 
   // ───────────── СТАРТ ─────────────
