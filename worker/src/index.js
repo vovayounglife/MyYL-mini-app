@@ -621,6 +621,10 @@ function ctx_(tg) {
   const all = loadRoles_().filter((r) => r.tgId === id);
   const active = all.filter((r) => r.status === ST.ACTIVE);
   const roles = active.filter((r) => !(roleDef_(r.key) || {}).viewOnly);
+  // «Національний адмін» — посада в Національному офісі з повноваженнями на всю Україну (не належить жодному регіону)
+  active.filter((r) => r.key === 'OFFICE' && /націон\S*\s+адмін/i.test(r.title || '')).forEach((r) => {
+    if (!roles.some((x) => x.key === 'NATIONAL_ADMIN')) roles.push(Object.assign({}, r, { id: r.id + ':na', key: 'NATIONAL_ADMIN', label: 'Національний адмін', rank: 1, level: 'nat', unitId: '', virtual: true }));
+  });
   return { id: id, tg: tg, person: person, roles: roles, active: active, allRoles: all, get name() { const p = getPerson_(id); return (p && p.name) || fullName_(tg); } };
 }
 // ── «Відобразити як для»: перегляд застосунку очима нижчої ролі (лише читання) ──

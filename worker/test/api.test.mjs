@@ -1176,6 +1176,20 @@ ok(r.ok && !r.data.recent.length, 'статистика: офіс по Укра�
   ok(!r.ok, 'доступи: Адмін команди не дає роль Капітана');
 }
 
+// ── Національний адмін (посада в офісі): повноваження на всю Україну ──
+{
+  const NA = { id: 520, first_name: 'Нац', last_name: 'Адмін' };
+  await api(NA, 'register', { name: 'Ніна Адмін', roles: ['OFFICE'], titles: { OFFICE: 'Національний адмін' } });
+  const rq = await api(VOVA, 'requests');
+  const na = rq.data.find((p) => p.tgId === '520');
+  await api(VOVA, 'decide', { roleIds: [na.roles[0].id], approve: true });
+  const m = await api(NA, 'me');
+  ok(m.data.caps.eventUnits.some((u) => u.level === 'nat') && m.data.caps.broadcast && m.data.caps.approve, 'нац. адмін: події на всю Україну, розсилки, заявки');
+  ok((m.data.statScopes || m.data.scopes).some((x) => x.key === 'nat') && m.data.scopes.some((x) => x.level === 'region'), 'нац. адмін: статистика України з регіонами');
+  r = await api(NA, 'eventSave', { level: 'nat', unitId: '', title: 'Національна конференція', date: '2026-12-20', time: '10:00', place: 'Київ', desc: '' });
+  ok(r.ok, 'нац. адмін: створив національну подію');
+}
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
