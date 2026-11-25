@@ -1419,6 +1419,10 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     }
     const q = String(I.q || '').toLowerCase();
     const f = (l) => (q ? l.filter((x) => x.name.toLowerCase().indexOf(q) >= 0) : l);
+    if ((d.latest || []).length) {
+      const when = (t) => { const x = new Date(t); return isNaN(x) ? '' : fmtDay(ymd(x)) + ' · ' + String(x.getHours()).padStart(2, '0') + ':' + String(x.getMinutes()).padStart(2, '0'); };
+      h += `<div class="sec">Останні, хто встановив · ${d.latest.length}</div><div class="card list">${d.latest.map((u) => `<div class="li" style="cursor:default"><span class="avatar">${esc(initials(u.name))}</span><span class="grow"><span class="b" style="display:block">${esc(u.name)}</span><span class="xs muted">${esc(u.role)}</span></span><span class="xs muted" style="text-align:right">${esc(when(u.at))}</span></div>`).join('')}</div>`;
+    }
     h += `<div class="sec">Користувачі MyYL · ${d.users.length}</div>`;
     if (d.users.length > 8) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти…" value="${esc(I.q)}" data-bind="inst.q" data-live="instFind" aria-label="Пошук">`;
     h += `<div class="card list" id="instList">${f(d.users).map((u) => `<div class="li" style="cursor:default"><span class="avatar">${esc(initials(u.name))}</span><span class="grow"><span class="b" style="display:block">${esc(u.name)}${ylBadge}</span><span class="xs muted">${esc(u.role)}${u.since ? ' · з ' + esc(fmtShortDay(u.since)) + ' ' + u.since.slice(0, 4) : ''}</span></span></div>`).join('') || '<div class="empty small">Нікого</div>'}</div>`;

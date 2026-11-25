@@ -2811,10 +2811,11 @@ API.installStats = function (c0, d) {
   const people = Object.keys(byId).map((id) => {
     const per = getPerson_(id) || {};
     const top = byId[id].roles.sort((a, b) => a.rank - b.rank)[0];
-    return { name: per.name || top.name, role: top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, ''), reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '' };
+    return { name: per.name || top.name, role: top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, ''), reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '', at: per.registered || '' };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const t = count(all);
   return { scope: scope, scopes: p.scopes, total: t.total, reg: t.reg, rows: rows, title: { nat: 'Регіони', region: 'Ерії', area: 'Команди', team: '', multi: 'Вибрані' }[scope.level] || '',
+    latest: people.filter((x) => x.reg && x.at).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 10).map((x) => ({ name: x.name, role: x.role, at: x.at })),
     users: people.filter((x) => x.reg), notYet: people.filter((x) => !x.reg).map((x) => ({ name: x.name, role: x.role })) };
 };
 
