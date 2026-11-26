@@ -254,7 +254,8 @@
   };
   const myPhoto = () => { try { return (tg.initDataUnsafe.user || {}).photo_url || ''; } catch (e) { return ''; } };
   const myAvatar = () => myPhoto() ? `<img class="avatar lg" src="${esc(myPhoto())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
-  const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0];
+  // невідома роль (напр. службова, якої вже немає в списку) не повинна ламати екран
+  const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0] || { key: k, label: '', rank: 99, level: '' };
   const myTeamFirst = (ids) => { const mine = (S.me.myTeams || []).map((t) => t.id).filter((id) => ids.indexOf(id) >= 0); return mine[0] || ids[0] || null; };
 
   // ───────────── навігація ─────────────
@@ -983,7 +984,7 @@
   const AUD_GROUPS = [['all', 'Усім'], ['leaders', 'Лідерам і вище'], ['captains', 'Капітанам і вище'], ['heads', 'Керівництву ерій і регіонів']];
   const audRoles = (g) => S.me.roleDefs.filter((r) => !r.titled && (g === 'leaders' ? r.rank <= 9 : g === 'captains' ? r.rank <= 6 : g === 'heads' ? r.rank <= 5 : false)).map((r) => r.key);
   function rolesField(scr, f, hint) {
-    const sel = f.roles || [];
+    const sel = f.roles = (f.roles || []).filter((k) => roleDef(k).label);
     const grp = !sel.length ? 'all' : (AUD_GROUPS.filter((g) => g[0] !== 'all' && audRoles(g[0]).join() === sel.slice().sort((a, b) => roleDef(a).rank - roleDef(b).rank).join())[0] || [''])[0];
     return `<div class="pills" style="flex-wrap:wrap">${AUD_GROUPS.map((g) => `<button type="button" class="pill${grp === g[0] ? ' on' : ''}" data-a="audGroup" data-s="${scr}" data-g="${g[0]}">${g[1]}</button>`).join('')}<button type="button" class="pill${sel.length && !grp ? ' on' : ''}" data-a="audCustom" data-s="${scr}">Вибрати ролі</button></div>
       ${f.audOpen || (sel.length && !grp) ? `<div class="pills" style="flex-wrap:wrap">${S.me.roleDefs.filter((r) => !r.hidden).map((r) => `<button type="button" class="pill${sel.indexOf(r.key) >= 0 ? ' on' : ''}" style="min-height:34px" data-a="audRole" data-s="${scr}" data-k="${r.key}">${esc(r.label)}</button>`).join('')}</div>` : ''}
@@ -2689,7 +2690,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.audRole = (d) => { const f = audState(d.s); const r = f.roles = (f.roles || []).slice(); const i = r.indexOf(d.k); if (i >= 0) r.splice(i, 1); else r.push(d.k); audChanged(d.s); };
   A.evEdit = (d) => {
     const e = (S.events || []).filter((x) => x.id === d.id)[0]; if (!e) return;
-    const f = { id: e.seriesId || e.id, rep: e.rep || '', until: e.until || '', title: e.title, date: e.start0 || e.date, end: (e.seriesId ? e.end0 : e.end) || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).slice(), audOpen: false };
+    const f = { id: e.seriesId || e.id, rep: e.rep || '', until: e.until || '', title: e.title, date: e.start0 || e.date, end: (e.seriesId ? e.end0 : e.end) || '', time: e.time || '', place: e.place || '', desc: e.desc || '', roles: (e.roles || []).filter((k) => roleDef(k).label), audOpen: false };
     let units = caps().eventUnits || [];
     let idx = units.findIndex((x) => x.level === e.level && x.unitId === e.unitId);
     if (idx < 0) { f.extraUnit = { level: e.level, unitId: e.unitId, label: e.levelLabel }; idx = units.length; }
