@@ -24,7 +24,7 @@ const INITDATA_MAX_AGE_SEC = 7 * 24 * 3600;
 
 // rank: менше число = вища роль. level: до чого привʼязана роль.
 const ROLES = [
-  { key: 'SUPER', label: 'Раб Божий', rank: 0, level: 'nat' },          // власник системи — найвища роль
+  { key: 'SUPER', label: 'власник', rank: 0, level: 'nat' },          // власник системи — найвища роль
   { key: 'NATIONAL_ADMIN', label: 'Національний Адмін', rank: 1, level: 'nat' },
   { key: 'REGIONAL_DIRECTOR', label: 'Регіональний Директор', rank: 2, level: 'region' },
   { key: 'REGIONAL_ADMIN', label: 'Регіональний Адмін', rank: 3, level: 'region' },
@@ -200,7 +200,7 @@ function canTeam_(c, teamId, maxRank) {
 }
 function isSugarOnly_(c) { return c.roles.length > 0 && c.roles.every(function (r) { return r.key === 'SUGAR'; }); }
 // ───── Хто підтверджує ролі ─────
-// Раб Божий може підтвердити будь-яку роль. Для решти — таблиця нижче:
+// власник може підтвердити будь-яку роль. Для решти — таблиця нижче:
 //   'same'  — така сама одиниця (той самий регіон / ерія);
 //   'cover' — роль накриває одиницю заявки (регіон → його ерії й команди, ерія → її команди).
 // Ролі команди, яких тут немає (Адмін команди … Волонтер), підтверджує Капітан і будь-хто вищий у своїх межах.
@@ -213,7 +213,7 @@ const APPROVAL = {
   CAPTAIN: [['AREA_DIRECTOR', 'cover'], ['AREA_ADMIN', 'cover'], ['REGIONAL_ADMIN', 'cover']],
   OFFICE: [['REGIONAL_DIRECTOR', 'same'], ['REGIONAL_ADMIN', 'same']],
 };
-// Для яких ролей Раб Божий завжди отримує сповіщення (для інших — лише якщо більше нікому підтвердити)
+// Для яких ролей власник завжди отримує сповіщення (для інших — лише якщо більше нікому підтвердити)
 const SUPER_NOTIFY = ['NATIONAL_ADMIN', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
 
 function ruleMatch_(r, rule, target) {
@@ -359,7 +359,7 @@ function requestRoles_(c, d) {
     });
   });
   resetMemo_('roles');
-  // Раб Божий не чекає на підтвердження власних ролей
+  // власник не чекає на підтвердження власних ролей
   if (created.length && c.roles.some(function (r) { return r.key === 'SUPER'; })) {
     const mine = loadRoles_().filter(function (r) { return created.indexOf(r.id) >= 0; });
     mine.forEach(function (r) {
@@ -585,7 +585,7 @@ function eventUnits_(c) {
     if (seen[k]) return;
     seen[k] = true;
     out.push({ level: r.level, unitId: r.unitId, label: levelLabel_(r.level, r.unitId) });
-    // Раб Божий може додавати події й у календар будь-якого регіону
+    // власник може додавати події й у календар будь-якого регіону
     if (r.key === 'SUPER') loadStruct_().regions.forEach(function (x) {
       if (seen['region:' + x.id]) return;
       seen['region:' + x.id] = true;
@@ -672,9 +672,9 @@ function rsvpSet_(c, eventId, going) {
 }
 
 // ── структура: ерії й команди ──
-// Хто редагує ерії свого регіону (Раб Божий — усі регіони):
+// Хто редагує ерії свого регіону (власник — усі регіони):
 const MANAGE_AREAS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN'];
-// Хто створює й редагує команди (Еріа Директор — у своїй ерії; регіон — у своєму регіоні; Раб Божий — усюди):
+// Хто створює й редагує команди (Еріа Директор — у своїй ерії; регіон — у своєму регіоні; власник — усюди):
 const MANAGE_TEAMS = ['SUPER', 'REGIONAL_DIRECTOR', 'REGIONAL_ADMIN', 'AREA_DIRECTOR'];
 
 function canEditAreas_(c, regionId) {
@@ -1471,7 +1471,7 @@ function onOpen() {
     .addItem('🔔 Увімкнути нагадування', 'menuRemindersOn')
     .addItem('🔕 Вимкнути нагадування', 'menuRemindersOff')
     .addItem('🩺 Перевірити стан', 'menuStatus')
-    .addItem('👑 Посилання для власника (Раб Божий)', 'menuAdminLink')
+    .addItem('👑 Посилання для власника (власник)', 'menuAdminLink')
     .addToUi();
 }
 

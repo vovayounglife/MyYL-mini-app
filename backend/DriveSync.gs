@@ -15,7 +15,7 @@ const TZ = 'Europe/Kyiv';
 const GMAIL_RANK = 6; // доступ до таблиць — Капітан і вище
 
 const ROLE_LABELS = {
-  SUPER: 'Раб Божий', NATIONAL_ADMIN: 'Національний Адмін', REGIONAL_DIRECTOR: 'Регіональний Директор', REGIONAL_ADMIN: 'Регіональний Адмін',
+  SUPER: 'власник', NATIONAL_ADMIN: 'Національний Адмін', REGIONAL_DIRECTOR: 'Регіональний Директор', REGIONAL_ADMIN: 'Регіональний Адмін',
   AREA_DIRECTOR: 'Еріа Директор', AREA_ADMIN: 'Еріа Адмін', CAPTAIN: 'Капітан', TEAM_ADMIN: 'Адмін команди', DGL: 'DGL', LEADER: 'Лідер',
   HELPER: 'Помічник', SUGAR: 'Сахарок', VOLUNTEER: 'Волонтер', OFFICE: 'Працівник офісу',
 };
@@ -42,7 +42,7 @@ function onOpen() {
     .addItem('3. Увімкнути копіювання на Диск', 'menuSyncOn')
     .addSeparator()
     .addItem('🔄 Скопіювати зараз', 'syncNow')
-    .addItem('👑 Посилання для власника (Раб Божий)', 'menuAdminLink')
+    .addItem('👑 Посилання для власника (власник)', 'menuAdminLink')
     .addItem('🩺 Перевірити стан', 'menuStatus')
     .addToUi();
 }

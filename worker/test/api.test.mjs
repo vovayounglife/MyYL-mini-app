@@ -64,10 +64,10 @@ ok(!bogus.ok && bogus.error === 'auth', 'підроблений initData від�
 
 // team creation by super, Vova adds himself a role
 let t = await api(VOVA, 'teamSave', { areaId: 'a1', name: 'Тернопіль-Центр' });
-ok(t.ok, 'Раб Божий створює команду');
+ok(t.ok, 'власник створює команду');
 const teamId = t.data.id;
 r = await api(VOVA, 'requestRoles', { roles: ['CAPTAIN'], teamId, areaId: 'a1' });
-ok(r.ok && r.data.status === 'active', 'Раб Божий додає собі роль без підтвердження');
+ok(r.ok && r.data.status === 'active', 'власник додає собі роль без підтвердження');
 
 // RD registers
 sent.length = 0;
@@ -141,7 +141,7 @@ ok(r.ok, 'лідер додає подію команди');
 r = await api(LEAD, 'eventSave', { level: 'region', unitId: 'r0', title: 'X', date: day });
 ok(!r.ok, 'лідер не додає подію регіону');
 r = await api(VOVA, 'eventSave', { level: 'region', unitId: 'r3', title: 'Північ', date: day });
-ok(r.ok, 'Раб Божий додає подію в будь-який регіон');
+ok(r.ok, 'власник додає подію в будь-який регіон');
 me = await api(SUG, 'me');
 const ev = me.data.events.find((e) => e.title === 'Табір');
 ok(ev && ev.going === 1, 'сахарок бачить подію, 1 йде');
@@ -197,7 +197,7 @@ console.log('   cron надіслав:', sent.length);
 
 // Моя команда в MyYL
 let tr = await api(VOVA, 'myylTree');
-ok(tr.ok && tr.data.roots[0] === 'nat' && tr.data.units.nat.children.length === 7, 'MyYL: Раб Божий бачить Україну і 7 регіонів');
+ok(tr.ok && tr.data.roots[0] === 'nat' && tr.data.units.nat.children.length === 7, 'MyYL: власник бачить Україну і 7 регіонів');
 ok(tr.data.units['r:r0'].peopleCount >= 5 && tr.data.units['r:r0'].people.some((p) => p.tgId === '2'), 'MyYL: у West видно РД і людей гілки');
 tr = await api(AD, 'myylTree');
 ok(tr.ok && tr.data.roots.length === 1 && tr.data.roots[0] === 'a:a1' && tr.data.units['a:a1'].children.length === 2 && !tr.data.units['r:r0'], 'MyYL: Еріа Директор бачить лише свою ерію і її команди');
@@ -206,7 +206,7 @@ ok(tr.data.units[capKey].people.length === 3 && tr.data.units[capKey].people[0].
 tr = await api(SUG, 'myylTree');
 ok(tr.ok && tr.data.roots[0] === capKey && Object.keys(tr.data.units).length === 1, 'MyYL: сахарок бачить лише свою команду');
 
-// Написати (Раб Божий … Капітан, у своїх межах)
+// Написати (власник … Капітан, у своїх межах)
 r = await api(LEAD, 'broadcastInfo', {});
 ok(!r.ok, 'розсилка: лідер не може');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'] });
@@ -238,7 +238,7 @@ await W.scheduled({ scheduledTime: notFive.getTime() }, env, ectx);
 left = env.DB.raw.prepare('SELECT COUNT(*) AS n FROM outbox').get().n;
 ok(left === 0 && sent.filter((s) => /Велика розсилка/.test(s.text || '')).length === 45, 'cron дослав решту, без дублів');
 r = await api(VOVA, 'broadcastInfo', { units: ['nat'] });
-ok(r.data.history.length === 2 && r.data.queued === 0, 'історія розсилок (Раб Божий бачить усі)');
+ok(r.data.history.length === 2 && r.data.queued === 0, 'історія розсилок (власник бачить усі)');
 r = await api(CAP, 'broadcastInfo', {});
 ok(r.data.history.length === 1, 'історія: капітан бачить свої');
 
@@ -247,7 +247,7 @@ ok(r.data.history.length === 1, 'історія: капітан бачить с�
 r = await api(RD, 'financeSave', { teamId: capTeam.id, month: T.kyivDay(new Date()).slice(0, 7), prev: 0, office: 1, church: 0, team: 0, spent: 0 });
 ok(!r.ok && /лише Капітан/.test(r.message), 'фінанси: РД не може вносити');
 r = await api(VOVA, 'financeGet', { teamId: capTeam.id });
-ok(r.ok && r.data.canEdit === false && r.data.current.balance === 350, 'фінанси: Раб Божий бачить, але не редагує');
+ok(r.ok && r.data.canEdit === false && r.data.current.balance === 350, 'фінанси: власник бачить, але не редагує');
 r = await api(CAP, 'financeGet', { teamId: capTeam.id });
 ok(r.ok && r.data.canEdit === true, 'фінанси: капітан редагує');
 
@@ -288,9 +288,9 @@ ok(r.ok && r.data.count >= 1 && ndoc && ndoc.chat_id === String(CAP.id) && /Зн
 r = await api(SUG, 'knownExport', { units: ['t:' + capTeam.id] });
 ok(!r.ok, 'знані: без доступу — не витягує');
 r = await api(VOVA, 'report', { units: ['nat', 'r:r0'], items: ['club', 'kr'], from: monthAgo, to: today });
-ok(r.ok, 'звіт: Раб Божий — Україна і регіон');
+ok(r.ok, 'звіт: власник — Україна і регіон');
 r = await api(VOVA, 'report', { units: ['a:a1'], items: ['club'], from: monthAgo, to: today });
-ok(r.ok, 'звіт: Раб Божий замовляє будь-яку одиницю (ерію)');
+ok(r.ok, 'звіт: власник замовляє будь-яку одиницю (ерію)');
 r = await api(AD, 'report', { units: ['t:' + capTeam.id], items: ['club'], from: monthAgo, to: today });
 ok(r.ok, 'звіт: ЕД — команда (рівень нижче)');
 r = await api(SUG, 'report', { units: ['t:' + capTeam.id], items: ['club', 'finance'], from: monthAgo, to: today });
@@ -428,10 +428,10 @@ ok(r.ok && (await api(VOVA, 'events')).data.some((e) => e.title === 'Чужа' &
 
 // сповіщення
 me = await api(VOVA, 'me');
-ok(me.data.profile.notif.bc === false && me.data.profile.notif.requests === true, 'сповіщення: Раб Божий за замовчуванням без чужих розсилок');
+ok(me.data.profile.notif.bc === false && me.data.profile.notif.requests === true, 'сповіщення: власник за замовчуванням без чужих розсилок');
 sent.length = 0;
 await api(AD, 'broadcast', { units: ['a:a1'], text: 'Від ЕД' });
-ok(!sent.some((x) => x.chat_id === '1' && /Від ЕД/.test(x.text || '')) && !sent.some((x) => x.chat_id === '3' && /Від ЕД/.test(x.text || '')), 'сповіщення: Раб Божий і автор не отримують');
+ok(!sent.some((x) => x.chat_id === '1' && /Від ЕД/.test(x.text || '')) && !sent.some((x) => x.chat_id === '3' && /Від ЕД/.test(x.text || '')), 'сповіщення: власник і автор не отримують');
 await api(LEAD, 'saveProfile', { notif: { bc: false } });
 sent.length = 0;
 r = await api(AD, 'broadcast', { units: ['a:a1'], text: 'Ще раз' });
@@ -725,7 +725,7 @@ ok(fx.ok && fg.data.current.prev === 50 && fx.data.balance === 50 + curNoPrev, '
 const NO = { id: 230, first_name: 'Нац' };
 sent.length = 0;
 r = await api(NO, 'register', { name: 'Наталія Офіс', roles: ['OFFICE'], titles: { OFFICE: 'Фандрейзер, HR' } });
-ok(r.ok && sent.some((m) => m.chat_id === '1' && /Нова заявка/.test(m.text)), 'нац. офіс: заявка без регіону, Раб Божий отримав');
+ok(r.ok && sent.some((m) => m.chat_id === '1' && /Нова заявка/.test(m.text)), 'нац. офіс: заявка без регіону, власник отримав');
 me = await api(VOVA, 'me');
 const defOff = me.data.roleDefs.find((x) => x.key === 'OFFICE');
 ok(defOff.level === 'nat' && defOff.titles[0].items.includes('Операційний директор') && defOff.titles[1].group === 'Експерти', 'нац. офіс: список посад');
@@ -734,7 +734,7 @@ const noReqRd = [].concat(reqs.data || []).find((p) => p.tgId === '230');
 ok(!noReqRd || !noReqRd.primary, 'нац. офіс: регіональний не основний підтверджувач');
 reqs = await api(VOVA, 'requests');
 const noReq = reqs.data.find((p) => p.tgId === '230');
-ok(noReq && noReq.roles[0].label === 'Фандрейзер, HR (національний офіс)', 'нац. офіс: Раб Божий бачить заявку з посадою');
+ok(noReq && noReq.roles[0].label === 'Фандрейзер, HR (національний офіс)', 'нац. офіс: власник бачить заявку з посадою');
 r = await api(RD, 'decide', { roleIds: [noReq.roles[0].id], approve: true });
 ok(!r.ok, 'нац. офіс: регіональний не підтверджує');
 r = await api(VOVA, 'decide', { roleIds: [noReq.roles[0].id], approve: true });
@@ -835,13 +835,13 @@ r = await api(LEAD, 'resSave', { title: 'X', url: 'x.com' });
 ok(!r.ok, 'ресурси: лідер не може додати');
 sent.length = 0;
 r = await api(RD, 'resSave', { title: 'Посібник для лідерів', url: 'drive.google.com/x', aud: 'all' });
-ok(r.ok && r.data.pending && sent.some((m) => m.chat_id === '1' && /чекає підтвердження/.test(m.text)), 'ресурси: «для всіх» від РД чекає Раба Божого');
+ok(r.ok && r.data.pending && sent.some((m) => m.chat_id === '1' && /чекає підтвердження/.test(m.text)), 'ресурси: «для всіх» від РД чекає власника');
 const resAll = r.data.id;
 ok(!(await api(LEAD, 'resList', {})).data.list.some((x) => x.id === resAll), 'ресурси: непідтверджене не видно іншим');
 r = await api(RD, 'resDecide', { id: resAll, approve: true });
 ok(!r.ok, 'ресурси: РД не підтверджує «для всіх»');
 r = await api(VOVA, 'resDecide', { id: resAll, approve: true });
-ok(r.ok && !r.data.pending && (await api(LEAD, 'resList', {})).data.list.some((x) => x.id === resAll), 'ресурси: Раб Божий підтвердив — бачать усі');
+ok(r.ok && !r.data.pending && (await api(LEAD, 'resList', {})).data.list.some((x) => x.id === resAll), 'ресурси: власник підтвердив — бачать усі');
 r = await api(RD, 'resSave', { title: 'Для West', url: 'https://w.example', aud: 'r:r0' });
 ok(r.ok && !r.data.pending, 'ресурси: РД для свого регіону — одразу');
 r = await api(LEAD, 'resList', {});
@@ -852,7 +852,7 @@ r = await api(VOVA, 'resDecide', { id: r.data.id, approve: true });
 r = await api(LEAD, 'resList', {});
 ok(!r.data.list.some((x) => x.title === 'Матеріали College'), 'ресурси: напрямок не для цієї команди — не видно');
 r = await api(LEAD, 'resDelete', { id: resAll });
-ok(!r.ok, 'ресурси: видаляє лише автор або Раб Божий');
+ok(!r.ok, 'ресурси: видаляє лише автор або власник');
 
 
 {
@@ -1047,11 +1047,11 @@ r = await api(LEAD, 'tasks');
 ok(r.data.list.some((x) => x.self && x.title === 'Подзвонити Максу') && r.data.canSelf, 'задача собі: видно в списку');
 r = await api(VOVA, 'tasks');
 ok(!r.data.list.some((x) => x.title === 'Подзвонити Максу'), 'задача собі: інші не бачать');
-// ── «Відобразити як» Національний офіс — лише Раб Божий ──
+// ── «Відобразити як» Національний офіс — лише власник ──
 me = await api(AD, 'me');
 ok(!(me.data.viewRoles || []).some((x) => x.key === 'OFFICE'), 'перегляд: ЕД не бачить «Національний офіс»');
 me = await api(VOVA, 'me');
-ok((me.data.viewRoles || []).some((x) => x.key === 'OFFICE'), 'перегляд: Раб Божий бачить «Національний офіс»');
+ok((me.data.viewRoles || []).some((x) => x.key === 'OFFICE'), 'перегляд: власник бачить «Національний офіс»');
 
 // ── можливі дублікати: латиниця = кирилиця ──
 r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Ольга Дума' });
@@ -1061,7 +1061,7 @@ r = await api(VOVA, 'dupes');
 let dp = r.ok && r.data.list.find((x) => x.people.some((p) => p.name === 'Olya Duma'));
 ok(dp || (r.ok && !r.data.list.some((x) => x.people.some((p) => p.name === 'Ольга Дума'))), 'дублі: Olya Duma ↔ Ольга Дума знайдено або вже обʼєднано при реєстрації');
 r = await api(CAP, 'dupes');
-ok(!r.ok, 'дублі: лише Раб Божий');
+ok(!r.ok, 'дублі: лише власник');
 r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Khrystyna Melnyk' });
 r = await api(CAP, 'teamMembers', { teamId: capTeam.id });
 r = await api(CAP, 'memberAdd', { teamId: capTeam.id, role: 'VOLUNTEER', names: 'Христина Мельник' });
@@ -1083,26 +1083,26 @@ ok(!r.data.list.some((x) => x.key === dp.key), 'дублі: «не дубль» 
 r = await api(LEAD, 'bugSend', { text: 'Не відкривається календар', screen: 'calendar' });
 ok(r.ok, 'помилка: лідер надсилає');
 r = await api(LEAD, 'bugs');
-ok(!r.ok, 'помилка: список — лише Раб Божий');
+ok(!r.ok, 'помилка: список — лише власник');
 me = await api(VOVA, 'me');
 ok(me.data.bugsOpen >= 1, 'помилка: лічильник нових');
 r = await api(VOVA, 'bugs');
 const bg = r.ok && r.data.list.find((x) => x.text === 'Не відкривається календар');
-ok(bg && !bg.done && bg.screen === 'calendar', 'помилка: Раб Божий бачить');
+ok(bg && !bg.done && bg.screen === 'calendar', 'помилка: власник бачить');
 r = await api(VOVA, 'bugDone', { id: bg.id });
 r = await api(VOVA, 'bugs');
 ok(r.data.list.find((x) => x.id === bg.id).done, 'помилка: позначено виправленим');
 
-// ── Раб Божий: не в національній команді; підпис розсилки ──
+// ── власник: не в національній команді; підпис розсилки ──
 r = await api(VOVA, 'myylTree');
-ok(r.ok && !(r.data.units.nat.people || []).some((p) => p.tgId === '1'), 'дерево: Раб Божий не в «Національній команді»');
+ok(r.ok && !(r.data.units.nat.people || []).some((p) => p.tgId === '1'), 'дерево: власник не в «Національній команді»');
 r = await api(VOVA, 'broadcast', { units: ['nat'], text: 'Привіт усім' });
 const ob = (re) => env.DB.raw.prepare('SELECT text FROM outbox').all().map((x) => x.text).concat(sent.map((x) => x.text || '')).filter((t) => re.test(t || ''));
 const bcAll = ob(/Привіт усім/);
-ok(r.ok && bcAll.length && bcAll.every((t) => !/📣/.test(t) && !/Вова/.test(t)), 'розсилка: Раб Божий на всю Україну — без підпису');
+ok(r.ok && bcAll.length && bcAll.every((t) => !/📣/.test(t) && !/Вова/.test(t)), 'розсилка: власник на всю Україну — без підпису');
 r = await api(VOVA, 'broadcast', { units: ['a:a1'], text: 'Привіт ерії' });
 const bcA = ob(/Привіт ерії/);
-ok(r.ok && bcA.length && bcA.every((t) => /📣 <b>Вова/.test(t) && !/Раб Божий/.test(t)), 'розсилка: Раб Божий у межах регіону — підпис його роллю ' + (bcA[0] || '').slice(0, 80));
+ok(r.ok && bcA.length && bcA.every((t) => /📣 <b>Вова/.test(t) && !/власник/.test(t)), 'розсилка: власник у межах регіону — підпис його роллю ' + (bcA[0] || '').slice(0, 80));
 
 // ── останній внесений клуб над формою ──
 me = await api(CAP, 'me');
@@ -1143,7 +1143,7 @@ const allClub = me.data.caps.clubAll.length;
 ok(allClub > 0 && me.data.caps.report.club.length === allClub, 'клуб: за замовчуванням — усі команди');
 r = await api(VOVA, 'clubPick', { teams: [] });
 me = await api(VOVA, 'me');
-ok(r.ok && me.data.caps.report.club.length === 0 && me.data.caps.clubAll.length === allClub, 'клуб: Раб Божий — лише за себе');
+ok(r.ok && me.data.caps.report.club.length === 0 && me.data.caps.clubAll.length === allClub, 'клуб: власник — лише за себе');
 r = await api(VOVA, 'clubPick', { teams: [capTeam.id] });
 me = await api(VOVA, 'me');
 ok(me.data.caps.report.club.join() === capTeam.id, 'клуб: обрана одна команда');

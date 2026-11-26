@@ -31,7 +31,7 @@ const ROLES = [
   { key: 'HELPER', label: 'Помічник', rank: 10, level: 'team' },
   { key: 'SUGAR', label: 'Сахарок', rank: 11, level: 'team' },
   { key: 'VOLUNTEER', label: 'Волонтер', rank: 12, level: 'team' },
-  // Національний офіс України: людина обирає посаду зі списку (або пише свою), підтверджує Національний Адмін / Раб Божий
+  // Національний офіс України: людина обирає посаду зі списку (або пише свою), підтверджує Національний Адмін / власник
   { key: 'OFFICE', label: 'Національний офіс', rank: 13, level: 'nat', viewOnly: true, titled: true },
   // Офіс ерії: людина сама називає свою роль, підтверджувач може змінити
   { key: 'AREA_OFFICE', label: 'Офіс ерії', rank: 14, level: 'area', viewOnly: true, titled: true },
@@ -67,7 +67,7 @@ const ST = { PENDING: 'очікує', ACTIVE: 'активна', REJECTED: 'ві�
 const MODE = { event: 'подія', week: 'тиждень', none: 'не було' };
 const TYPE_LABEL = { club: 'Клуб', mg: 'Мала група', kr: 'Контактна робота' };
 
-// Хто підтверджує ролі (Раб Божий — будь-яку). 'same' — та сама одиниця; 'cover' — роль накриває одиницю заявки.
+// Хто підтверджує ролі (власник — будь-яку). 'same' — та сама одиниця; 'cover' — роль накриває одиницю заявки.
 const APPROVAL = {
   NATIONAL_ADMIN: [],
   REGIONAL_DIRECTOR: [],
@@ -671,11 +671,11 @@ function ctx_(tg) {
 }
 // ── «Відобразити як для»: перегляд застосунку очима нижчої ролі (лише читання) ──
 const VIEW_OK = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo|myStats|report)$/;
-// ролі, якими людина може «подивитися»: усі нижчі за її найвищу (без «Раб Божий»)
+// ролі, якими людина може «подивитися»: усі нижчі за її найвищу (без «власник»)
 function viewRoles_(c) {
   if (!c.roles.length) return [];
   const top = Math.min.apply(null, c.roles.map((r) => r.rank));
-  // «Національний офіс» очима — лише Раб Божий
+  // «Національний офіс» очима — лише власник
   return ROLES.filter((r) => r.key !== 'SUPER' && !r.hidden && r.rank > top && (r.key !== 'OFFICE' || isSuper_(c))).map((r) => ({ key: r.key, label: r.label, level: r.level }));
 }
 function viewCtx_(c, v) {
@@ -1145,7 +1145,7 @@ function requestRoles_(c, d) {
     const unitId = def.level === 'team' ? teamId : def.level === 'area' ? areaId : def.level === 'region' ? regionId : '';
     if (def.level !== 'nat' && !unitId) bad_('Не вказано, де саме роль «' + def.label + '».');
     if (existing.some((r) => r.key === k && r.unitId === unitId)) return;
-    // Раб Божий не чекає на підтвердження власних ролей
+    // власник не чекає на підтвердження власних ролей
     if (sup && def.level === 'team') activateTeam_(unitId);
     const row = { id: uid_(), tgId: c.id, name: c.name, key: k, level: def.level, unitId: unitId, status: sup ? ST.ACTIVE : ST.PENDING, decidedBy: sup ? c.name : '', decided: sup ? nowIso() : '', title: def.titled ? clip_(((d.titles || {})[k] || '')).slice(0, 120) : '' };
     insertRole_(row);
@@ -2088,7 +2088,7 @@ API.myylTree = function (c0) {
   });
   // люди з активними ролями — на тій одиниці, де роль
   const byUnit = {};
-  // «Раб Божий» — службова роль, у складі не показуємо
+  // «власник» — службова роль, у складі не показуємо
   loadRoles_().filter((r) => r.status === ST.ACTIVE && r.key !== 'SUPER').forEach((r) => {
     const k = r.level === 'nat' ? 'nat' : (r.level === 'region' ? 'r:' : r.level === 'area' ? 'a:' : 't:') + r.unitId;
     if (!units[k]) return;
@@ -2321,7 +2321,7 @@ function reportHtml_(r) {
     (r.names ? '<p class="m">Особисті дані підлітків — лише для служіння. Не пересилай файл стороннім.</p>' : '') + '</body></html>';
 }
 
-// ── розсилка від Раба Божого ──
+// ── розсилка від власника ──
 const canBroadcast_ = (c) => c.roles.some((r) => r.rank <= RANK.APPROVE || r.key === 'TEAM_ADMIN');
 // хто потрапляє у вибір «де + які ролі» (без автора)
 function audience_(c, d, perm) {
@@ -2340,7 +2340,7 @@ function bcRecipients_(c, d) {
   const units = a.units.map(keyUnit_);
   const roles = a.roles;
   let ids = a.ids.filter((id) => wants_(id, 'bc'));
-  // Раб Божий, уся Україна, усім — також тим, хто ще чекає підтвердження
+  // власник, уся Україна, усім — також тим, хто ще чекає підтвердження
   if (isSuper_(c) && d.pending && !roles.length && units.some((u) => u.level === 'nat')) ids = uniq_(ids.concat(Object.keys(S.b.people).filter((id) => id !== c.id && wants_(id, 'bc'))));
   return { ids: ids, label: a.label, units: units };
 }
@@ -2363,7 +2363,7 @@ API.broadcast = function (c, d) {
   const r = bcRecipients_(c, d);
   if (!r.ids.length) bad_('За цим вибором ще нікого немає.');
   const sig = signLine_(c, r.units);
-  // Раб Божий на всю Україну — без підпису, просто від бота
+  // власник на всю Україну — без підпису, просто від бота
   const head = sig == null ? '' : '📣 <b>' + esc_(c.name) + '</b>' + (sig ? ' · ' + esc_(sig) : '') + '\n\n';
   const body = head + esc_(text);
   r.ids.forEach((id) => {
@@ -2377,12 +2377,12 @@ API.broadcast = function (c, d) {
 // ── задачі й опитування ──
 const TASK_ST = { todo: 'Не почато', doing: 'В процесі', done: 'Виконано' };
 const topRank_ = (c) => Math.min.apply(null, c.roles.map((r) => r.rank).concat([99]));
-// бачить хід виконання / результати: автор, Раб Божий і вищі ролі, що охоплюють усі вибрані місця
+// бачить хід виконання / результати: автор, власник і вищі ролі, що охоплюють усі вибрані місця
 function oversees_(c, x) {
   if (x.authorId === c.id || isSuper_(c)) return true;
   return c.roles.some((r) => r.rank <= RANK.APPROVE && r.rank < x.authorRank && x.units.length > 0 && x.units.every((k) => { const u = keyUnit_(k); return covers_(r, u.level, u.unitId); }));
 }
-// підпис автора: Раб Божий на всю Україну — null (без підпису); у межах регіону й нижче — його роль там (напр. «Регіональний Директор · West»)
+// підпис автора: власник на всю Україну — null (без підпису); у межах регіону й нижче — його роль там (напр. «Регіональний Директор · West»)
 function signLine_(c, units) {
   const lab = (r) => r.label + (r.level === 'nat' ? '' : ' · ' + unitName_(r.level, r.unitId));
   const own = c.roles.filter((r) => r.key !== 'SUPER').sort((a, b) => a.rank - b.rank);
@@ -3955,7 +3955,7 @@ API.actAsFind = function (c, d) {
   }).filter((x) => x.name && (x.name.toLowerCase().indexOf(q) >= 0 || phon_(x.name).indexOf(qp) >= 0)).sort((a, b) => a.name.localeCompare(b.name, 'uk')).slice(0, 25);
   return { list: list };
 };
-// ── «Повідомити про помилку»: пише кожен, читає Раб Божий ──
+// ── «Повідомити про помилку»: пише кожен, читає власник ──
 API.bugSend = function (c, d) {
   const text = clip_(d.text).slice(0, 3000);
   if (text.length < 3) bad_('Опиши, що сталося.');
@@ -3976,7 +3976,7 @@ API.bugDone = function (c, d) {
   S.run('UPDATE bugs SET done = ? WHERE id = ?', [d.undo ? '' : nowIso(), b.id]);
   return { ok: true };
 };
-// ── «Можливі дублікати» (Раб Божий): схожі імена (і латиниця = кирилиця), хоча б один — не зареєстрований у боті або однакове імʼя ──
+// ── «Можливі дублікати» (власник): схожі імена (і латиниця = кирилиця), хоча б один — не зареєстрований у боті або однакове імʼя ──
 function dupPairs_() {
   const st = loadStruct_();
   const live = loadRoles_().filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING);
@@ -4157,7 +4157,7 @@ async function handleAdmin(req, env, ctx, url) {
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
   if (action === 'probe') {
-    // виконати запит від імені «Раб Божий» (SUPER) і повернути лише час, розмір і помилку — без даних
+    // виконати запит від імені «власник» (SUPER) і повернути лише час, розмір і помилку — без даних
     const sup = await db.prepare("SELECT tg_id FROM roles WHERE role_key = 'SUPER' AND status = 'активна' LIMIT 1").first('tg_id');
     const out = [];
     for (const q of (Array.isArray(body.q) ? body.q : [])) {

@@ -1613,7 +1613,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <button type="button" class="btn ${b.done ? 'ghost' : 'sec2'} sm" data-a="bugDone" data-id="${esc(b.id)}" data-v="${b.done ? '1' : ''}">${b.done ? 'Повернути в нові' : '✓ Виправлено'}</button></div>`).join('');
   };
   const confirmAsk = (msg) => new Promise((res) => { if (tg && tg.showConfirm) tg.showConfirm(msg, (ok) => res(!!ok)); else res(window.confirm(msg)); });
-  // ── можливі дублікати (Раб Божий) ──
+  // ── можливі дублікати (власник) ──
   async function loadDupes() { try { S.dupesD = await api('dupes'); } catch (e) { toast(e.message, 'error'); } if (S.screen === 'dupes') render(); }
   VIEWS.dupes = function () {
     let h = header('Можливі дублікати', 'схожі імена в різних записах');
