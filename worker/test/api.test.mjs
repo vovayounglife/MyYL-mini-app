@@ -57,7 +57,7 @@ ok(r.status === 200, 'вебхук прийнято');
 r = await req('/tg', { message: { chat: { id: 1, type: 'private' }, from: VOVA, text: 'hi' } }, { 'X-Telegram-Bot-Api-Secret-Token': 'nope' });
 ok(r.status === 403, 'вебхук без секрету — 403');
 let me = await api(VOVA, 'me');
-ok(me.ok && me.data.status === 'active' && me.data.roles[0].label === 'Раб Божий', 'Вова — Раб Божий');
+ok(me.ok && me.data.status === 'active' && me.data.caps.isSuper && !me.data.roles.some((x) => x.key === 'SUPER') && !me.data.roleDefs.some((x) => x.key === 'SUPER') && !JSON.stringify(me.data).includes('Раб'), 'Вова — повний доступ, роль ніде не показується');
 ok(me.data.structure.regions.length === 7, '7 регіонів');
 const bogus = await W.fetch(new Request('https://x/', { method: 'POST', body: JSON.stringify({ initData: 'user=%7B%22id%22%3A1%7D&hash=00', action: 'me' }) }), env, ectx).then((x) => x.json());
 ok(!bogus.ok && bogus.error === 'auth', 'підроблений initData відхилено');
@@ -543,7 +543,7 @@ ok(!r.ok, 'основна роль: лише своя');
 // склад: усі ролі людини, можна зняти
 r = await api(RD, 'teamMembers', { units: ['t:' + teamId] });
 const vv = r.data.find((p) => p.tgId === '1');
-ok(vv && vv.all.some((x) => x.label === 'Раб Божий' && !x.canRemove) && vv.all.some((x) => x.label === 'Капітан'), 'склад: видно всі ролі людини, Раба Божого не зняти');
+ok(vv && !vv.all.some((x) => /Раб|Адміністратор/.test(x.label)) && vv.all.some((x) => x.label === 'Капітан'), 'склад: видно ролі людини, службова роль Вови не показується');
 const duo = r.data.find((p) => p.tgId === '77');
 const duoOther = duo && duo.all.find((x) => x.label === 'Лідер' && x.unit !== 'Команда «Тернопіль-Центр»');
 ok(duoOther && duoOther.canRemove, 'склад: РД може зняти роль в іншій команді');
@@ -1249,6 +1249,23 @@ ok(r.ok && !r.data.recent.length, 'статистика: офіс по Укра�
   const B = bank.data.items, has = (cat, t) => B.filter((x) => x.cat === cat && x.text.toLowerCase().replace(/[^а-яіїєґa-z ]/g, '') === t);
   ok(bank.ok && has('game', 'крокодил').length === 1 && !has('game', 'мафія').length && !B.some((x) => x.text === 'Х') && has('game', 'квач').length === 1, 'банк ідей: ігри без повторів і без незрозумілих (' + B.map((x) => x.cat + ':' + x.text).join(', ') + ')');
   ok(has('topic', 'блудний син').length === 1 && has('sermon', 'батько чекає').length === 1 && has('sermon', 'батько чекає')[0].desc === 'Лк 15:11-32' && has('song', 'way maker').length === 1 && B[0].team, 'банк ідей: теми, проповіді з місцем Біблії, пісні, назва команди');
+}
+
+// ── «Переглянути, як» (лише власник) ──
+{
+  const as = async (user, who, action, data) => (await req('/', { initData: initData(user), action, data, actAs: who })).json();
+  let f = await api(VOVA, 'actAsFind', { q: 'лід' });
+  ok(f.ok && f.data.list.some((x) => x.id === '5' && /Лідер/.test(x.role)) && !f.data.list.some((x) => x.id === '1'), 'переглянути як: пошук за імʼям (' + f.data.list.map((x) => x.name).join(', ') + ')');
+  f = await api(CAP, 'actAsFind', { q: 'лід' }); ok(!f.ok, 'переглянути як: пошук лише для власника');
+  let m = await as(VOVA, '5', 'me');
+  ok(m.ok && m.data.user.id === '5' && m.data.actAs && m.data.actAs.id === '5' && !m.data.caps.isSuper, 'переглянути як: застосунок очима лідера');
+  const before = (await api(LEAD, 'knownList', { teamId: capTeam.id })).data.length;
+  r = await as(VOVA, '5', 'knownSave', { teamId: capTeam.id, item: { name: 'Нова Знайома' } });
+  const after = await api(LEAD, 'knownList', { teamId: capTeam.id });
+  ok(r.ok && after.data.length === before + 1, 'переглянути як: можна вносити зміни від імені людини');
+  r = await as(CAP, '5', 'me'); ok(!r.ok && r.error === 'forbidden', 'переглянути як: іншим заборонено');
+  r = await as(VOVA, '999999', 'me'); ok(!r.ok && r.error === 'act_as', 'переглянути як: невідома людина');
+  r = await as(VOVA, '5', 'actAsFind', { q: 'кап' }); ok(!r.ok, 'переглянути як: зсередини режиму пошук недоступний');
 }
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h

@@ -17,7 +17,7 @@ const INITDATA_MAX_AGE_SEC = 7 * 24 * 3600;
 
 // rank: менше число = вища роль. level: до чого привʼязана роль.
 const ROLES = [
-  { key: 'SUPER', label: 'Раб Божий', rank: 0, level: 'nat' },
+  { key: 'SUPER', label: 'Адміністратор MyYL', rank: 0, level: 'nat', hidden: true },
   // окремо не обирається: «Національний адмін» — посада в Національному офісі; роль лишається для тих, хто її вже має
   { key: 'NATIONAL_ADMIN', label: 'Національний Адмін', rank: 1, level: 'nat', hidden: true },
   { key: 'REGIONAL_DIRECTOR', label: 'Регіональний Директор', rank: 2, level: 'region' },
@@ -150,7 +150,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 const NEEDS = {
   me: { log: 'week', events: true, tp: true, ck: true, bugCount: true, lastClubs: true, plans: 'open' },
   clubPage: { log: 'week', clubs: true, plans: 'team', ideas: true }, clubPlanSave: { clubs: true, plans: 'team' }, clubPlanDone: { log: 'week', ck: true, clubs: true, plans: 'team' },
-  clubIdeaAdd: { ideas: true }, clubIdeaDel: { ideas: true }, ideaBank: { plans: 'done' }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
+  clubIdeaAdd: { ideas: true }, clubIdeaDel: { ideas: true }, ideaBank: { plans: 'done' }, actAsFind: {}, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -171,14 +171,14 @@ async function handleApi(req, env, ctx) {
   try {
     const tgUser = body.session ? await verifySession(body.session, env) : await verifyInitData(body.initData, env.BOT_TOKEN);
     if (!tgUser) throw new ApiError('auth', 'Не вдалося перевірити Telegram. Відкрий застосунок заново.');
-    return json({ ok: true, data: await runAs_(S, tgUser, body.action, body.data || {}, body.viewAs) });
+    return json({ ok: true, data: await runAs_(S, tgUser, body.action, body.data || {}, body.viewAs, body.actAs) });
   } catch (err) {
     S.abort();
     if (!(err instanceof ApiError)) console.error(err && err.stack || err);
     return json({ ok: false, error: err.code || 'error', message: err instanceof ApiError ? err.message : 'Сталася помилка. Спробуй ще раз.' });
   }
 }
-async function runAs_(S, tgUser, action, d, viewAs) {
+async function runAs_(S, tgUser, action, d, viewAs, actAs) {
   const body = { action: action };
   if (viewAs && !VIEW_OK.test(action)) throw new ApiError('preview', 'Це режим перегляду — зміни вимкнені. Вийди з нього, щоб працювати від себе.');
   {
@@ -186,6 +186,21 @@ async function runAs_(S, tgUser, action, d, viewAs) {
     const need = NEEDS[body.action];
     if (!fn || !need) throw new ApiError('bad_action', 'Невідома дія: ' + body.action);
     await S.loadBase();
+    // «Переглянути, як»: лише власник застосунку працює від імені іншої людини — з усіма її правами
+    let actor = null;
+    if (actAs) {
+      if (viewAs) throw new ApiError('bad_request', 'Спершу вийди з режиму перегляду.');
+      const t = use(S, () => {
+        const rc = ctx_(tgUser);
+        if (!isSuper_(rc)) throw new ApiError('forbidden', 'Немає доступу.');
+        const id = str_(actAs);
+        const p = getPerson_(id);
+        if (!isReal_(id) || id === rc.id || (!p && !loadRoles_().some((r) => r.tgId === id))) throw new ApiError('act_as', 'Цю людину не знайдено — повертаю тебе до себе.');
+        return { tg: { id: id, first_name: (p && p.name) || '' }, actor: { id: rc.id, name: rc.name } };
+      });
+      actor = t.actor; tgUser = t.tg;
+      if (!/^(me|stats|knownList|myStats|clubPage|ideaBank|events|tasks|polls)$/.test(action)) console.log('actAs', actor.id, '→', tgUser.id, action);
+    }
     if (need.log === 'week') await S.loadLog(weekKey_(new Date()));
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
@@ -214,7 +229,7 @@ async function runAs_(S, tgUser, action, d, viewAs) {
     if (need.ck) await S.loadCheckins(String(tgUser.id));
     if (need.mine) await S.loadMine(String(tgUser.id));
     if (need.usage) await S.loadTeamUsage(str_(d.id));
-    const data = use(S, () => { const c = ctx_(tgUser); return fn(viewAs ? viewCtx_(c, viewAs) : c, d); });
+    const data = use(S, () => { const c = ctx_(tgUser); if (actor) c.actor = actor; const out = fn(viewAs ? viewCtx_(c, viewAs) : c, d); if (actor && action === 'me' && out) out.actAs = { id: c.id, name: c.name }; return out; });
     await S.flush();
     return data;
   }
@@ -838,8 +853,8 @@ API.me = function (c) {
       teams: st.teams.filter((t) => t.active).map((t) => ({ id: t.id, areaId: t.areaId, name: t.name, dir: t.dir })),
       dirs: DIRS,
     },
-    roleDefs: ROLES.map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, hidden: !!r.hidden, titled: !!r.titled, titles: r.key === 'OFFICE' ? OFFICE_TITLES : undefined })),
-    roles: c.allRoles.filter((r) => r.status === ST.ACTIVE || r.status === ST.PENDING).map(roleOut_),
+    roleDefs: ROLES.filter((r) => r.key !== 'SUPER').map((r) => ({ key: r.key, label: r.label, level: r.level, rank: r.rank, hidden: !!r.hidden, titled: !!r.titled, titles: r.key === 'OFFICE' ? OFFICE_TITLES : undefined })),
+    roles: c.allRoles.filter((r) => (r.status === ST.ACTIVE || r.status === ST.PENDING) && r.key !== 'SUPER').map(roleOut_),
   };
   if (!c.active.length) {
     out.status = c.allRoles.some((r) => r.status === ST.PENDING) ? 'pending' : 'new';
@@ -1651,7 +1666,7 @@ API.teamMembers = function (c, d) {
     p.registered = isReal_(p.tgId);
     p.canDrop = p.roles.every((x) => { const r = loadRoles_().filter((y) => y.id === x.id)[0]; return r && canDrop_(c, r); });
     // усі ролі людини (у будь-яких командах і на будь-яких рівнях) — щоб бачити, хто де служить
-    p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE).sort((a, b) => a.rank - b.rank)
+    p.all = loadRoles_().filter((r) => r.tgId === p.tgId && r.status === ST.ACTIVE && r.key !== 'SUPER').sort((a, b) => a.rank - b.rank)
       .map((r) => ({ id: r.id, label: r.label, unit: levelLabel_(r.level, r.unitId), titled: !!(roleDef_(r.key) || {}).titled, title: r.title || '', canRemove: r.tgId !== c.id && canDecide_(c, r) }));
     return p;
   }).sort((a, b) => (a.office ? a.sortKey : '9' + a.team).localeCompare(b.office ? b.sortKey : '9' + b.team) || a.rank - b.rank || a.name.localeCompare(b.name));
@@ -2376,7 +2391,7 @@ function signLine_(c, units) {
     const fit = own.filter((r) => units.every((u) => covers_(r, u.level, u.unitId)))[0];
     return fit ? lab(fit) : own[0] ? lab(own[0]) : '';
   }
-  const top = c.roles.slice().sort((a, b) => a.rank - b.rank)[0];
+  const top = c.roles.filter((r) => r.key !== 'SUPER').sort((a, b) => a.rank - b.rank)[0];
   return top ? lab(top) : '';
 }
 const authorLine_ = (c, keys) => {
@@ -2583,7 +2598,7 @@ API.resList = function (c) {
   };
 };
 API.resSave = function (c, d) {
-  if (!canAddRes_(c)) deny_('Додавати ресурси можуть Регіональні директори й адміни, Національний офіс і Раб Божий.');
+  if (!canAddRes_(c)) deny_('Додавати ресурси можуть Регіональні директори й адміни та Національний офіс.');
   const title = clip_(d.title).slice(0, 150);
   if (title.length < 2) bad_('Напиши назву.');
   let url = clip_(d.url).trim();
@@ -2619,7 +2634,7 @@ API.resDecide = function (c, d) {
 API.resDelete = function (c, d) {
   const x = (S.res || []).filter((y) => y.id === str_(d.id))[0];
   if (!x) bad_('Ресурс не знайдено.');
-  if (!(isSuper_(c) || x.authorId === c.id)) deny_('Видалити може лише автор або Раб Божий.');
+  if (!(isSuper_(c) || x.authorId === c.id)) deny_('Видалити може лише автор.');
   S.run('DELETE FROM resources WHERE id = ?', [x.id]);
   return { ok: true };
 };
@@ -3126,8 +3141,8 @@ API.installStats = function (c0, d) {
   all.forEach((r) => { const x = byId[r.tgId] = byId[r.tgId] || { id: r.tgId, roles: [] }; x.roles.push(r); });
   const people = Object.keys(byId).map((id) => {
     const per = getPerson_(id) || {};
-    const top = byId[id].roles.sort((a, b) => a.rank - b.rank)[0];
-    return { name: per.name || top.name, role: top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, ''), reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '', at: per.registered || '' };
+    const rs = byId[id].roles.sort((a, b) => a.rank - b.rank), top = rs.filter((r) => r.key !== 'SUPER')[0];
+    return { name: per.name || rs[0].name, role: top ? top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, '') : '', reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '', at: per.registered || '' };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const t = count(all);
   return { scope: scope, scopes: p.scopes, total: t.total, reg: t.reg, rows: rows, title: { nat: 'Регіони', region: 'Ерії', area: 'Команди', team: '', multi: 'Вибрані' }[scope.level] || '',
@@ -3442,7 +3457,7 @@ function pendingApproversText_(c) {
   const names = ids.slice(0, 4).map((id) => {
     const person = getPerson_(id);
     const top = all.filter((r) => r.tgId === id).sort((a, b) => a.rank - b.rank)[0];
-    return ((person && person.name) || (top && top.name) || '') + (top ? ' (' + top.label + ')' : '');
+    return (person && person.name) || (top && top.name) || '';
   });
   return names.length ? names.join(', ') + (ids.length > 4 ? ' та інші' : '') : 'керівництво';
 }
@@ -3534,7 +3549,7 @@ function claimAdmin_(m, code) {
   if (!getPerson_(c.id)) savePerson_(c, { name: fullName_(m.from) });
   const top = ROLES[0];
   const mine = loadRoles_().filter((r) => r.tgId === c.id && r.status === ST.ACTIVE);
-  if (mine.some((r) => r.key === top.key)) return sendApp_(m.chat.id, 'Ти вже маєш роль <b>' + top.label + '</b> 🙂', 'Відкрити Young Life');
+  if (mine.some((r) => r.key === top.key)) return sendApp_(m.chat.id, 'У тебе вже є повний доступ 🙂', 'Відкрити Young Life');
   const nats = mine.filter((r) => r.key === 'NATIONAL_ADMIN');
   nats.slice(1).forEach((r) => setRoleStatus_(r, ST.REMOVED, 'посилання власника'));
   if (nats[0]) {
@@ -3542,7 +3557,7 @@ function claimAdmin_(m, code) {
   } else {
     insertRole_({ id: uid_(), tgId: c.id, name: c.name, key: top.key, level: 'nat', unitId: '', status: ST.ACTIVE, decidedBy: 'посилання власника', decided: nowIso() });
   }
-  return sendApp_(m.chat.id, '✅ Готово! Твоя роль — <b>' + top.label + '</b>: найвищий рівень доступу.', 'Відкрити Young Life');
+  return sendApp_(m.chat.id, '✅ Готово! У тебе повний доступ до MyYL.', 'Відкрити Young Life');
 }
 
 const appLink_ = () => (S.env.APP_URL || '').replace(/\?.*$/, '') + '?app=1';
@@ -3925,6 +3940,21 @@ function mergeAll_(name) {
   mergeIds_(ids);
   return { merged: ids.length };
 }
+// ── «Переглянути, як»: пошук людини (лише власник застосунку) ──
+API.actAsFind = function (c, d) {
+  if (!isSuper_(c) || c.actor) deny_();
+  const q = String(d.q || '').trim().toLowerCase();
+  if (q.length < 2) return { list: [] };
+  const qp = phon_(q), byId = {};
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && isReal_(r.tgId) && r.tgId !== c.id).forEach((r) => { (byId[r.tgId] = byId[r.tgId] || []).push(r); });
+  Object.keys(S.b.people).forEach((id) => { if (isReal_(id) && id !== c.id && !byId[id]) byId[id] = []; });
+  const list = Object.keys(byId).map((id) => {
+    const per = getPerson_(id) || {}, rs = byId[id].filter((r) => r.key !== 'SUPER').sort((a, b) => a.rank - b.rank);
+    const name = per.name || (rs[0] && rs[0].name) || '';
+    return { id: id, name: name, role: rs.length ? rs.slice(0, 2).map((r) => r.label + ' · ' + levelLabel_(r.level, r.unitId).replace(/^Команда /, '')).join(', ') : 'без ролі' };
+  }).filter((x) => x.name && (x.name.toLowerCase().indexOf(q) >= 0 || phon_(x.name).indexOf(qp) >= 0)).sort((a, b) => a.name.localeCompare(b.name, 'uk')).slice(0, 25);
+  return { list: list };
+};
 // ── «Повідомити про помилку»: пише кожен, читає Раб Божий ──
 API.bugSend = function (c, d) {
   const text = clip_(d.text).slice(0, 3000);

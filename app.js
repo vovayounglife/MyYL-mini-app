@@ -133,11 +133,14 @@
   // «Відобразити як для»: роль, очима якої дивимось (лише на цю сесію; кеш телефону не чіпаємо)
   let VIEW_AS = null;
   try { VIEW_AS = JSON.parse(sessionStorage.getItem('yl:viewAs') || 'null'); } catch (e) { VIEW_AS = null; }
+  // «Переглянути, як» (лише власник застосунку): працюємо від імені іншої людини — лише на цю сесію
+  let ACT_AS = null;
+  try { ACT_AS = JSON.parse(sessionStorage.getItem('yl:actAs') || 'null'); } catch (e) { ACT_AS = null; }
   let VIEW_ROLES = null;
   try { VIEW_ROLES = JSON.parse(sessionStorage.getItem('yl:viewRoles') || 'null'); } catch (e) { VIEW_ROLES = null; }
   const LS = {
-    get(k) { if (VIEW_AS) return null; try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
-    set(k, v) { if (VIEW_AS) return; try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
+    get(k) { if (VIEW_AS || ACT_AS) return null; try { return JSON.parse(localStorage.getItem('yl1:' + UID + ':' + k)); } catch (e) { return null; } },
+    set(k, v) { if (VIEW_AS || ACT_AS) return; try { localStorage.setItem('yl1:' + UID + ':' + k, JSON.stringify(v)); } catch (e) { /* повна памʼять — не страшно */ } },
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
@@ -174,7 +177,7 @@
   const HOST_FAIL = {};
   async function api(action, data) {
     const auth = IN_TG ? { initData: tg.initData } : { session: SESSION && SESSION.token };
-    const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }, VIEW_AS ? { viewAs: VIEW_AS } : {}));
+    const body = JSON.stringify(Object.assign(auth, { action: action, data: data || {} }, VIEW_AS ? { viewAs: VIEW_AS } : {}, ACT_AS ? { actAs: ACT_AS.id } : {}));
     // однакові запити перегляду, що вже в дорозі, не дублюємо
     const read = READ_ACTIONS.test(action);
     if (read && INFLIGHT[body]) return INFLIGHT[body];
@@ -215,6 +218,7 @@
       }
       if (lastErr) throw lastErr;
       if (!j.ok) {
+        if (j.error === 'act_as') { A.actExit(); }
         if (!IN_TG && (j.error === 'auth' || j.error === 'auth_expired')) { logout(true); }
         const e = new Error(j.message || 'Помилка'); e.code = j.error; throw e;
       }
@@ -518,8 +522,9 @@
     // новий екран (або інший заголовок у ньому) — плавна поява; звичайні оновлення — без анімації
     const vKey = S.screen + '|' + ((view.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || '');
     const enter = vKey !== S._vKey; S._vKey = vKey;
+    const ab = ACT_AS ? `<div class="viewbar actbar" role="status"><span class="grow">🎭 <b>Ти зараз як:</b> ${esc((S.me && S.me.actAs && S.me.actAs.name) || ACT_AS.name)} · усе, що зробиш, буде від її/його імені</span><button type="button" data-a="actExit">Вийти</button></div>` : '';
     const vb = VIEW_AS && S.me && S.me.viewAs ? `<div class="viewbar" role="status"><span class="grow">👁 <b>Режим перегляду</b> · ${esc(S.me.viewAs.label)} · ${esc(S.me.viewAs.unitName || '')}</span><button type="button" data-a="viewExit">Вийти</button></div>` : '';
-    $app.innerHTML = vb + `<main class="main${nav ? '' : ' no-nav'}${enter ? ' enter' : ''}${vb ? ' has-viewbar' : ''}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
+    $app.innerHTML = ab + vb + `<main class="main${nav ? '' : ' no-nav'}${enter ? ' enter' : ''}${vb || ab ? ' has-viewbar' : ''}">${view}</main>${nav}` + (S.thanks ? `<div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="thxT"><div class="modal">
       <div id="thxT" class="thx-text">Дякую тобі за вірність в малому</div>
       <button type="button" class="thx-btn" data-a="thanksClose" aria-label="Амінь">🙏</button></div></div>` : '');
     if (S.toast) document.body.insertAdjacentHTML('beforeend', document.querySelector('.toast') ? '' : `<div class="toast" role="status">${esc(S.toast)}</div>`);
@@ -1714,7 +1719,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   function resFormView() {
     const f = S.res.form, D = S.res.data;
     const audKind = f.aud === 'all' ? 'all' : f.aud.indexOf('r:') === 0 ? 'r' : 'dir';
-    const hint = { all: 'Для всіх — публікує після підтвердження Раб Божий.', r: 'Для регіону — підтверджує Регіональний директор цього регіону.', dir: 'Для напрямку — підтверджує експерт цього напрямку з Національного офісу.' }[audKind];
+    const hint = { all: 'Для всіх — публікується після підтвердження.', r: 'Для регіону — підтверджує Регіональний директор цього регіону.', dir: 'Для напрямку — підтверджує експерт цього напрямку з Національного офісу.' }[audKind];
     return header('Новий ресурс') + `<div class="card col">
       <label class="f"><span>Назва</span><input class="in" type="text" maxlength="150" data-bind="res.form.title" value="${esc(f.title)}" placeholder="Наприклад: Подкаст «Будні лідера»"></label>
       <label class="f"><span>Посилання</span><input class="in" type="url" inputmode="url" data-bind="res.form.url" value="${esc(f.url)}" placeholder="https://…"></label>
@@ -2036,8 +2041,15 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     [['Особисте', mine], ['Команда', team], ['Звіти', reps.filter(has)], ['Керування', manage.filter(has)], ['Застосунок', app]].forEach(([t, items]) => {
       if (items.length) h += `<div class="sec">${t}</div>` + list(items);
     });
+    if (ACT_AS) h += `<div class="card row view-pick"><span class="grow small"><b>🎭 Ти зараз як: ${esc((S.me && S.me.actAs && S.me.actAs.name) || ACT_AS.name)}</b><br><span class="xs muted">повний функціонал цієї людини</span></span><button type="button" class="btn sm" data-a="actExit">Повернутися до себе</button></div>`;
+    else if (c.isSuper && !VIEW_AS) {
+      const F = S.actFind || {};
+      h += `<div class="card col view-pick" style="gap:8px"><span class="small"><b>🎭 Переглянути, як:</b><br><span class="xs muted">введи імʼя — і побачиш застосунок цієї людини з усіма її можливостями: вносити, звітувати, редагувати</span></span>
+        <input class="in" type="search" placeholder="Імʼя або прізвище" value="${esc(F.q || '')}" data-bind="actFind.q" data-live="actFind" aria-label="Кого показати">
+        ${F.loading ? '<div class="xs muted">Шукаю…</div>' : ''}${(F.list || []).length ? `<div class="list">${F.list.map((x) => `<button type="button" class="li" data-a="actAs" data-id="${esc(x.id)}" data-n="${esc(x.name)}"><span class="grow"><b>${esc(x.name)}</b><br><span class="xs muted">${esc(x.role)}</span></span>${icon('chev', 16)}</button>`).join('')}</div>` : F.q && F.q.trim().length >= 2 && !F.loading ? '<div class="xs muted">Нікого не знайдено</div>' : ''}</div>`;
+    }
     const vr = (VIEW_ROLES || (S.me && S.me.viewRoles) || []);
-    if (vr.length || VIEW_AS) {
+    if ((vr.length || VIEW_AS) && !ACT_AS) {
       h += `<label class="card row view-pick"><span class="grow small"><b>👁 Відобразити як для</b><br><span class="xs muted">лише перегляд, нічого не зміниться</span></span>
         <select class="in" data-ch="viewPick" aria-label="Відобразити як для"><option value="">Себе</option>${vr.map((r) => `<option value="${r.key}"${VIEW_AS && VIEW_AS.key === r.key ? ' selected' : ''}>${esc(r.label)}</option>`).join('')}</select></label>`;
     }
@@ -2259,7 +2271,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (act.length > 1) h += `<div class="sec">Основна роль</div><div class="card col" style="gap:6px"><select class="in" data-ch="mainRole"><option value="">Автоматично — найвища роль</option>${act.map((r) => `<option value="${esc(r.id)}"${(m.profile || {}).main === r.id ? ' selected' : ''}>${esc(r.label + ' · ' + r.unitName)}</option>`).join('')}</select>
       <div class="xs muted">Тут рахуються твої особисті записи: знані «Без команди», а для вищих ролей — мала група й контактна робота.</div></div>`;
     h += `<div class="sec">Мої ролі</div><div class="card list">${(m.roles || []).map((r) => `<div class="li" style="min-height:52px"><span class="grow b">${esc(r.label)}</span><span class="small muted">${esc(r.unitName)}</span>${r.status !== 'активна' ? '<span class="tag warn">очікує</span>' : ''}</div>`).join('')}
-      <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${activeRoles().some((r) => r.key === 'SUPER') ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
+      <button type="button" class="li" style="justify-content:center;color:var(--accent-text);font-weight:600" data-a="roleReqOpen">${caps().isSuper ? '+ Додати собі роль' : '+ Попросити ще роль'}</button></div>`;
     const F = [['name', 'Імʼя та прізвище', 'text'], ['phone', 'Телефон', 'tel'], ['ig', 'Instagram', 'text'], ['email', 'Gmail (для доступу до таблиць)', 'email'], ['bday', 'Дата народження', 'date'], ['repent', 'Рік покаяння', 'number'], ['baptism', 'Рік хрещення', 'number'], ['lpyl', 'Рік проходження ЛПYL', 'number'], ['resp', 'Відповідальності на клубі', 'text']];
     h += `<div class="sec">Анкета</div><div class="card col">${F.map((f) => `<label class="f"><span>${f[1]}</span><input class="in" type="${f[2]}" ${f[2] === 'number' ? 'inputmode="numeric" min="1950" max="2100"' : ''} value="${esc(p[f[0]] || '')}" data-bind="profile.${f[0]}"></label>`).join('')}
       <button type="button" class="btn" data-a="profileSave">Зберегти анкету</button></div>`;
@@ -2515,6 +2527,22 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
   A.viewPick = (d, el) => (el.value ? A.viewAs({ k: el.value }) : A.viewExit());
   A.achInfo = (d) => toast(d.t + ' — ' + d.d + ' · ' + d.p);
+  A.actFind = () => {
+    clearTimeout(A.actFind.t);
+    A.actFind.t = setTimeout(async () => {
+      const F = S.actFind = S.actFind || {}, q = (F.q || '').trim();
+      if (q.length < 2) { F.list = []; } else {
+        F.loading = true;
+        try { const r = await api('actAsFind', { q: q }); if ((F.q || '').trim() === q) F.list = r.list; } catch (e) { toast(e.message, 'error'); }
+        F.loading = false;
+      }
+      if (S.screen !== 'more') return;
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+      const i = document.querySelector('[data-live="actFind"]'); if (i) { i.focus(); const n = i.value.length; try { i.setSelectionRange(n, n); } catch (e) { /* */ } }
+    }, 300);
+  };
+  A.actAs = (d) => { try { sessionStorage.setItem('yl:actAs', JSON.stringify({ id: d.id, name: d.n })); sessionStorage.removeItem('yl:viewAs'); } catch (e) { /* ок */ } location.reload(); };
+  A.actExit = () => { try { sessionStorage.removeItem('yl:actAs'); } catch (e) { /* ок */ } location.reload(); };
   A.viewExit = () => { try { sessionStorage.removeItem('yl:viewAs'); sessionStorage.removeItem('yl:viewRoles'); } catch (e) { /* ок */ } location.reload(); };
   A.checkin = async (d, el) => {
     const w = S.me && S.me.myWeek; if (!w) return;
