@@ -316,6 +316,7 @@
     if (screen === 'mystats') loadMyStats();
     if (screen === 'ach') loadAch();
     if (screen === 'bugs') loadBugs();
+    if (screen === 'clubIdeas' && !S.club.data) loadClub();
     if (screen === 'club') { S.club.pick = null; if (!S.club.dirty || !S.club.data) loadClub(); }
     if (screen === 'bank') { S.bank.pick = null; loadBank(); }
     if (screen === 'dupes') loadDupes();
@@ -624,7 +625,7 @@
         roles: (p.roles || []).map((r) => ({ name: r.name, text: r.text || '', who: r.who.map((w) => w.id) })) };
       C.rep = { teens: '', newT: '', leaders: '', parents: '', note: '' };
     } catch (e) { toast(e.message, 'error'); C.data = C.data || { error: true }; }
-    if (S.screen === 'club') render();
+    if (S.screen === 'club' || S.screen === 'clubIdeas') render();
   }
   VIEWS.club = function () {
     const C = S.club, d = C.data, teams = me().clubPlans || [];
@@ -633,14 +634,22 @@
     if (!d) return h + loading();
     if (d.none) return h + '<div class="empty">План клубу ведуть учасники команди. У тебе поки немає ролі в команді.</div>';
     if (d.error || !d.plan) return h + '<div class="empty">Не вдалося завантажити. Потягни екран вниз, щоб оновити.</div>';
-    h += ideasCard(d) + planCard(d) + reportCard(d) + archiveCard(d);
+    h += `<div class="cl-quick"><button type="button" class="chip" data-a="tabGo" data-s="clubIdeas">🧺 Накидати в кошик ідей${d.ideas.length ? ' · ' + d.ideas.length : ''}</button><button type="button" class="chip" data-a="tabGo" data-s="bank">✨ Надихнутись від інших</button></div>`;
+    h += planCard(d) + reportCard(d) + archiveCard(d);
     return h;
+  };
+  // кошик ідей — окремий екран для брейншторму
+  VIEWS.clubIdeas = function () {
+    const d = S.club.data;
+    let h = header('Кошик ідей', d && d.team ? d.team.name + ' · брейншторм для наступних клубів' : '');
+    if (!d || !d.ideas) return h + loading();
+    return h + ideasCard(d) + `<button type="button" class="link-btn" data-a="tabGo" data-s="bank">✨ Надихнутись від інших команд →</button>`;
   };
   function ideasCard(d) {
     const C = S.club, cats = d.ideaCats, f = C.idea || (C.idea = { cat: 'game', text: '', desc: '' });
     const flt = C.ideaCat || 'all', list = d.ideas.filter((x) => flt === 'all' || x.cat === flt);
     const cnt = (k) => d.ideas.filter((x) => x.cat === k).length;
-    let h = `<div class="sec">🧺 Кошик ідей</div><div class="card col" style="gap:10px">`;
+    let h = `<div class="card col" style="gap:10px">`;
     h += `<div class="chips"><button type="button" class="chip${flt === 'all' ? ' on' : ''}" data-a="ideaFlt" data-v="all">Усі · ${d.ideas.length}</button>${cats.map((c) => `<button type="button" class="chip${flt === c[0] ? ' on' : ''}" data-a="ideaFlt" data-v="${c[0]}">${IDEA_IC[c[0]]} ${esc(c[1])} · ${cnt(c[0])}</button>`).join('')}</div>`;
     if (!list.length) h += `<div class="small muted">${d.ideas.length ? 'У цій категорії порожньо' : 'Поки порожньо. Накидайте ідеї для наступних клубів — ігри, пісні, теми.'}</div>`;
     else h += `<div class="col" style="gap:0">${list.map((x) => `<div class="idea"><span class="idea-ic">${IDEA_IC[x.cat] || '📌'}</span><span class="grow"><b>${esc(x.text)}</b>${x.desc ? `<br><span class="small">${esc(x.desc)}</span>` : ''}<br><span class="xs muted">${esc(x.author)}</span></span>
@@ -3332,7 +3341,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const PULL_RELOAD = {
     home: () => Promise.all([refreshMe(), loadEvents()]), more: refreshMe, calendar: loadEvents, stats: loadStats, known: () => loadKnown(true), team: loadTeam, finance: loadFin,
     requests: loadReqs, perms: loadPerms, inst: loadInst, mystats: loadMyStats, ach: loadAch, bugs: loadBugs, dupes: loadDupes, res: loadRes, dirs: loadDirs,
-    tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe, bank: loadBank, club: () => (S.club.dirty ? null : loadClub()),
+    tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe, bank: loadBank, club: () => (S.club.dirty ? null : loadClub()), clubIdeas: () => reloadIdeas(),
   };
   async function pullRefresh() {
     const f = PULL_RELOAD[S.screen];
