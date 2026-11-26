@@ -28,7 +28,7 @@ jobs:
           SYNC_KEY: ${{ secrets.SYNC_KEY }}
         run: |
           curl -s -X POST https://yl-mini-app.vova-younglife.workers.dev/admin/clog -H "x-sync-key: $SYNC_KEY" | jq -c '.rows[] | (.data | fromjson? // {raw: .}) as $d | {ts, a: $d.a, try: $d.try, host: $d.host, err: $d.err, st: $d.st, ct: $d.ct, len: $d.len, bytes: $d.bytes, v: $d.v, tg: $d.tg, on: $d.on, ua: $d.ua, html: (if ($d.head // "" | startswith("<")) then $d.head else null end)}' | head -40
-      - name: Запити від імені «Раб Божий» (час, розмір, помилки)
+      - name: Запити від імені «власник» (час, розмір, помилки)
         env:
           SYNC_KEY: ${{ secrets.SYNC_KEY }}
         run: |
