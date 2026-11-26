@@ -3355,8 +3355,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   (function pullToRefresh() {
     const MAX = 110, NEED = 72;
     let ind = null, y0 = 0, x0 = 0, dy = 0, on = false, busy = false;
-    const el = () => { if (!ind) { ind = document.createElement('div'); ind.className = 'ptr'; ind.innerHTML = '<span class="ptr-c"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'; document.body.appendChild(ind); } return ind; };
+    const el = () => { if (!ind) { ind = document.createElement('div'); ind.className = 'ptr'; ind.innerHTML = '<span class="ptr-c"><img src="icons/yl-mark.png" alt="" width="24" height="24"></span>'; document.body.appendChild(ind); } return ind; };
     const set = (d, anim) => { const i = el(); i.style.transition = anim ? 'transform .3s var(--spring), opacity .3s' : 'none'; i.style.opacity = d > 4 ? Math.min(1, d / NEED) : 0; i.style.transform = `translate(-50%, ${d - 46}px)`; i.firstChild.style.transform = `rotate(${d * 3.2}deg)`; i.classList.toggle('ready', d >= NEED); };
+    setTimeout(el, 1200); // логотип завантажується заздалегідь, щоб у першому свайпі не було порожнього кружечка
     const blocked = (t) => !S.me || !S.me.status || document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) ||
       (t && t.closest && t.closest('.sheet, .modal, .overlay, [data-noptr], .hscroll, .seg-scroll, .cat-strip, .chips, .tabs-scroll'));
     document.addEventListener('touchstart', (e) => {
