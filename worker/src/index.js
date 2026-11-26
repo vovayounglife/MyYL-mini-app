@@ -148,7 +148,9 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 
 // Які дані потрібні кожній дії (завантажуються до запуску логіки)
 const NEEDS = {
-  me: { log: 'week', events: true, tp: true, ck: true, bugCount: true, lastClubs: true }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
+  me: { log: 'week', events: true, tp: true, ck: true, bugCount: true, lastClubs: true, plans: 'open' },
+  clubPage: { log: 'week', clubs: true, plans: 'team', ideas: true }, clubPlanSave: { clubs: true, plans: 'team' }, clubPlanDone: { log: 'week', ck: true, clubs: true, plans: 'team' },
+  clubIdeaAdd: { ideas: true }, clubIdeaDel: { ideas: true }, ideaBank: { plans: 'done' }, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -188,6 +190,8 @@ async function runAs_(S, tgUser, action, d, viewAs) {
     if (need.log === 'stats') await S.loadLog(statsFromWeek(d.period, d), true);
     if (need.log === 'report') await S.loadLog(weekKey_(/^\d{4}-\d{2}-\d{2}$/.test(d.from || '') ? d.from : kyivDay(new Date())), true);
     if (need.clubs) await S.loadClubs();
+    if (need.plans) await S.loadPlans(need.plans === 'team' ? str_(d.teamId) : need.plans === 'done' ? '*done' : null);
+    if (need.ideas) await S.loadIdeas(str_(d.teamId));
     if (need.lastClubs) S.lastClubRows = ((await S.db.prepare("SELECT r.* FROM reports r JOIN (SELECT team_id, MAX(date) AS d FROM reports WHERE type = 'club' GROUP BY team_id) m ON r.team_id = m.team_id AND r.date = m.d WHERE r.type = 'club' ORDER BY r.seq").all()).results || []).map(logFromRow);
     if (need.bugCount) S.bugOpen = (await S.db.prepare("SELECT COUNT(*) AS n FROM bugs WHERE COALESCE(done, '') = ''").first('n')) || 0;
     if (need.bugs) S.bugs = ((await S.db.prepare('SELECT * FROM bugs ORDER BY created DESC LIMIT 200').all()).results || []);
@@ -279,6 +283,13 @@ class Store {
     BASE = b; this.b = b;
   }
   // усі звіти за клуб (історія команди й дата останнього звіту)
+  async loadPlans(teamId) {
+    const q = teamId === '*done' ? this.db.prepare("SELECT * FROM club_plans WHERE status = 'done' ORDER BY date DESC LIMIT 3000") : teamId ? this.db.prepare('SELECT * FROM club_plans WHERE team_id = ? ORDER BY date DESC').bind(teamId) : this.db.prepare("SELECT * FROM club_plans WHERE status = 'plan'");
+    this.plans = ((await q.all()).results || []).map(planFromRow_);
+  }
+  async loadIdeas(teamId) {
+    this.ideas = ((await this.db.prepare('SELECT * FROM club_ideas WHERE team_id = ? ORDER BY created DESC').bind(teamId).all()).results || []);
+  }
   async loadClubs() {
     const rs = await this.db.prepare("SELECT * FROM reports WHERE type = 'club' ORDER BY date DESC, seq DESC").all();
     this.clubs = (rs.results || []).map(logFromRow);
@@ -879,6 +890,7 @@ API.me = function (c) {
   // останній внесений клуб — для команд, де людина вносить клуб (показуємо над формою)
   const lc = {};
   (S.lastClubRows || []).forEach((r) => { lc[r.teamId] = { date: r.date, none: r.mode === MODE.none, teens: r.count, leaders: r.leaders }; });
+  out.clubPlans = myClubPlans_(c);
   out.lastClubs = {};
   out.caps.report.club.forEach((id) => { if (lc[id]) out.lastClubs[id] = lc[id]; });
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
@@ -2793,6 +2805,201 @@ API.clubPick = function (c, d) {
   return { club: myClubTeams_(c) };
 };
 // змінити чи видалити звіт за клуб: хто вносить клуб у цій команді, а також Еріа Директор і Еріа Адмін
+// ── «Наш клуб»: план наступного клубу, кошик ідей, архів проведених ──
+const IDEA_CATS = [['game', 'Гра'], ['song', 'Пісня'], ['topic', 'Тема'], ['other', 'Інше']];
+// програма клубу: впорядкований список пунктів
+const PROG_KINDS = ['game', 'song', 'talk', 'other'];
+const CLUB_ROLE_HINTS = ['Ведучий', 'Гра', 'Пісні й музика', 'Зустріч підлітків', 'Перекус', 'Техніка й звук', 'Молитва', 'Фото'];
+function planFromRow_(r) {
+  const j = (x, def) => { try { return x ? JSON.parse(x) : def; } catch (e) { return def; } };
+  return { id: r.id, teamId: r.team_id, date: r.date || '', topic: r.topic || '', sermon: r.sermon || '', preacher: r.preacher || '', scripture: r.scripture || '', program: j(r.program, []), roles: j(r.roles, []), note: r.note || '',
+    status: r.status || 'plan', report: j(r.report, null), reportId: r.report_id || '', created: r.created || '', updated: r.updated || '', doneAt: r.done_at || '', doneBy: r.done_by || '' };
+}
+function teamRank_(c, teamId) { return c.roles.filter((r) => r.level === 'team' && r.unitId === teamId).reduce((a, r) => Math.min(a, r.rank), 99); }
+function clubPlanCan_(c, teamId) {
+  const sup = isSuper_(c), rk = teamRank_(c, teamId);
+  const up = c.roles.some((r) => r.level !== 'team' && covers_(r, 'team', teamId));
+  const ad = c.roles.some((r) => (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && covers_(r, 'team', teamId));
+  return { view: sup || rk < 99 || up, edit: sup || rk <= RANK.MG || ad, date: sup || rk <= RANK.CLUB || ad, idea: sup || rk <= RANK.KR || ad, ideaDel: sup || rk <= RANK.CLUB || ad,
+    report: clubTeams_(c).indexOf(teamId) >= 0 };
+}
+function lastClubDate_(teamId) {
+  const r = (S.clubs || S.lastClubRows || []).filter((x) => x.teamId === teamId && x.mode !== MODE.none).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  return r ? r.date : '';
+}
+function nextClubDate_(teamId, after) {
+  const today = kyivDay(new Date());
+  let d = after ? addDaysKey_(after, 7) : '';
+  if (!d) { const last = lastClubDate_(teamId); d = last ? addDaysKey_(last, 7) : today; }
+  for (let i = 0; d < today && i < 600; i++) d = addDaysKey_(d, 7);
+  return d;
+}
+const openPlan_ = (teamId) => (S.plans || []).filter((p) => p.teamId === teamId && p.status === 'plan')[0] || null;
+function planRow_(p) {
+  return { id: p.id, team_id: p.teamId, date: p.date, topic: p.topic, sermon: p.sermon || '', preacher: p.preacher, scripture: p.scripture, program: JSON.stringify(p.program || []), roles: JSON.stringify(p.roles || []), note: p.note,
+    status: p.status, report: p.report ? JSON.stringify(p.report) : '', report_id: p.reportId || '', created: p.created, updated: p.updated, author_id: p.authorId || '', done_at: p.doneAt || '', done_by: p.doneBy || '' };
+}
+function planInsert_(p) { const row = planRow_(p), k = Object.keys(row); S.run('INSERT INTO club_plans (' + k.join(', ') + ') VALUES (' + k.map(() => '?').join(',') + ')', k.map((x) => row[x])); (S.plans = S.plans || []).push(p); }
+function planUpdate_(p) { const row = planRow_(p), k = Object.keys(row).filter((x) => x !== 'id'); S.run('UPDATE club_plans SET ' + k.map((x) => x + ' = ?').join(', ') + ' WHERE id = ?', k.map((x) => row[x]).concat([p.id])); }
+// наступний клуб: ролі (і відповідальні) підтягуються з попереднього; якщо клубу не було — і тема з проповідником теж
+function planNext_(teamId, prev, c) {
+  const carry = prev && prev.status === 'none';
+  const p = { id: uid_(), teamId: teamId, date: nextClubDate_(teamId, prev ? prev.date : ''), topic: carry ? prev.topic : '', sermon: carry ? prev.sermon || '' : '', preacher: carry ? prev.preacher : '', scripture: carry ? prev.scripture : '',
+    program: carry ? (prev.program || []).map((x) => Object.assign({}, x)) : [],
+    roles: prev ? (prev.roles || []).map((r) => ({ name: r.name, who: (r.who || []).slice(), text: r.text || '' })) : [], note: '', status: 'plan', report: null, reportId: '',
+    created: nowIso(), updated: nowIso(), authorId: c ? c.id : '' };
+  planInsert_(p);
+  return p;
+}
+// звіт за клуб уже внесли (через «Внести») — план сам іде в архів, а на його місці з'являється наступний
+function planSync_(teamId) {
+  const p = openPlan_(teamId);
+  if (!p || !p.date) return;
+  const used = {};
+  (S.plans || []).forEach((x) => { if (x.reportId) used[x.reportId] = true; });
+  const wk = weekKey_(p.date);
+  const r = (S.clubs || S.lastClubRows || []).filter((x) => x.teamId === teamId && weekKey_(x.date) === wk && !used[x.id])[0];
+  if (!r) return;
+  planArchive_(p, r, { id: r.authorId, name: r.author });
+}
+function planArchive_(p, r, who) {
+  const none = r.mode === MODE.none;
+  p.status = none ? 'none' : 'done';
+  p.report = none ? { none: true, note: r.note || '' } : { teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note || '' };
+  p.reportId = r.id; p.date = r.date || p.date; p.doneAt = nowIso(); p.doneBy = (who && who.name) || ''; p.updated = nowIso();
+  planUpdate_(p);
+  return planNext_(p.teamId, p, null);
+}
+function teamPeople_(teamId) {
+  const by = {};
+  loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team' && r.unitId === teamId).forEach((r) => {
+    const k = r.tgId || 'r:' + r.id;
+    const x = by[k] = by[k] || { id: k, name: r.name, rank: 99, role: '' };
+    if (r.rank < x.rank) { x.rank = r.rank; x.role = r.label; }
+  });
+  return Object.keys(by).map((k) => by[k]).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'uk'));
+}
+function planOut_(p, people) {
+  const nm = {};
+  people.forEach((x) => { nm[x.id] = x.name; });
+  return Object.assign({}, p, { roles: (p.roles || []).map((r) => ({ name: r.name, text: r.text || '', who: (r.who || []).filter((id) => nm[id]).map((id) => ({ id: id, name: nm[id] })) })) });
+}
+// для головної: найближчий клуб кожної моєї команди
+function myClubPlans_(c) {
+  const st = loadStruct_();
+  const ids = uniq_(c.roles.filter((r) => r.level === 'team' && st.team[r.unitId] && st.team[r.unitId].active).map((r) => r.unitId));
+  return ids.map((id) => {
+    planSync_(id);
+    const p = openPlan_(id), can = clubPlanCan_(c, id);
+    const mine = p ? (p.roles || []).filter((r) => (r.who || []).indexOf(c.id) >= 0).map((r) => r.name) : [];
+    return { teamId: id, team: st.team[id].name, canEdit: can.edit, plan: p ? { date: p.date, topic: p.topic, preacher: p.preacher, scripture: p.scripture, roles: (p.roles || []).length, filled: (p.roles || []).filter((r) => (r.who || []).length || r.text).length, mine: mine } : null };
+  });
+}
+API.clubPage = function (c, d) {
+  const teamId = str_(d.teamId), st = loadStruct_(), team = st.team[teamId];
+  if (!team) bad_('Команду не знайдено.');
+  const can = clubPlanCan_(c, teamId);
+  if (!can.view) deny_('План клубу бачать учасники команди та її керівники.');
+  planSync_(teamId);
+  const people = teamPeople_(teamId);
+  let plan = openPlan_(teamId);
+  const done = (S.plans || []).filter((p) => p.teamId === teamId && p.status !== 'plan').sort((a, b) => (a.date < b.date ? 1 : -1));
+  if (!plan) {
+    const prev = done[0];
+    plan = { id: '', teamId: teamId, date: nextClubDate_(teamId, prev ? prev.date : ''), topic: '', sermon: '', preacher: '', scripture: '', program: [], note: '', status: 'plan',
+      roles: prev ? (prev.roles || []).map((r) => ({ name: r.name, who: (r.who || []).slice(), text: r.text || '' })) : [] };
+  }
+  const lc = (S.clubs || []).filter((x) => x.teamId === teamId)[0];
+  return {
+    team: { id: teamId, name: team.name, dir: team.dir || '' }, can: can, plan: planOut_(plan, people), people: people.map((x) => ({ id: x.id, name: x.name, role: x.role })),
+    archive: done.map((p) => planOut_(p, people)), ideas: (S.ideas || []).map((x) => ({ id: x.id, cat: x.cat, text: x.text, desc: x.descr || '', author: x.author || '', created: x.created })),
+    ideaCats: IDEA_CATS, hints: CLUB_ROLE_HINTS, lastClub: lc ? { date: lc.date, teens: lc.count, leaders: lc.leaders, none: lc.mode === MODE.none } : null, today: kyivDay(new Date()),
+  };
+};
+API.clubPlanSave = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!loadStruct_().team[teamId]) bad_('Команду не знайдено.');
+  const can = clubPlanCan_(c, teamId);
+  if (!can.edit) deny_('План клубу заповнюють капітан, адмін команди та лідери.');
+  const people = teamPeople_(teamId), ok = {};
+  people.forEach((x) => { ok[x.id] = true; });
+  const roles = (Array.isArray(d.roles) ? d.roles : []).slice(0, 40).map((r) => ({ name: clip_((r && r.name) || '').slice(0, 80), text: clip_((r && r.text) || '').slice(0, 120),
+    who: uniq_((Array.isArray(r && r.who) ? r.who : []).map(String).filter((id) => ok[id])).slice(0, 12) })).filter((r) => r.name);
+  let p = openPlan_(teamId);
+  if (d.id && p && p.id !== str_(d.id)) bad_('План уже змінився — онови сторінку.');
+  const isNew = !p;
+  if (isNew) {
+    const prev = (S.plans || []).filter((x) => x.teamId === teamId && x.status !== 'plan').sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    p = { id: uid_(), teamId: teamId, date: nextClubDate_(teamId, prev ? prev.date : ''), status: 'plan', created: nowIso(), authorId: c.id, report: null, reportId: '' };
+  }
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') ? d.date : p.date;
+  if (date !== p.date && !can.date) deny_('Дату клубу змінює капітан або адмін команди.');
+  Object.assign(p, { date: date, topic: clip_(d.topic || '').slice(0, 200), preacher: clip_(d.preacher || '').slice(0, 100), scripture: clip_(d.scripture || '').slice(0, 120),
+    note: clip_(d.note || '').slice(0, 1000), roles: roles, sermon: clip_(d.sermon).slice(0, 200),
+    program: (Array.isArray(d.program) ? d.program : []).slice(0, 40).map((g) => ({ kind: PROG_KINDS.indexOf(g && g.kind) >= 0 ? g.kind : 'other', name: clip_(g && g.name).slice(0, 120), desc: clip_(g && g.desc).slice(0, 600) })).filter((g) => g.name), updated: nowIso() });
+  if (isNew) planInsert_(p); else planUpdate_(p);
+  return { id: p.id, date: p.date };
+};
+API.clubPlanDone = function (c, d) {
+  const teamId = str_(d.teamId);
+  const can = clubPlanCan_(c, teamId);
+  if (!can.report) deny_('Звіт за клуб дає капітан або адмін команди — той, хто вносить клуб.');
+  const p = openPlan_(teamId);
+  if (!p || (d.id && p.id !== str_(d.id))) bad_('Спершу збережи план клубу.');
+  const today = kyivDay(new Date());
+  if (p.date > today) bad_('Клуб ще попереду (' + p.date + '). Звіт можна дати в день клубу або пізніше.');
+  API.saveReport(c, { type: 'club', teamId: teamId, mode: d.none ? 'none' : 'event', date: p.date, teens: d.teens, newT: d.newT, leaders: d.leaders, parents: d.parents, note: d.note });
+  const r = S.log.filter((x) => x.type === 'club' && x.teamId === teamId && x.authorId === c.id).slice(-1)[0];
+  const next = planArchive_(p, r, { id: c.id, name: c.name });
+  return { next: { id: next.id, date: next.date } };
+};
+API.clubIdeaAdd = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!loadStruct_().team[teamId]) bad_('Команду не знайдено.');
+  if (!clubPlanCan_(c, teamId).idea) deny_('Ідеї додають капітан, адмін, лідери й помічники.');
+  const text = clip_(d.text || '').slice(0, 500);
+  if (!text) bad_('Напиши ідею.');
+  const cat = IDEA_CATS.some((x) => x[0] === d.cat) ? d.cat : 'other';
+  const row = { id: uid_(), team_id: teamId, cat: cat, text: text, descr: clip_(d.desc).slice(0, 600), author_id: c.id, author: c.name, created: nowIso() };
+  const k = Object.keys(row);
+  S.run('INSERT INTO club_ideas (' + k.join(', ') + ') VALUES (' + k.map(() => '?').join(',') + ')', k.map((x) => row[x]));
+  return { id: row.id };
+};
+API.clubIdeaDel = function (c, d) {
+  const teamId = str_(d.teamId);
+  if (!clubPlanCan_(c, teamId).ideaDel) deny_('Чистити кошик ідей можуть капітан і адмін команди.');
+  if (d.all) { const cat = IDEA_CATS.some((x) => x[0] === d.cat) ? d.cat : ''; S.run('DELETE FROM club_ideas WHERE team_id = ?' + (cat ? ' AND cat = ?' : ''), cat ? [teamId, cat] : [teamId]); return { ok: true }; }
+  const x = (S.ideas || []).filter((i) => i.id === str_(d.id))[0];
+  if (!x) bad_('Ідею вже видалено.');
+  S.run('DELETE FROM club_ideas WHERE id = ? AND team_id = ?', [x.id, teamId]);
+  return { ok: true };
+};
+
+// ── «Банк ідей»: усе, що команди вже провели на клубах (теми, проповіді, ігри, пісні), без повторів ──
+const BANK_CATS = [['topic', 'Теми клубів'], ['sermon', 'Проповіді'], ['game', 'Ігри'], ['song', 'Пісні']];
+function bankKey_(t) { return String(t || '').toLowerCase().replace(/[ʼ'’`"«»]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
+API.ideaBank = function (c) {
+  if (!c.roles.length && !isOffice_(c)) deny_('Банк ідей відкривається після підтвердження ролі.');
+  const st = loadStruct_(), by = {};
+  const letters = (t) => (String(t || '').match(/\p{L}/gu) || []).length;
+  const add = (cat, text, desc, p) => {
+    text = String(text || '').trim(); desc = String(desc || '').trim();
+    if (letters(text) < 3) return;
+    if (cat === 'game' && letters(desc) < 10) return; // гра без зрозумілого опису — не беремо
+    const k = cat + '|' + phon_(bankKey_(text)), team = (st.team[p.teamId] || {}).name || '';
+    const x = by[k];
+    if (!x) { by[k] = { cat: cat, text: text, desc: desc, team: team, date: p.date, teams: team ? [team] : [] }; return; }
+    if (desc.length > x.desc.length) { x.desc = desc; x.team = team; x.date = p.date; }
+    if (team && x.teams.indexOf(team) < 0) x.teams.push(team);
+  };
+  (S.plans || []).filter((p) => p.status === 'done').forEach((p) => {
+    add('topic', p.topic, p.scripture, p);
+    if (p.sermon) add('sermon', p.sermon, p.scripture, p);
+    (p.program || []).forEach((g) => { if (g.kind === 'game' || g.kind === 'song') add(g.kind, g.name, g.kind === 'game' ? g.desc : '', p); if (g.kind === 'talk') add('sermon', g.name, g.desc, p); });
+  });
+  const items = Object.keys(by).map((k) => by[k]).sort((a, b) => b.teams.length - a.teams.length || (a.date < b.date ? 1 : -1));
+  return { cats: BANK_CATS, items: items };
+};
 function canClubFix_(c, teamId) {
   return isSuper_(c) || clubTeams_(c).indexOf(teamId) >= 0 || c.roles.some((r) => (r.key === 'AREA_DIRECTOR' || r.key === 'AREA_ADMIN') && covers_(r, 'team', teamId));
 }

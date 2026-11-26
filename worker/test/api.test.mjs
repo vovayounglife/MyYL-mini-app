@@ -1199,6 +1199,57 @@ ok(r.ok && !r.data.recent.length, 'статистика: офіс по Укра�
   ok(r.ok, 'нац. адмін: створив національну подію');
 }
 
+
+// ── «Наш клуб»: план, кошик ідей, архів ──
+{
+  const tid = capTeam.id, today = T.kyivDay(new Date());
+  const plus = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  let p = await api(SUG, 'clubPage', { teamId: tid });
+  ok(p.ok && p.data.can.view && !p.data.can.edit && !p.data.can.idea && p.data.plan.id === '' && p.data.plan.date >= today, 'наш клуб: сахарок бачить, але не редагує (' + (p.data && p.data.plan.date) + ')');
+  r = await api(SUG, 'clubPlanSave', { teamId: tid, topic: 'x' }); ok(!r.ok, 'наш клуб: сахарок не планує');
+  r = await api(SUG, 'clubIdeaAdd', { teamId: tid, cat: 'game', text: 'x' }); ok(!r.ok, 'кошик ідей: сахарок не додає');
+  const d0 = p.data.plan.date;
+  r = await api(LEAD, 'clubPlanSave', { teamId: tid, date: d0, topic: 'Блудний син', preacher: 'Олена', scripture: 'Лк 15:11-32', roles: [{ name: 'Ведучий', who: ['5', 'чужий'] }, { name: 'Гра', text: 'Марта' }, { name: '' }] });
+  ok(r.ok && r.data.date === d0, 'наш клуб: лідер планує клуб ' + JSON.stringify(r.error || ''));
+  r = await api(LEAD, 'clubPlanSave', { teamId: tid, date: plus(d0, 1), topic: 'Блудний син' }); ok(!r.ok, 'наш клуб: дату змінює лише капітан/адмін');
+  let m = await api(LEAD, 'me');
+  const cp = m.data.clubPlans.find((x) => x.teamId === tid);
+  ok(cp && cp.plan && cp.plan.topic === 'Блудний син' && cp.plan.mine.join() === 'Ведучий' && cp.plan.roles === 2 && cp.plan.filled === 2, 'головна: блок «Наш клуб» з моєю роллю');
+  r = await api(LEAD, 'clubIdeaAdd', { teamId: tid, cat: 'game', text: 'Крокодил' });
+  const idea = r.data && r.data.id;
+  await api(LEAD, 'clubIdeaAdd', { teamId: tid, cat: 'song', text: 'Пісня 1' });
+  await api(LEAD, 'clubIdeaAdd', { teamId: tid, cat: 'song', text: 'Пісня 2' });
+  r = await api(LEAD, 'clubIdeaDel', { teamId: tid, id: idea }); ok(!r.ok, 'кошик ідей: лідер не видаляє');
+  r = await api(CAP, 'clubIdeaDel', { teamId: tid, id: idea }); ok(r.ok, 'кошик ідей: капітан видаляє ідею');
+  r = await api(CAP, 'clubIdeaDel', { teamId: tid, all: true, cat: 'song' });
+  p = await api(CAP, 'clubPage', { teamId: tid });
+  ok(r.ok && p.data.ideas.length === 0 && p.data.plan.roles[0].who.length === 1 && p.data.plan.roles[0].who[0].name && p.data.plan.roles[1].text === 'Марта', 'кошик ідей: очищено категорію; ролі з відповідальними');
+  r = await api(LEAD, 'clubPlanDone', { teamId: tid, teens: 5 }); ok(!r.ok, 'звіт за клуб з плану — не лідер');
+  r = await api(CAP, 'clubPlanSave', Object.assign({}, p.data.plan, { teamId: tid, date: plus(today, 30), roles: p.data.plan.roles.map((x) => ({ name: x.name, text: x.text, who: x.who.map((w) => w.id) })) }));
+  r = await api(CAP, 'clubPlanDone', { teamId: tid, teens: 9 }); ok(!r.ok, 'звіт за майбутній клуб — не можна');
+  r = await api(CAP, 'clubPlanSave', Object.assign({}, p.data.plan, { teamId: tid, date: today, sermon: 'Батько чекає', roles: p.data.plan.roles.map((x) => ({ name: x.name, text: x.text, who: x.who.map((w) => w.id) })),
+    program: [{ kind: 'song', name: 'Way Maker' }, { kind: 'game', name: 'Крокодил', desc: 'Показуєш слово без слів, команда вгадує' }, { kind: 'game', name: 'Мафія', desc: '' }, { kind: 'game', name: 'Х', desc: 'щось дуже довге і зрозуміле' }, { kind: 'song', name: '' }, { kind: 'xxx', name: 'Перекус' }] }));
+  ok(r.ok && r.data.date === today, 'наш клуб: капітан змінив дату');
+  r = await api(CAP, 'clubPlanDone', { teamId: tid, teens: 20, newT: 2, leaders: 5, note: 'Було класно' });
+  ok(r.ok && r.data.next.date === plus(today, 7), 'клуб проведено: звіт → архів, наступний через тиждень');
+  p = await api(CAP, 'clubPage', { teamId: tid });
+  ok(p.data.archive[0].program.map((x) => x.kind + ':' + x.name).join('|') === 'song:Way Maker|game:Крокодил|game:Мафія|game:Х|other:Перекус', 'програма клубу: порядок збережено, порожні прибрано (' + p.data.archive[0].program.map((x) => x.name).join(', ') + ')');
+  ok(p.data.archive[0].report.teens === 20 && p.data.archive[0].topic === 'Блудний син' && p.data.plan.topic === '' && p.data.plan.roles.length === 2 && p.data.plan.roles[0].who.length === 1 && p.data.plan.id,
+    'архів клубу; ролі й відповідальні підтягнулись на наступний');
+  const st2 = await api(CAP, 'stats', { units: ['t:' + tid], cat: 'club' });
+  ok(st2.data.club && st2.data.club.history.some((h) => h.date === today && h.teens === 20 || h.count === 20), 'звіт із плану потрапив у статистику клубів');
+  // звіт через «Внести» за дату плану — план сам іде в архів
+  const nd = p.data.plan.date;
+  await api(CAP, 'clubPlanSave', { teamId: tid, id: p.data.plan.id, date: nd, topic: 'Блудний син!', program: [{ kind: 'game', name: 'крокодил', desc: 'Те саме' }, { kind: 'game', name: 'Квач', desc: 'Хтось ловить, інші тікають' }] });
+  await api(CAP, 'saveReport', { type: 'club', teamId: tid, mode: 'event', date: nd, teens: 11 });
+  p = await api(CAP, 'clubPage', { teamId: tid });
+  ok(p.data.archive.length === 2 && p.data.archive[0].date === nd && p.data.archive[0].report.teens === 11 && p.data.plan.date === plus(nd, 7), 'звіт через «Внести» → план сам в архіві');
+  r = await api(CAP, 'clubPlanSave', { teamId: tid, id: 'старий', topic: 'x' }); ok(!r.ok, 'наш клуб: застарілий план не перезаписує');
+  const bank = await api(SUG, 'ideaBank', {});
+  const B = bank.data.items, has = (cat, t) => B.filter((x) => x.cat === cat && x.text.toLowerCase().replace(/[^а-яіїєґa-z ]/g, '') === t);
+  ok(bank.ok && has('game', 'крокодил').length === 1 && !has('game', 'мафія').length && !B.some((x) => x.text === 'Х') && has('game', 'квач').length === 1, 'банк ідей: ігри без повторів і без незрозумілих (' + B.map((x) => x.cat + ':' + x.text).join(', ') + ')');
+  ok(has('topic', 'блудний син').length === 1 && has('sermon', 'батько чекає').length === 1 && has('sermon', 'батько чекає')[0].desc === 'Лк 15:11-32' && has('song', 'way maker').length === 1 && B[0].team, 'банк ідей: теми, проповіді з місцем Біблії, пісні, назва команди');
+}
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL OK');
 // cron at 9:05 Kyiv today, weekly reminder set to today 9h
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];

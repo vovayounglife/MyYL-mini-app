@@ -75,6 +75,7 @@
     res: 'M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
     tg: 'M21.5 4.5L2.5 11.7l6 2.2 2.3 6.6 3.4-4.1 5.3 3.9z',
+    idea: 'M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z',
     phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   };
   const icon = (n, s) => `<svg width="${s || 20}" height="${s || 20}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${IC[n]}"></path></svg>`;
@@ -108,6 +109,7 @@
     stats: { scope: null, cat: 'overview', period: 'month', data: null, loading: false, from: '', to: '' },
     dirs: { data: null, period: 'month', from: '', to: '' },
     res: { data: null, form: null },
+    club: { teamId: '', data: null, f: null, dirty: false, pick: null }, bank: { data: null, cats: {}, pick: null, tag: 'all', q: '' },
     inst: { data: null, q: '', showNot: false },
     known: { teamId: null, list: null, mode: 'mine', detail: null, edit: null, bulk: null }, pick: {}, knownMem: {},
     team: { teamId: null, list: null, open: null },
@@ -139,7 +141,7 @@
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.res.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks;
+  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.res.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks && !(S.screen === 'club' && S.club.dirty);
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -310,6 +312,8 @@
     if (screen === 'mystats') loadMyStats();
     if (screen === 'ach') loadAch();
     if (screen === 'bugs') loadBugs();
+    if (screen === 'club') { S.club.pick = null; if (!S.club.dirty || !S.club.data) loadClub(); }
+    if (screen === 'bank') { S.bank.pick = null; loadBank(); }
     if (screen === 'dupes') loadDupes();
     if (screen === 'bug') S.bug = { text: '', from: S.stack[S.stack.length - 2] || '' };
     if (screen === 'res') { S.res.form = null; loadRes(); }
@@ -580,6 +584,170 @@
     : '';
 
   const VIEWS = {};
+  // ───────────── НАШ КЛУБ: план, кошик ідей, архів ─────────────
+  const WDL = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'пʼятниця', 'субота'];
+  const IDEA_IC = { game: '🎲', song: '🎵', topic: '💡', other: '📌', sermon: '📖' };
+  const PROG_KINDS = [['song', 'Пісня'], ['game', 'Гра'], ['talk', 'Проповідь'], ['other', 'Інше']];
+  const PROG_IC = { song: '🎵', game: '🎲', talk: '📖', other: '📌' };
+  const PROG_PH = { song: 'Назва пісні', game: 'Назва гри', talk: 'Тема проповіді', other: 'Що саме: зустріч, перекус, оголошення…' };
+  const daysTo = (k) => Math.round((parseDay(k) - parseDay(ymd(new Date()))) / 864e5);
+  const whenLine = (k) => { if (!k) return ''; const n = daysTo(k), d = parseDay(k); return WDL[d.getDay()] + ', ' + d.getDate() + ' ' + MGEN[d.getMonth()] + (n === 0 ? ' · сьогодні' : n === 1 ? ' · завтра' : n > 1 ? ' · через ' + plural(n, 'день', 'дні', 'днів') : ''); };
+  function clubHomeCards() {
+    const L = (me().clubPlans || []).slice(0, 3);
+    return L.map((cp) => {
+      const p = cp.plan;
+      let body;
+      if (!p) body = `<div class="cl-empty">${cp.canEdit ? 'Наступний клуб ще не заплановано — заплануй тему, гру й ролі' : 'План наступного клубу ще не створено'}</div>`;
+      else body = `<div class="cl-date">📅 ${esc(whenLine(p.date))}</div>
+        <div class="cl-topic">${p.topic ? esc(p.topic) : '<span class="muted">Тему ще не обрано</span>'}</div>
+        <div class="cl-meta">${p.preacher ? `<span>🎤 ${esc(p.preacher)}</span>` : ''}${p.scripture ? `<span>📖 ${esc(p.scripture)}</span>` : ''}${p.roles ? `<span>👥 ролі: ${p.filled} з ${p.roles}</span>` : ''}</div>
+        ${p.mine.length ? `<div class="cl-mine">Твоя роль: <b>${esc(p.mine.join(', '))}</b></div>` : ''}`;
+      return `<button type="button" class="card cl-home" data-a="clubGo" data-t="${esc(cp.teamId)}"><div class="row between"><span class="cl-h">🎉 Наш клуб</span><span class="xs muted">${esc(cp.team)}</span></div>${body}
+        <span class="cl-cta">${p ? 'Відкрити план' : cp.canEdit ? 'Запланувати' : 'Відкрити'} ${icon('chev', 16)}</span></button>`;
+    }).join('');
+  }
+  async function loadClub() {
+    const C = S.club;
+    if (!C.teamId) { const L = me().clubPlans || []; C.teamId = L.length ? L[0].teamId : ''; }
+    if (!C.teamId) { C.data = { none: true }; render(); return; }
+    try {
+      const d = await api('clubPage', { teamId: C.teamId });
+      C.data = d; C.dirty = false;
+      const p = d.plan;
+      C.f = { id: p.id, date: p.date, topic: p.topic, sermon: p.sermon || '', preacher: p.preacher, scripture: p.scripture, note: p.note || '',
+        program: (p.program || []).map((g) => ({ kind: g.kind, name: g.name, desc: g.desc || '' })),
+        roles: (p.roles || []).map((r) => ({ name: r.name, text: r.text || '', who: r.who.map((w) => w.id) })) };
+      C.rep = { teens: '', newT: '', leaders: '', parents: '', note: '' };
+    } catch (e) { toast(e.message, 'error'); C.data = C.data || { error: true }; }
+    if (S.screen === 'club') render();
+  }
+  VIEWS.club = function () {
+    const C = S.club, d = C.data, teams = me().clubPlans || [];
+    let h = header('Наш клуб', d && d.team ? d.team.name : '');
+    if (teams.length > 1) h += `<div class="chips" style="margin-bottom:4px">${teams.map((t) => `<button type="button" class="chip${t.teamId === C.teamId ? ' on' : ''}" data-a="clubTeam" data-t="${esc(t.teamId)}">${esc(t.team)}</button>`).join('')}</div>`;
+    if (!d) return h + loading();
+    if (d.none) return h + '<div class="empty">План клубу ведуть учасники команди. У тебе поки немає ролі в команді.</div>';
+    if (d.error || !d.plan) return h + '<div class="empty">Не вдалося завантажити. Потягни екран вниз, щоб оновити.</div>';
+    h += ideasCard(d) + planCard(d) + reportCard(d) + archiveCard(d);
+    return h;
+  };
+  function ideasCard(d) {
+    const C = S.club, cats = d.ideaCats, f = C.idea || (C.idea = { cat: 'game', text: '', desc: '' });
+    const flt = C.ideaCat || 'all', list = d.ideas.filter((x) => flt === 'all' || x.cat === flt);
+    const cnt = (k) => d.ideas.filter((x) => x.cat === k).length;
+    let h = `<div class="sec">🧺 Кошик ідей</div><div class="card col" style="gap:10px">`;
+    h += `<div class="chips"><button type="button" class="chip${flt === 'all' ? ' on' : ''}" data-a="ideaFlt" data-v="all">Усі · ${d.ideas.length}</button>${cats.map((c) => `<button type="button" class="chip${flt === c[0] ? ' on' : ''}" data-a="ideaFlt" data-v="${c[0]}">${IDEA_IC[c[0]]} ${esc(c[1])} · ${cnt(c[0])}</button>`).join('')}</div>`;
+    if (!list.length) h += `<div class="small muted">${d.ideas.length ? 'У цій категорії порожньо' : 'Поки порожньо. Накидайте ідеї для наступних клубів — ігри, пісні, теми.'}</div>`;
+    else h += `<div class="col" style="gap:0">${list.map((x) => `<div class="idea"><span class="idea-ic">${IDEA_IC[x.cat] || '📌'}</span><span class="grow"><b>${esc(x.text)}</b>${x.desc ? `<br><span class="small">${esc(x.desc)}</span>` : ''}<br><span class="xs muted">${esc(x.author)}</span></span>
+      ${d.can.edit ? `<button type="button" class="link-btn xs" data-a="ideaToPlan" data-id="${x.id}" title="Додати в план">→ у план</button>` : ''}${d.can.ideaDel ? `<button type="button" class="icon-btn sm" data-a="ideaDel" data-id="${x.id}" aria-label="Видалити">×</button>` : ''}</div>`).join('')}</div>`;
+    if (d.can.ideaDel && d.ideas.length) h += `<button type="button" class="link-btn xs" style="align-self:flex-start" data-a="ideaClear">🧹 Очистити ${flt === 'all' ? 'весь кошик' : 'категорію «' + esc((cats.find((c) => c[0] === flt) || [0, ''])[1]) + '»'}</button>`;
+    if (d.can.idea) {
+      h += `<div class="idea-add col" style="gap:8px"><div class="seg">${cats.map((c) => `<button type="button" class="${f.cat === c[0] ? 'on' : ''}" data-a="ideaCatSet" data-v="${c[0]}">${esc(c[1])}</button>`).join('')}</div>
+        <input class="in" type="text" maxlength="500" data-bind="club.idea.text" value="${esc(f.text)}" placeholder="${f.cat === 'game' ? 'Назва гри' : f.cat === 'song' ? 'Назва пісні' : f.cat === 'topic' ? 'Тема клубу чи проповіді' : 'Ідея'}">
+        ${f.cat === 'game' ? `<textarea class="in" rows="2" maxlength="600" data-bind="club.idea.desc" placeholder="Коротко правила чи коментар">${esc(f.desc)}</textarea>` : ''}
+        <button type="button" class="btn sec2" data-a="ideaAdd">${icon('plus', 18)} Додати в кошик</button></div>`;
+    }
+    return h + '</div>';
+  }
+  function planCard(d) {
+    const C = S.club, f = C.f, can = d.can, ro = !can.edit;
+    const nm = {}; d.people.forEach((p) => { nm[p.id] = p.name; });
+    let h = `<div class="sec">📋 Наступний клуб</div><div class="card col" style="gap:12px">`;
+    if (ro) {
+      h += `<div class="cl-date">📅 ${esc(whenLine(f.date))}</div>
+        ${[['Тема клубу', f.topic], ['Тема проповіді', f.sermon], ['Проповідник', f.preacher], ['Місце з Біблії', f.scripture]].filter((x) => x[1]).map((x) => `<div><span class="xs muted">${x[0]}</span><br><b>${esc(x[1])}</b></div>`).join('') || '<div class="small muted">План ще не заповнено.</div>'}
+        ${f.roles.length ? `<div><span class="xs muted">Ролі</span>${f.roles.map((r) => `<div class="row between" style="padding:6px 0;border-top:1px solid var(--line)"><span>${esc(r.name)}</span><b class="small">${esc(r.who.map((id) => nm[id]).filter(Boolean).concat(r.text ? [r.text] : []).join(', ') || '—')}</b></div>`).join('')}</div>` : ''}
+        ${f.program.length ? `<div><span class="xs muted">Програма</span>${f.program.map((g, i) => `<div class="prog-ro"><span class="prog-n">${i + 1}</span><span>${PROG_IC[g.kind] || '•'} <b>${esc(g.name)}</b>${g.desc ? `<br><span class="small">${esc(g.desc)}</span>` : ''}</span></div>`).join('')}</div>` : ''}
+        ${f.note ? `<div class="small">${esc(f.note)}</div>` : ''}<div class="xs muted">План заповнюють капітан, адмін команди та лідери.</div></div>`;
+      return h;
+    }
+    h += `<label class="f"><span>Дата клубу</span><input class="in" type="date" data-bind="club.f.date" data-live="clubDirty" value="${esc(f.date)}"${can.date ? '' : ' disabled'}></label>
+      <div class="xs muted" style="margin-top:-6px">${esc(whenLine(f.date))}${can.date ? '' : ' · дату змінює капітан або адмін'}</div>
+      <label class="f"><span>Тема клубу</span><input class="in" type="text" maxlength="200" data-bind="club.f.topic" data-live="clubDirty" value="${esc(f.topic)}" placeholder="Наприклад: Блудний син"></label>
+      <label class="f"><span>Тема проповіді</span><input class="in" type="text" maxlength="200" data-bind="club.f.sermon" data-live="clubDirty" value="${esc(f.sermon)}" placeholder="Якщо відрізняється від теми клубу"></label>
+      <div class="row" style="gap:10px"><label class="f grow"><span>Проповідник</span><input class="in" type="text" maxlength="100" list="clubPeople" data-bind="club.f.preacher" data-live="clubDirty" value="${esc(f.preacher)}" placeholder="Хто говорить"></label>
+      <label class="f grow"><span>Місце з Біблії</span><input class="in" type="text" maxlength="120" data-bind="club.f.scripture" data-live="clubDirty" value="${esc(f.scripture)}" placeholder="Лк 15:11-32"></label></div>
+      <datalist id="clubPeople">${d.people.map((p) => `<option value="${esc(p.name)}">`).join('')}</datalist>`;
+    // ролі
+    h += `<div class="cl-sub">👥 Ролі й відповідальні</div>`;
+    if (!f.roles.length) h += `<div class="xs muted">Заповніть ролі один раз — на наступні клуби вони підтягнуться самі (зайве можна прибрати).</div>`;
+    h += f.roles.map((r, i) => {
+      const open = C.pick === i;
+      return `<div class="cl-row col" style="gap:6px"><div class="row" style="gap:6px"><input class="in grow" type="text" maxlength="80" data-bind="club.f.roles.${i}.name" data-live="clubDirty" value="${esc(r.name)}" placeholder="Роль">
+        <button type="button" class="icon-btn sm" data-a="clubRowDel" data-k="roles" data-i="${i}" aria-label="Прибрати роль">×</button></div>
+        <div class="chips">${r.who.map((id) => `<button type="button" class="chip on" data-a="clubWho" data-i="${i}" data-id="${esc(id)}">${esc(nm[id] || '?')} ×</button>`).join('')}
+        <button type="button" class="chip" data-a="clubPick" data-i="${i}">${open ? 'Готово' : '+ хто відповідає'}</button></div>
+        ${open ? `<div class="chips cl-pick">${d.people.filter((p) => r.who.indexOf(p.id) < 0).map((p) => `<button type="button" class="chip" data-a="clubWho" data-i="${i}" data-id="${esc(p.id)}">${esc(p.name)}</button>`).join('') || '<span class="xs muted">Усі вже вибрані</span>'}</div>` : ''}
+        <input class="in" type="text" maxlength="120" data-bind="club.f.roles.${i}.text" data-live="clubDirty" value="${esc(r.text)}" placeholder="Або хто (не з команди), коментар"></div>`;
+    }).join('');
+    const have = f.roles.map((r) => r.name.toLowerCase());
+    h += `<div class="chips">${d.hints.filter((x) => have.indexOf(x.toLowerCase()) < 0).map((x) => `<button type="button" class="chip" data-a="clubRoleAdd" data-v="${esc(x)}">+ ${esc(x)}</button>`).join('')}<button type="button" class="chip" data-a="clubRoleAdd" data-v="">+ своя роль</button></div>`;
+    // програма клубу: порядок — перетягуванням за ☰
+    h += `<div class="cl-sub">🗒 Програма клубу</div>`;
+    if (!f.program.length) h += `<div class="xs muted">Пункти по черзі: пісні, ігри, проповідь, перекус… Порядок змінюєш, перетягуючи за ☰.</div>`;
+    h += `<div class="prog" data-noptr>${f.program.map((g, i) => `<div class="prog-it" data-i="${i}"><span class="prog-h" data-drag="${i}" aria-label="Перетягнути">☰</span><span class="prog-n">${i + 1}</span>
+      <div class="grow col" style="gap:6px"><div class="row" style="gap:6px"><button type="button" class="prog-k" data-a="progKind" data-i="${i}" title="Змінити тип">${PROG_IC[g.kind]}</button>
+      <input class="in grow" type="text" maxlength="120" data-bind="club.f.program.${i}.name" data-live="clubDirty" value="${esc(g.name)}" placeholder="${PROG_PH[g.kind]}">
+      <button type="button" class="icon-btn sm" data-a="clubRowDel" data-k="program" data-i="${i}" aria-label="Прибрати">×</button></div>
+      ${g.kind === 'game' || g.kind === 'talk' || g.desc ? `<textarea class="in" rows="2" maxlength="600" data-bind="club.f.program.${i}.desc" data-live="clubDirty" placeholder="${g.kind === 'game' ? 'Опис: коротко правила чи коментар' : g.kind === 'talk' ? 'Місце з Біблії, головна думка' : 'Коментар'}">${esc(g.desc)}</textarea>` : ''}</div></div>`).join('')}</div>
+      <div class="chips">${PROG_KINDS.map((k) => `<button type="button" class="chip" data-a="progAdd" data-k="${k[0]}">+ ${k[1]}</button>`).join('')}</div>`;
+    h += `<label class="f"><span>Нотатка</span><textarea class="in" rows="2" maxlength="1000" data-bind="club.f.note" data-live="clubDirty" placeholder="Що підготувати, купити, про що помолитися">${esc(f.note)}</textarea></label>
+      <button type="button" class="btn" data-a="clubSave"${C.dirty || !f.id ? '' : ' disabled'}>${icon('check', 18)} ${f.id ? (C.dirty ? 'Зберегти план' : 'Збережено') : 'Створити план'}</button></div>`;
+    return h;
+  }
+  function reportCard(d) {
+    const C = S.club, f = C.f, today = d.today;
+    if (!f.id) return '';
+    if (f.date > today) return `<div class="xs muted" style="margin:2px 6px">Після клубу тут можна буде дати звіт — і план піде в архів, а на його місці з'явиться наступний клуб.</div>`;
+    if (!d.can.report) return `<div class="card small muted">Клуб уже минув. Звіт дасть капітан або адмін команди — тоді план піде в архів, а тут з'явиться наступний клуб.</div>`;
+    const r = C.rep, cap = d.team.dir === 'Capernaum';
+    const inp = (k, l) => `<label class="f" style="flex:1;min-width:90px"><span>${l}</span><input class="in" type="number" inputmode="numeric" min="0" data-bind="club.rep.${k}" value="${esc(r[k])}"></label>`;
+    return `<div class="sec">✅ Клуб проведено?</div><div class="card col" style="gap:10px"><div class="small muted">Звіт піде в статистику клубів, план — в архів, а тут з'явиться наступний клуб через тиждень.</div>
+      <div class="row wrap" style="gap:8px">${inp('teens', 'Підлітків')}${inp('newT', 'Нових')}${inp('leaders', 'Лідерів')}${cap ? inp('parents', 'Батьків') : ''}</div>
+      <label class="f"><span>Як пройшло</span><textarea class="in" rows="2" maxlength="1000" data-bind="club.rep.note" placeholder="Що вдалося, за кого помолитися">${esc(r.note)}</textarea></label>
+      <button type="button" class="btn" data-a="clubDone">${icon('check', 18)} Зберегти звіт і в архів</button>
+      <button type="button" class="link-btn small" data-a="clubDone" data-none="1">Клубу не було</button></div>`;
+  }
+  function archiveCard(d) {
+    const C = S.club, A0 = d.archive;
+    if (!A0.length) return `<div class="sec">🗂 Архів клубу</div><div class="empty small">Тут збиратимуться проведені клуби з темами, іграми й звітами.</div>`;
+    const list = C.archAll ? A0 : A0.slice(0, 5);
+    return `<div class="sec">🗂 Архів клубу · ${A0.length}</div><div class="card list">${list.map((p) => {
+      const r = p.report || {}, open = C.archOpen === p.id;
+      return `<button type="button" class="li arch" data-a="clubArch" data-id="${p.id}"><span class="grow"><b>${esc(fmtDay(p.date))}</b> · ${p.topic ? esc(p.topic) : '<span class="muted">без теми</span>'}<br>
+        <span class="xs muted">${p.status === 'none' ? 'клубу не було' : (r.teens || 0) + ' підл. · ' + (r.newT || 0) + ' нових · ' + (r.leaders || 0) + ' лід.' + (r.parents ? ' · ' + r.parents + ' батьків' : '')}</span>
+        ${open ? `<span class="arch-d">${p.sermon ? `<span>📖 ${esc(p.sermon)}</span>` : ''}${p.preacher ? `<span>🎤 ${esc(p.preacher)}</span>` : ''}${p.scripture ? `<span>📜 ${esc(p.scripture)}</span>` : ''}
+          ${(p.program || []).map((g, i) => `<span>${i + 1}. ${PROG_IC[g.kind] || '•'} ${esc(g.name)}${g.desc ? ' — ' + esc(g.desc) : ''}</span>`).join('')}
+          ${(p.roles || []).map((x) => `<span>👥 ${esc(x.name)}: ${esc(x.who.map((w) => w.name).concat(x.text ? [x.text] : []).join(', ') || '—')}</span>`).join('')}
+          ${r.note ? `<span>💬 ${esc(r.note)}</span>` : ''}${p.doneBy ? `<span class="muted">звіт: ${esc(p.doneBy)}</span>` : ''}</span>` : ''}</span>${icon(open ? 'back' : 'chev', 16)}</button>`;
+    }).join('')}</div>${A0.length > 5 && !C.archAll ? `<button type="button" class="link-btn" data-a="clubArchAll">Показати ще ${A0.length - 5}</button>` : ''}`;
+  }
+
+  // ───────────── БАНК ІДЕЙ ─────────────
+  async function loadBank() { try { S.bank.data = await api('ideaBank'); } catch (e) { toast(e.message, 'error'); } if (S.screen === 'bank') render(); }
+  VIEWS.bank = function () {
+    const B = S.bank, d = B.data;
+    let h = header('Банк ідей', 'усе, що команди вже провели на клубах');
+    if (!d) return h + loading();
+    const on = (k) => B.cats[k] !== false;
+    const cnt = (k) => d.items.filter((x) => x.cat === k).length;
+    h += `<div class="card col" style="gap:12px"><div class="small muted">Що шукаєш?</div><div class="chips">${d.cats.map((c) => `<button type="button" class="chip${on(c[0]) ? ' on' : ''}" data-a="bankCat" data-v="${c[0]}">${on(c[0]) ? '☑' : '☐'} ${IDEA_IC[c[0]]} ${esc(c[1])} · ${cnt(c[0])}</button>`).join('')}</div>
+      <button type="button" class="btn" data-a="bankRandom"${d.items.some((x) => on(x.cat)) ? '' : ' disabled'}>✨ Надихнутись</button>`;
+    if (B.pick) { const x = B.pick; h += `<div class="bank-pick"><div class="xs muted">${IDEA_IC[x.cat]} ${esc((d.cats.find((c) => c[0] === x.cat) || [0, ''])[1])}</div><div class="bank-t">${esc(x.text)}</div>${x.desc ? `<div class="small">${esc(x.desc)}</div>` : ''}
+      <div class="xs muted" style="margin-top:6px">від команди «${esc(x.team)}»${x.teams.length > 1 ? ' · проводили ще ' + plural(x.teams.length - 1, 'команда', 'команди', 'команд') : ''}</div></div>`; }
+    h += '</div>';
+    if (!d.items.length) return h + '<div class="empty">Банк поки порожній. Він наповнюється сам, коли команди дають звіт за клуб із планом: теми, проповіді, ігри з описом і пісні.</div>';
+    const T = B.tag || 'all', q = (B.q || '').trim().toLowerCase();
+    h += `<div class="seg" style="margin-top:6px"><button type="button" class="${T === 'all' ? 'on' : ''}" data-a="bankTag" data-v="all">Усі</button>${d.cats.map((c) => `<button type="button" class="${T === c[0] ? 'on' : ''}" data-a="bankTag" data-v="${c[0]}">${esc(c[1].split(' ')[0])}</button>`).join('')}</div>
+      <input class="in" type="search" placeholder="Пошук" value="${esc(B.q || '')}" data-bind="bank.q" data-live="bankQ">`;
+    const list = d.items.filter((x) => (T === 'all' || x.cat === T) && (!q || (x.text + ' ' + x.desc).toLowerCase().indexOf(q) >= 0));
+    const shown = list.slice(0, B.more || 40);
+    h += `<div class="card list" id="bankList">${shown.map((x) => `<div class="li" style="align-items:flex-start;gap:10px"><span class="idea-ic">${IDEA_IC[x.cat]}</span><span class="grow"><b>${esc(x.text)}</b>${x.desc ? `<br><span class="small">${esc(x.desc)}</span>` : ''}
+      <br><span class="xs muted">💬 команда «${esc(x.team)}»${x.teams.length > 1 ? ' · і ще ' + (x.teams.length - 1) : ''}</span></span></div>`).join('') || '<div class="li small muted">Нічого не знайдено</div>'}</div>`;
+    if (list.length > shown.length) h += `<button type="button" class="link-btn" data-a="bankMore">Показати ще ${list.length - shown.length}</button>`;
+    return h;
+  };
+
 
   // ───────────── ГОЛОВНА ─────────────
   VIEWS.home = function () {
@@ -609,6 +777,7 @@
     const knownTile = (c.knownTeams || []).length || c.knownNoTeam;
     if (canKnownAdd() && !knownTile) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
     if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 3 ? '3' : '2'}">${qt.join('')}</div>`;
+    h += clubHomeCards();
     // головні розділи: моя команда, знані, корисні ресурси, задачі
     const home = [];
     if ((c.viewTeams || []).length) home.push({ k: 'team', label: 'Моя команда', sub: 'склад, ролі й анкети', icon: 'club', ic: 'ic-teal' });
@@ -1844,7 +2013,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       { k: 'tasks', label: 'Задачі до виконання', sub: c.broadcast ? 'доручити й стежити за виконанням' : 'що тобі доручили', icon: 'task', ic: 'ic-teal', badge: td.tasks },
       { k: 'polls', label: 'Опитування', sub: c.broadcast ? 'запитати й побачити, хто як голосує' : 'голосуй за варіант', icon: 'poll', ic: 'ic-purple', badge: td.polls },
       { k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання для служіння', icon: 'res', ic: 'ic-yellow' },
+      { k: 'bank', label: 'Банк ідей', sub: 'теми, ігри, пісні, проповіді з клубів усіх команд', icon: 'idea', ic: 'ic-coral' },
       tile('broadcast')].filter(has);
+    if ((me().clubPlans || []).length) team.splice(1, 0, { k: 'club', label: 'Наш клуб', sub: 'план, програма, кошик ідей, архів', icon: 'club', ic: 'ic-teal' });
     // 3. звіти
     const reps = [tile('finance') && Object.assign({}, tile('finance'), { label: 'Місячний фінансовий звіт' })];
     if ((c.reportItems || []).length) reps.push({ k: 'report', label: 'Підготувати звіт', sub: 'за період, по регіону, ерії чи команді', icon: 'doc', ic: 'ic-yellow' });
@@ -2192,6 +2363,127 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.back = back;
   A.tab = (d) => go(d.s);
   A.tabGo = (d) => go(d.s);
+  // ── наш клуб ──
+  A.clubGo = (d) => { if (S.club.teamId !== d.t) { S.club.data = null; S.club.archOpen = null; S.club.archAll = false; } S.club.teamId = d.t; go('club'); };
+  A.clubTeam = async (d) => {
+    if (d.t === S.club.teamId) return;
+    if (S.club.dirty && !(await confirmAsk('План не збережено. Перейти до іншої команди без збереження?'))) return;
+    S.club.teamId = d.t; S.club.data = null; S.club.dirty = false; S.club.archOpen = null; S.club.archAll = false; render(); loadClub();
+  };
+  A.clubDirty = () => {
+    if (S.club.dirty) return;
+    S.club.dirty = true;
+    const b = document.querySelector('[data-a="clubSave"]'); if (b) { b.disabled = false; b.lastChild.textContent = ' ' + (S.club.f.id ? 'Зберегти план' : 'Створити план'); }
+  };
+  const clubRe = () => { S.club.dirty = true; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.progAdd = (d) => { const f = S.club.f; f.program.push({ kind: d.k, name: d.k === 'talk' ? f.sermon || f.topic || '' : '', desc: d.k === 'talk' ? f.scripture || '' : '' }); clubRe(); const L = document.querySelectorAll('[data-bind^="club.f.program."][data-bind$=".name"]'); if (L.length) L[L.length - 1].focus(); };
+  A.progKind = (d) => { const g = S.club.f.program[Number(d.i)], K = PROG_KINDS.map((k) => k[0]); g.kind = K[(K.indexOf(g.kind) + 1) % K.length]; clubRe(); };
+  A.clubRowDel = (d) => { S.club.f[d.k].splice(Number(d.i), 1); if (d.k === 'roles') S.club.pick = null; clubRe(); };
+  A.clubRoleAdd = (d) => { S.club.f.roles.push({ name: d.v || '', text: '', who: [] }); S.club.pick = d.v ? S.club.f.roles.length - 1 : null; clubRe(); if (!d.v) { const L = document.querySelectorAll('[data-bind^="club.f.roles."][data-bind$=".name"]'); if (L.length) L[L.length - 1].focus(); } };
+  A.clubPick = (d) => { const i = Number(d.i); S.club.pick = S.club.pick === i ? null : i; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.clubWho = (d) => { const r = S.club.f.roles[Number(d.i)], k = r.who.indexOf(d.id); if (k >= 0) r.who.splice(k, 1); else r.who.push(d.id); clubRe(); };
+  A.clubSave = async (d, el) => {
+    const C = S.club, f = C.f;
+    el.disabled = true;
+    try {
+      const r = await api('clubPlanSave', { teamId: C.teamId, id: f.id, date: f.date, topic: f.topic, sermon: f.sermon, preacher: f.preacher, scripture: f.scripture, note: f.note, program: f.program, roles: f.roles });
+      f.id = r.id; C.dirty = false; toast('План клубу збережено', 'success'); refreshMe(); await loadClub();
+    } catch (e) { toast(e.message, 'error'); el.disabled = false; }
+  };
+  A.clubDone = async (d, el) => {
+    const C = S.club, r = C.rep, none = !!d.none;
+    if (C.dirty && !(await confirmAsk('Зміни в плані не збережено. Дати звіт без них?'))) return;
+    if (!none && !Number(r.teens)) { toast('Вкажи, скільки було підлітків', 'error'); return; }
+    if (none && !(await confirmAsk('Записати, що клубу не було? Тема й ігри перейдуть на наступний клуб.'))) return;
+    el.disabled = true;
+    try {
+      const x = await api('clubPlanDone', { teamId: C.teamId, id: C.f.id, none: none, teens: r.teens, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note });
+      toast((none ? 'Записано. ' : 'Звіт збережено, клуб в архіві. ') + 'Наступний — ' + fmtDay(x.next.date), 'success');
+      C.dirty = false; refreshMe(); await loadClub(); window.scrollTo(0, 0);
+    } catch (e) { toast(e.message, 'error'); el.disabled = false; }
+  };
+  A.clubArch = (d) => { S.club.archOpen = S.club.archOpen === d.id ? null : d.id; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.clubArchAll = () => { S.club.archAll = true; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.ideaFlt = (d) => { S.club.ideaCat = d.v; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.ideaCatSet = (d) => { S.club.idea.cat = d.v; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.ideaAdd = async (d, el) => {
+    const C = S.club, f = C.idea;
+    if (!f.text.trim()) { toast('Напиши ідею', 'error'); return; }
+    el.disabled = true;
+    try { await api('clubIdeaAdd', { teamId: C.teamId, cat: f.cat, text: f.text, desc: f.cat === 'game' ? f.desc : '' }); C.idea = { cat: f.cat, text: '', desc: '' }; toast('Ідею додано в кошик', 'success'); await reloadIdeas(); }
+    catch (e) { toast(e.message, 'error'); el.disabled = false; }
+  };
+  // оновити лише кошик, не чіпаючи незбережений план
+  async function reloadIdeas() {
+    const C = S.club;
+    try { const x = await api('clubPage', { teamId: C.teamId }); C.data.ideas = x.ideas; } catch (e) { toast(e.message, 'error'); }
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  A.ideaDel = async (d) => {
+    const x = S.club.data.ideas.find((i) => i.id === d.id);
+    if (!x || !(await confirmAsk('Видалити ідею «' + x.text + '»?'))) return;
+    try { await api('clubIdeaDel', { teamId: S.club.teamId, id: d.id }); await reloadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+  A.ideaClear = async () => {
+    const C = S.club, cat = C.ideaCat && C.ideaCat !== 'all' ? C.ideaCat : '';
+    const n = C.data.ideas.filter((x) => !cat || x.cat === cat).length;
+    if (!(await confirmAsk('Видалити ' + plural(n, 'ідею', 'ідеї', 'ідей') + (cat ? ' з цієї категорії' : ' з кошика') + '? Повернути не вийде.'))) return;
+    try { await api('clubIdeaDel', { teamId: C.teamId, all: true, cat: cat }); toast('Кошик почищено', 'success'); await reloadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+  A.ideaToPlan = (d) => {
+    const C = S.club, x = C.data.ideas.find((i) => i.id === d.id), f = C.f;
+    if (!x) return;
+    if (x.cat === 'game' || x.cat === 'song') f.program.push({ kind: x.cat, name: x.text, desc: x.desc || '' });
+    else if (x.cat === 'topic' && !f.topic) f.topic = x.text;
+    else if (x.cat === 'topic' && !f.sermon) f.sermon = x.text;
+    else f.note = (f.note ? f.note + '\n' : '') + x.text;
+    toast('Додано в план — не забудь зберегти', 'success'); clubRe();
+  };
+  // ── банк ідей ──
+  A.bankCat = (d) => { S.bank.cats[d.v] = S.bank.cats[d.v] === false; S.bank.pick = null; render(); };
+  A.bankRandom = () => {
+    const B = S.bank, L = B.data.items.filter((x) => B.cats[x.cat] !== false && x !== B.pick);
+    const pool = L.length ? L : B.data.items.filter((x) => B.cats[x.cat] !== false);
+    if (!pool.length) return;
+    B.pick = pool[Math.floor(Math.random() * pool.length)]; haptic('light'); const y = window.scrollY; render(); window.scrollTo(0, y);
+  };
+  A.bankTag = (d) => { S.bank.tag = d.v; S.bank.more = 0; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.bankMore = () => { S.bank.more = (S.bank.more || 40) + 40; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.bankQ = (d, el) => {
+    clearTimeout(A.bankQ.t);
+    A.bankQ.t = setTimeout(() => { const y = window.scrollY; render(); window.scrollTo(0, y); const i = document.querySelector('[data-live="bankQ"]'); if (i) { i.focus(); const n = i.value.length; try { i.setSelectionRange(n, n); } catch (e) { /* type=search */ } } }, 250);
+  };
+  // перетягування пунктів програми (палець або миша) за ☰
+  (function progDrag() {
+    let drag = null;
+    document.addEventListener('pointerdown', (e) => {
+      const h = e.target.closest('[data-drag]');
+      if (!h || S.screen !== 'club') return;
+      const it = h.closest('.prog-it'), box = it.parentNode;
+      e.preventDefault();
+      drag = { it: it, box: box, from: Number(it.dataset.i), id: e.pointerId, y0: e.clientY };
+      it.classList.add('drag'); haptic('light');
+      try { h.setPointerCapture(e.pointerId); } catch (x) { /* */ }
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.preventDefault();
+      const items = [...drag.box.children].filter((x) => x !== drag.it);
+      const after = items.find((x) => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (after) { if (drag.it.nextSibling !== after) drag.box.insertBefore(drag.it, after); } else if (drag.box.lastChild !== drag.it) drag.box.appendChild(drag.it);
+      [...drag.box.children].forEach((x, i) => { const n = x.querySelector('.prog-n'); if (n) n.textContent = i + 1; });
+    }, { passive: false });
+    const end = (e) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const to = [...drag.box.children].indexOf(drag.it), from = drag.from;
+      drag.it.classList.remove('drag'); drag = null;
+      if (to < 0 || to === from) return;
+      const P = S.club.f.program, x = P.splice(from, 1)[0]; P.splice(to, 0, x);
+      haptic('light'); clubRe();
+    };
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+  })();
   A.bugSend = async () => {
     const B = S.bug; if (String(B.text).trim().length < 3) return toast('Опиши, що сталося');
     B.busy = true; render();
@@ -3012,7 +3304,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   const PULL_RELOAD = {
     home: () => Promise.all([refreshMe(), loadEvents()]), more: refreshMe, calendar: loadEvents, stats: loadStats, known: () => loadKnown(true), team: loadTeam, finance: loadFin,
     requests: loadReqs, perms: loadPerms, inst: loadInst, mystats: loadMyStats, ach: loadAch, bugs: loadBugs, dupes: loadDupes, res: loadRes, dirs: loadDirs,
-    tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe,
+    tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe, bank: loadBank, club: () => (S.club.dirty ? null : loadClub()),
   };
   async function pullRefresh() {
     const f = PULL_RELOAD[S.screen];

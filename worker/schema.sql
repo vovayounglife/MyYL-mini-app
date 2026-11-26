@@ -82,3 +82,12 @@ CREATE TABLE IF NOT EXISTS client_log (ts TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS checkins (tg_id TEXT NOT NULL, week TEXT NOT NULL, club INTEGER DEFAULT 0, mg INTEGER DEFAULT 0, kr INTEGER DEFAULT 0, updated TEXT, PRIMARY KEY (tg_id, week));
 
 CREATE TABLE IF NOT EXISTS bugs (id TEXT PRIMARY KEY, tg_id TEXT, name TEXT, text TEXT, screen TEXT, info TEXT, created TEXT, done TEXT);
+CREATE TABLE IF NOT EXISTS club_plans (
+  id TEXT PRIMARY KEY, team_id TEXT NOT NULL, date TEXT, topic TEXT, sermon TEXT, preacher TEXT, scripture TEXT, program TEXT, roles TEXT, note TEXT,
+  status TEXT DEFAULT 'plan', report TEXT, report_id TEXT, created TEXT, updated TEXT, author_id TEXT, done_at TEXT, done_by TEXT
+);
+CREATE INDEX IF NOT EXISTS club_plans_team ON club_plans (team_id, status);
+CREATE TABLE IF NOT EXISTS club_ideas (
+  id TEXT PRIMARY KEY, team_id TEXT NOT NULL, cat TEXT, text TEXT, descr TEXT, author_id TEXT, author TEXT, created TEXT
+);
+CREATE INDEX IF NOT EXISTS club_ideas_team ON club_ideas (team_id);
