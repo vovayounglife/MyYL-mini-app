@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS ws_boards (id TEXT PRIMARY KEY, ws TEXT NOT NULL, tit
 CREATE TABLE IF NOT EXISTS ws_cols (id TEXT PRIMARY KEY, ws TEXT NOT NULL, board_id TEXT NOT NULL, title TEXT, kind TEXT, pos REAL);
 CREATE TABLE IF NOT EXISTS ws_cards (
   id TEXT PRIMARY KEY, ws TEXT NOT NULL, board_id TEXT, col_id TEXT, pos REAL, title TEXT, descr TEXT, due TEXT, assignees TEXT, circle TEXT, item_id TEXT,
-  links TEXT, checklist TEXT, done INTEGER DEFAULT 0, archived INTEGER DEFAULT 0, author_id TEXT, author TEXT, created TEXT, updated TEXT, updated_by TEXT, reminded TEXT, done_by TEXT
+  links TEXT, checklist TEXT, done INTEGER DEFAULT 0, archived INTEGER DEFAULT 0, author_id TEXT, author TEXT, created TEXT, updated TEXT, updated_by TEXT, reminded TEXT, done_by TEXT, rep TEXT, rep_n INTEGER DEFAULT 0, rep_last TEXT
 );
 CREATE INDEX IF NOT EXISTS ws_cards_ws ON ws_cards (ws, archived);
 CREATE TABLE IF NOT EXISTS ws_comments (id TEXT PRIMARY KEY, ws TEXT, card_id TEXT NOT NULL, tg_id TEXT, name TEXT, text TEXT, created TEXT);
