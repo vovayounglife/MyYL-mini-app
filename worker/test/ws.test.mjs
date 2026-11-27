@@ -190,7 +190,7 @@ const imp = {
 r = await api(NASTIA, 'wsImport', imp);
 ok(!r.ok && r.error === 'forbidden', 'імпорт — лише той, хто керує');
 r = await api(VOVA, 'wsImport', imp);
-ok(r.ok && r.data.ws.current.leaders === 18 && r.data.ws.current.teams === 2 && r.data.ws.current.staff === 3, 'імпорт: поточний стан 2340 рахується');
+ok(r.ok && r.data.got.length === 5, 'імпорт: усі частини даних');
 ok(r.data.ws.members.find((m) => m.id === '7').pkey === 'nastia' && r.data.ws.members.find((m) => m.id === '1').pkey === 'vova', 'учасники підвʼязались до своїх профілів');
 r = await api(SONIA, 'wsProfiles', {});
 ok(r.ok && r.data.profiles.people.length === 2 && r.data.photos.vova && !r.data.photos.bad, 'профілі й фото (лише безпечні)');
@@ -198,6 +198,20 @@ r = await api(SONIA, 'wsAnalytics', {});
 ok(r.ok && r.data.analytics.teams.length === 2 && r.data.oto.files.length === 1, 'аналітика й one-to-one');
 r = await api(OUT, 'wsProfiles', {});
 ok(!r.ok, 'сторонній не бачить профілів');
+
+// ── поточний стан 2340 — наживо з MyYL ──
+r = await api(VOVA, 'ws', {});
+ok(r.data.current.staff === 2 && r.data.current.teams === 0 && r.data.current.leaders === 0 && r.data.current.region === 'West', '2340: стафи — керівниці ерій West, чужий регіон не рахується');
+const tid = (await api(VOVA, 'teamSave', { areaId: 'a1', name: 'Kairos' })).data.id;
+await api(VOVA, 'teamSave', { areaId: 'a1', name: 'Crossroad' });
+const LEADX = { id: 20, first_name: 'Лідер', last_name: 'Перший' };
+await api(LEADX, 'register', { name: 'Лідер Перший', roles: ['LEADER', 'HELPER'], teamId: tid, areaId: 'a1' });
+await api(NASTIA, 'requestRoles', { roles: ['CAPTAIN'], teamId: tid, areaId: 'a1' });
+for (const p of (await api(VOVA, 'requests')).data) await api(VOVA, 'decide', { roleIds: p.roles.map((x) => x.id), approve: true });
+r = await api(VOVA, 'memberAdd', { teamId: tid, role: 'VOLUNTEER', names: ['Петро Безтелеграму'] });
+ok(r.ok, 'у склад додано людину без MyYL');
+r = await api(VOVA, 'ws', {});
+ok(r.data.current.teams === 2 && r.data.current.leaders === 2 && r.data.current.staff === 2, '2340: 2 команди, 2 лідери (Настя не задвоюється), 2 стафи (' + JSON.stringify(r.data.current) + ')');
 
 // ── учасники: прибрати ──
 r = await api(VOVA, 'wsMemberRemove', { id: '1' });
