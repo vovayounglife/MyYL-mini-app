@@ -156,7 +156,7 @@ function bad_(msg) { throw new ApiError('bad_request', msg); }
 const NEEDS = {
   me: { log: 'week', events: true, tp: true, ck: true, bugCount: true, lastClubs: true, plans: 'open' },
   clubPage: { log: 'week', clubs: true, plans: 'team', ideas: true }, clubPlanSave: { clubs: true, plans: 'team' }, clubPlanDone: { log: 'week', ck: true, clubs: true, plans: 'team' },
-  clubIdeaAdd: { ideas: true }, clubIdeaDel: { ideas: true }, ideaBank: { plans: 'done' }, actAsFind: {}, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
+  clubIdeaAdd: { ideas: true }, clubIdeaDel: { ideas: true }, ideaBank: { plans: 'done', bankSeed: true }, actAsFind: {}, checkin: { log: 'week', ck: true }, myStats: { mine: true }, register: {}, requestRoles: {}, requests: {}, roleEdit: {}, roleGrant: {}, decide: {}, removeRole: {}, saveProfile: {},
   saveReport: { log: 'week', ck: true }, knownList: { known: true }, knownSave: { known: true }, knownArchive: { known: true }, knownBulk: { known: true }, knownStage: { known: true },
   teamMembers: {}, financeGet: { finance: true }, financeSave: { finance: true },
   finTx: { finance: true, ftx: true }, finTxAdd: { finance: true, ftx: true }, finTxDelete: { finance: true, ftx: true },
@@ -218,6 +218,7 @@ async function runAs_(S, tgUser, action, d, viewAs, actAs) {
     if (need.clubs) await S.loadClubs();
     if (need.plans) await S.loadPlans(need.plans === 'team' ? str_(d.teamId) : need.plans === 'done' ? '*done' : null);
     if (need.ideas) await S.loadIdeas(str_(d.teamId));
+    if (need.bankSeed) S.bankSeed = ((await S.db.prepare("SELECT * FROM club_ideas WHERE team_id = '_bank' ORDER BY created").all()).results || []);
     if (need.lastClubs) S.lastClubRows = ((await S.db.prepare("SELECT r.* FROM reports r JOIN (SELECT team_id, MAX(date) AS d FROM reports WHERE type = 'club' GROUP BY team_id) m ON r.team_id = m.team_id AND r.date = m.d WHERE r.type = 'club' ORDER BY r.seq").all()).results || []).map(logFromRow);
     if (need.bugCount) S.bugOpen = (await S.db.prepare("SELECT COUNT(*) AS n FROM bugs WHERE COALESCE(done, '') = ''").first('n')) || 0;
     if (need.bugs) S.bugs = ((await S.db.prepare('SELECT * FROM bugs ORDER BY created DESC LIMIT 200').all()).results || []);
@@ -2928,14 +2929,17 @@ API.clubPick = function (c, d) {
 };
 // змінити чи видалити звіт за клуб: хто вносить клуб у цій команді, а також Еріа Директор і Еріа Адмін
 // ── «Наш клуб»: план наступного клубу, кошик ідей, архів проведених ──
-const IDEA_CATS = [['game', 'Гра'], ['song', 'Пісня'], ['topic', 'Тема'], ['other', 'Інше']];
+const IDEA_CATS = [['game', 'Гра'], ['ggame', 'Загальна гра'], ['song', 'Пісня'], ['topic', 'Тема'], ['other', 'Інше']];
 // програма клубу: впорядкований список пунктів
-const PROG_KINDS = ['game', 'song', 'talk', 'other'];
+const PROG_KINDS = ['game', 'ggame', 'song', 'talk', 'other'];
+// формат клубу: клуб, квест, фільм або свій (свої формати команди зберігаються й пропонуються далі)
+const CLUB_FORMATS = { club: 'Клуб', quest: 'Квест', movie: 'Фільм' };
+const fmtOf_ = (v) => clipN_(v, 60);
 const CLUB_ROLE_HINTS = ['Ведучий', 'Гра', 'Пісні й музика', 'Зустріч підлітків', 'Перекус', 'Техніка й звук', 'Молитва', 'Фото'];
 function planFromRow_(r) {
   const j = (x, def) => { try { return x ? JSON.parse(x) : def; } catch (e) { return def; } };
   return { id: r.id, teamId: r.team_id, date: r.date || '', topic: r.topic || '', sermon: r.sermon || '', preacher: r.preacher || '', scripture: r.scripture || '', program: j(r.program, []), roles: j(r.roles, []), note: r.note || '',
-    status: r.status || 'plan', report: j(r.report, null), reportId: r.report_id || '', created: r.created || '', updated: r.updated || '', doneAt: r.done_at || '', doneBy: r.done_by || '' };
+    format: r.format || '', status: r.status || 'plan', report: j(r.report, null), reportId: r.report_id || '', created: r.created || '', updated: r.updated || '', doneAt: r.done_at || '', doneBy: r.done_by || '' };
 }
 function teamRank_(c, teamId) { return c.roles.filter((r) => r.level === 'team' && r.unitId === teamId).reduce((a, r) => Math.min(a, r.rank), 99); }
 function clubPlanCan_(c, teamId) {
@@ -2959,7 +2963,7 @@ function nextClubDate_(teamId, after) {
 const openPlan_ = (teamId) => (S.plans || []).filter((p) => p.teamId === teamId && p.status === 'plan')[0] || null;
 function planRow_(p) {
   return { id: p.id, team_id: p.teamId, date: p.date, topic: p.topic, sermon: p.sermon || '', preacher: p.preacher, scripture: p.scripture, program: JSON.stringify(p.program || []), roles: JSON.stringify(p.roles || []), note: p.note,
-    status: p.status, report: p.report ? JSON.stringify(p.report) : '', report_id: p.reportId || '', created: p.created, updated: p.updated, author_id: p.authorId || '', done_at: p.doneAt || '', done_by: p.doneBy || '' };
+    format: p.format || '', status: p.status, report: p.report ? JSON.stringify(p.report) : '', report_id: p.reportId || '', created: p.created, updated: p.updated, author_id: p.authorId || '', done_at: p.doneAt || '', done_by: p.doneBy || '' };
 }
 function planInsert_(p) { const row = planRow_(p), k = Object.keys(row); S.run('INSERT INTO club_plans (' + k.join(', ') + ') VALUES (' + k.map(() => '?').join(',') + ')', k.map((x) => row[x])); (S.plans = S.plans || []).push(p); }
 function planUpdate_(p) { const row = planRow_(p), k = Object.keys(row).filter((x) => x !== 'id'); S.run('UPDATE club_plans SET ' + k.map((x) => x + ' = ?').join(', ') + ' WHERE id = ?', k.map((x) => row[x]).concat([p.id])); }
@@ -3035,7 +3039,8 @@ API.clubPage = function (c, d) {
   return {
     team: { id: teamId, name: team.name, dir: team.dir || '' }, can: can, plan: planOut_(plan, people), people: people.map((x) => ({ id: x.id, name: x.name, role: x.role })),
     archive: done.map((p) => planOut_(p, people)), ideas: (S.ideas || []).map((x) => ({ id: x.id, cat: x.cat, text: x.text, desc: x.descr || '', author: x.author || '', created: x.created })),
-    ideaCats: IDEA_CATS, hints: CLUB_ROLE_HINTS, lastClub: lc ? { date: lc.date, teens: lc.count, leaders: lc.leaders, none: lc.mode === MODE.none } : null, today: kyivDay(new Date()),
+    ideaCats: IDEA_CATS, hints: CLUB_ROLE_HINTS, formats: CLUB_FORMATS,
+    myFormats: uniq_((S.plans || []).filter((x) => x.teamId === teamId && x.format && !CLUB_FORMATS[x.format]).map((x) => x.format)).slice(0, 20), lastClub: lc ? { date: lc.date, teens: lc.count, leaders: lc.leaders, none: lc.mode === MODE.none } : null, today: kyivDay(new Date()),
   };
 };
 API.clubPlanSave = function (c, d) {
@@ -3057,7 +3062,7 @@ API.clubPlanSave = function (c, d) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date || '') ? d.date : p.date;
   if (date !== p.date && !can.date) deny_('Дату клубу змінює капітан або адмін команди.');
   Object.assign(p, { date: date, topic: clip_(d.topic || '').slice(0, 200), preacher: clip_(d.preacher || '').slice(0, 100), scripture: clip_(d.scripture || '').slice(0, 120),
-    note: clip_(d.note || '').slice(0, 1000), roles: roles, sermon: clip_(d.sermon).slice(0, 200),
+    note: clip_(d.note || '').slice(0, 1000), roles: roles, sermon: clip_(d.sermon).slice(0, 200), format: fmtOf_(d.format),
     program: (Array.isArray(d.program) ? d.program : []).slice(0, 40).map((g) => ({ kind: PROG_KINDS.indexOf(g && g.kind) >= 0 ? g.kind : 'other', name: clip_(g && g.name).slice(0, 120), desc: clip_(g && g.desc).slice(0, 600) })).filter((g) => g.name), updated: nowIso() });
   if (isNew) planInsert_(p); else planUpdate_(p);
   return { id: p.id, date: p.date };
@@ -3098,7 +3103,7 @@ API.clubIdeaDel = function (c, d) {
 };
 
 // ── «Банк ідей»: усе, що команди вже провели на клубах (теми, проповіді, ігри, пісні), без повторів ──
-const BANK_CATS = [['topic', 'Теми клубів'], ['sermon', 'Проповіді'], ['game', 'Ігри'], ['song', 'Пісні']];
+const BANK_CATS = [['topic', 'Теми клубів'], ['sermon', 'Проповіді'], ['game', 'Ігри'], ['ggame', 'Загальні ігри'], ['quest', 'Квести'], ['song', 'Пісні'], ['movie', 'Фільми']];
 function bankKey_(t) { return String(t || '').toLowerCase().replace(/[ʼ'’`"«»]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
 API.ideaBank = function (c) {
   if (!c.roles.length && !isOffice_(c)) deny_('Банк ідей відкривається після підтвердження ролі.');
@@ -3107,7 +3112,7 @@ API.ideaBank = function (c) {
   const add = (cat, text, desc, p) => {
     text = String(text || '').trim(); desc = String(desc || '').trim();
     if (letters(text) < 3) return;
-    if (cat === 'game' && letters(desc) < 10) return; // гра без зрозумілого опису — не беремо
+    if ((cat === 'game' || cat === 'ggame') && letters(desc) < 10) return; // гра без зрозумілого опису — не беремо
     const k = cat + '|' + phon_(bankKey_(text)), team = (st.team[p.teamId] || {}).name || '';
     const x = by[k];
     if (!x) { by[k] = { cat: cat, text: text, desc: desc, team: team, date: p.date, teams: team ? [team] : [] }; return; }
@@ -3115,11 +3120,22 @@ API.ideaBank = function (c) {
     if (team && x.teams.indexOf(team) < 0) x.teams.push(team);
   };
   (S.plans || []).filter((p) => p.status === 'done').forEach((p) => {
-    add('topic', p.topic, p.scripture, p);
+    // квест чи фільм замість звичайного клубу — назва йде у «Квести» / «Фільми»
+    if (p.format === 'quest') add('quest', p.topic, p.note && letters(p.note) >= 10 ? p.note : '', p);
+    else if (p.format === 'movie') add('movie', p.topic, '', p);
+    else add('topic', p.topic, p.scripture, p);
     if (p.sermon) add('sermon', p.sermon, p.scripture, p);
-    (p.program || []).forEach((g) => { if (g.kind === 'game' || g.kind === 'song') add(g.kind, g.name, g.kind === 'game' ? g.desc : '', p); if (g.kind === 'talk') add('sermon', g.name, g.desc, p); });
+    (p.program || []).forEach((g) => { if (g.kind === 'game' || g.kind === 'ggame' || g.kind === 'song') add(g.kind, g.name, g.kind !== 'song' ? g.desc : '', p); if (g.kind === 'talk') add('sermon', g.name, g.desc, p); });
   });
-  const items = Object.keys(by).map((k) => by[k]).sort((a, b) => b.teams.length - a.teams.length || (a.date < b.date ? 1 : -1));
+  // добірка Young Life: ігри, квести, фільми — одразу в банку; якщо команда вже проводила таку гру, обʼєднуємо
+  (S.bankSeed || []).forEach((r, i) => {
+    const cat = r.cat || 'game', text = String(r.text || '').trim(), desc = String(r.descr || '').trim();
+    if (!text) return;
+    const k = cat + '|' + phon_(bankKey_(text)), x = by[k];
+    if (x) { x.pick = true; if (desc.length > x.desc.length) x.desc = desc; return; }
+    by[k] = { cat: cat, text: text, desc: desc, team: '', date: '', teams: [], pick: true, order: i };
+  });
+  const items = Object.keys(by).map((k) => by[k]).sort((a, b) => b.teams.length - a.teams.length || (a.order != null && b.order != null ? a.order - b.order : 0) || (a.date < b.date ? 1 : -1));
   return { cats: BANK_CATS, items: items };
 };
 function canClubFix_(c, teamId) {
