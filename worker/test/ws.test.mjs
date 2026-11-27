@@ -133,6 +133,32 @@ ok(!r.ok && r.error === 'forbidden', 'інший учасник не видал�
 r = await api(OUT, 'wsCardSave', { title: 'Хак' });
 ok(!r.ok && r.error === 'forbidden', 'сторонній не створює задач');
 
+// ── галочки: кожен виконавець відмічає своє; коли всі — задача виконана й в архіві ──
+const multi = (await api(VOVA, 'wsCardSave', { title: 'Спільна задача', who: ['1', '7', '8'], circle: 'c03' })).data;
+r = await api(NASTIA, 'wsTick', { id: multi.id });
+ok(r.ok && r.data.doneBy.join() === '7' && !r.data.done && !r.data.archived, 'галочка Насті — лише її частина');
+me = await api(NASTIA, 'me');
+ok(!me.data.ws[0].next.some((x) => x.id === multi.id) && me.data.ws[0].open === 1, 'у Насті задача зникла з «на тобі»');
+r = await api(SONIA, 'wsTick', { id: multi.id });
+ok(r.ok && r.data.doneBy.length === 2 && !r.data.done, 'Софія теж — 2 з 3');
+r = await api(SONIA, 'wsTick', { id: multi.id });
+ok(r.ok && r.data.doneBy.join() === '7', 'Софія зняла свою галочку');
+await api(SONIA, 'wsTick', { id: multi.id });
+sent.length = 0;
+r = await api(VOVA, 'wsTick', { id: multi.id });
+ok(r.ok && r.data.done && r.data.archived && r.data.doneBy.length === 3, 'відмітили всі — виконано й в архіві');
+ws = await api(SONIA, 'ws', {});
+const inStrat = ws.data.cards.filter((x) => x.circle === 'c03' && !x.archived);
+ok(!inStrat.some((x) => x.id === multi.id) && ws.data.cards.find((x) => x.id === multi.id).done, 'та сама задача виконана й у «Стратегії» (одна задача — скрізь)');
+r = await api(NASTIA, 'wsTick', { id: multi.id });
+ok(r.ok && !r.data.done && !r.data.archived && r.data.doneBy.length === 2, 'зняла галочку — задача знову відкрита, решта галочок лишилась');
+const solo = (await api(VOVA, 'wsCardSave', { title: 'Без виконавців' })).data;
+r = await api(SONIA, 'wsTick', { id: solo.id });
+ok(r.ok && r.data.done && r.data.archived, 'задача без виконавців — галочка будь-кого її закриває');
+r = await api(VOVA, 'wsCardSave', { id: solo.id, archived: false });
+ok(r.ok && !r.data.done && !r.data.archived, 'повернути з архіву — знову в роботі');
+await api(VOVA, 'wsCardDelete', { id: solo.id }); await api(VOVA, 'wsCardDelete', { id: multi.id });
+
 // ── колонки й дошки ──
 r = await api(SONIA, 'wsColSave', { board: board.id, title: 'Ідеї' });
 const cols = r.data.boards[0].cols;

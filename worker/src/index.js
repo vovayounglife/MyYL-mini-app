@@ -4435,7 +4435,8 @@ const isDay_ = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 function wsCardRow_(r) {
   return { id: r.id, board: r.board_id || '', col: r.col_id || '', pos: Number(r.pos) || 0, title: r.title || '', desc: r.descr || '', due: r.due || '', who: wsList_(r.assignees),
     circle: r.circle || '', item: r.item_id || '', links: wsJson_(r.links, []), check: wsJson_(r.checklist, []), done: !!Number(r.done), archived: !!Number(r.archived),
-    authorId: r.author_id || '', author: r.author || '', created: r.created || '', updated: r.updated || '', updatedBy: r.updated_by || '', reminded: r.reminded || '' };
+    authorId: r.author_id || '', author: r.author || '', created: r.created || '', updated: r.updated || '', updatedBy: r.updated_by || '', reminded: r.reminded || '',
+    doneBy: wsList_(r.done_by) };
 }
 function wsPageRow_(r) {
   return { id: r.id, parent: r.parent_id || '', title: r.title || '', icon: r.icon || '', pos: Number(r.pos) || 0, authorId: r.author_id || '', created: r.created || '',
@@ -4501,7 +4502,7 @@ Store.prototype.loadWsMine = async function (tgId) {
   const [w, m, c, o] = await this.db.batch([
     this.db.prepare('SELECT id, name FROM ws ORDER BY created'),
     this.db.prepare('SELECT ws, role FROM ws_members WHERE tg_id = ?').bind(tgId),
-    this.db.prepare("SELECT ws, id, title, due FROM ws_cards WHERE archived = 0 AND done = 0 AND assignees LIKE ?").bind('%,' + tgId + ',%'),
+    this.db.prepare("SELECT ws, id, title, due, done_by FROM ws_cards WHERE archived = 0 AND done = 0 AND assignees LIKE ?").bind('%,' + tgId + ',%'),
     this.db.prepare("SELECT ws, v FROM ws_kv WHERE k = 'open'"),
   ]);
   this.wsMine = { all: w.results || [], member: m.results || [], cards: c.results || [], open: wsOpenMap_(o.results) };
@@ -4591,7 +4592,7 @@ function wsMineOut_(c) {
   const sup = isSuper_(c);
   const today = kyivDay(new Date()), soon = addDaysKey_(today, 2);
   return M.all.filter((w) => sup || (M.open[w.id] && M.member.some((m) => m.ws === w.id))).map((w) => {
-    const mine = M.cards.filter((x) => x.ws === w.id);
+    const mine = M.cards.filter((x) => x.ws === w.id && String(x.done_by || '').indexOf(',' + c.id + ',') < 0);
     const next = mine.filter((x) => x.due).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0)).slice(0, 3).map((x) => ({ id: x.id, title: x.title || '', due: x.due }));
     return { id: w.id, name: w.name || '', open: mine.length, soon: mine.filter((x) => x.due && x.due <= soon).length, late: mine.filter((x) => x.due && x.due < today).length, next: next };
   });
@@ -4627,7 +4628,7 @@ function wsMemberOut_(m) {
 function wsCardOut_(x) {
   const W = S.ws;
   return { id: x.id, board: x.board, col: x.col, pos: x.pos, title: x.title, desc: x.desc, due: x.due, who: x.who, circle: x.circle, item: x.item, links: x.links, check: x.check,
-    done: x.done, archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
+    done: x.done, doneBy: x.doneBy || [], archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
 }
 // поточний стан 2340 — наживо з MyYL по регіону простору; кожна людина рахується один раз:
 // стафи — учасники цього простору (офісна команда); лідери — усі в командах регіону, крім стафів
@@ -4648,9 +4649,9 @@ function wsStrategy_() {
   return s;
 }
 function wsWriteCard_(x) {
-  S.run('INSERT OR REPLACE INTO ws_cards (id, ws, board_id, col_id, pos, title, descr, due, assignees, circle, item_id, links, checklist, done, archived, author_id, author, created, updated, updated_by, reminded) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  S.run('INSERT OR REPLACE INTO ws_cards (id, ws, board_id, col_id, pos, title, descr, due, assignees, circle, item_id, links, checklist, done, archived, author_id, author, created, updated, updated_by, reminded, done_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     [x.id, S.ws.id, x.board, x.col, x.pos, x.title, x.desc, x.due, x.who.length ? ',' + x.who.join(',') + ',' : '', x.circle, x.item, JSON.stringify(x.links), JSON.stringify(x.check),
-      x.done ? 1 : 0, x.archived ? 1 : 0, x.authorId, x.author, x.created, x.updated, x.updatedBy, x.reminded || '']);
+      x.done ? 1 : 0, x.archived ? 1 : 0, x.authorId, x.author, x.created, x.updated, x.updatedBy, x.reminded || '', (x.doneBy || []).length ? ',' + x.doneBy.join(',') + ',' : '']);
 }
 function wsLog_(c, text, cardId) {
   const e = { ts: nowIso(), tgId: c.id, name: c.name, text: text, card: cardId || '' };
@@ -4668,6 +4669,44 @@ function wsNotify_(ids, c, text, cardId) {
   uniq_(ids).filter((id) => id !== c.id && isReal_(id) && wants_(id, 'tasks') && (wsIsOpen_() || isSuperId_(id))).forEach((id) => sendApp_(id, text, 'Відкрити задачу', wsCardLink_(cardId)));
 }
 
+// виконання: кожен виконавець ставить свою галочку; коли виконали всі — задача виконана й іде в архів
+const wsColsOf_ = (bid) => S.ws.cols.filter((k) => k.board === bid).sort((a, b) => a.pos - b.pos);
+const wsEndPos_ = (colId, skip) => S.ws.cards.filter((y) => y.col === colId && y.id !== skip && !y.archived).reduce((a, y) => Math.max(a, y.pos), 0) + 1;
+function wsFinish_(x) {
+  x.done = true; x.archived = true; x.doneBy = x.who.slice();
+  const dc = wsColsOf_(x.board).filter((k) => k.kind === 'done')[0];
+  if (dc && dc.id !== x.col) { x.col = dc.id; x.pos = wsEndPos_(dc.id, x.id); }
+}
+function wsUnfinish_(x, keepDoneBy) {
+  x.done = false; x.archived = false;
+  if (!keepDoneBy) x.doneBy = [];
+  const cols = wsColsOf_(x.board), cur = cols.filter((k) => k.id === x.col)[0];
+  if (cur && cur.kind === 'done') { const t = cols.filter((k) => k.kind !== 'done')[0]; if (t) { x.col = t.id; x.pos = wsEndPos_(t.id, x.id); } }
+}
+const wsAllDone_ = (x) => x.who.length > 0 && x.who.every((id) => (x.doneBy || []).indexOf(id) >= 0);
+API.wsTick = function (c, d) {
+  wsAcc_(c);
+  const x = S.ws.cards.filter((y) => y.id === str_(d.id))[0];
+  if (!x) bad_('Задачу не знайдено — можливо, її видалили.');
+  const was = x.done, mine = x.who.indexOf(c.id) >= 0;
+  x.doneBy = (x.doneBy || []).filter((id) => x.who.indexOf(id) >= 0);
+  let mark = '';
+  if (x.done) {
+    // зняти галочку: свою (якщо виконавців кілька) або з усієї задачі
+    if (mine && x.who.length > 1) { x.doneBy = x.doneBy.filter((id) => id !== c.id); wsUnfinish_(x, true); } else wsUnfinish_(x);
+  } else if (mine) {
+    const i = x.doneBy.indexOf(c.id);
+    if (i >= 0) x.doneBy.splice(i, 1); else { x.doneBy.push(c.id); mark = 'mine'; }
+    if (wsAllDone_(x)) wsFinish_(x);
+  } else wsFinish_(x);
+  x.updated = nowIso(); x.updatedBy = c.name;
+  wsWriteCard_(x);
+  if (x.done && !was) {
+    wsLog_(c, x.who.length > 1 ? 'останнім(ою) відмітив(ла) «' + x.title + '» — виконали всі' : 'виконав(ла) «' + x.title + '»', x.id);
+    wsNotify_([x.authorId], c, '✅ Задачу «' + esc_(x.title) + '» виконано' + (x.who.length > 1 ? ' — відмітили всі ' + x.who.length : ' — ' + esc_(c.name)) + '. Вона в архіві.', x.id);
+  } else if (mark) wsLog_(c, 'виконав(ла) свою частину «' + x.title + '» (' + x.doneBy.length + ' з ' + x.who.length + ')', x.id);
+  return wsCardOut_(x);
+};
 API.ws = function (c) {
   const A = wsAcc_(c);
   const W = S.ws;
@@ -4706,7 +4745,7 @@ API.wsCardSave = function (c, d) {
     if (!board) bad_('Спершу створи дошку.');
     const col = colsOf(board.id).filter((k) => k.id === str_(d.col))[0] || colsOf(board.id)[0];
     if (!col) bad_('На дошці немає колонок.');
-    x = { id: uid_(), board: board.id, col: col.id, pos: endPos(col.id), title: title, desc: '', due: '', who: [], circle: '', item: '', links: [], check: [], done: col.kind === 'done', archived: false,
+    x = { id: uid_(), board: board.id, col: col.id, pos: endPos(col.id), title: title, desc: '', due: '', who: [], doneBy: [], circle: '', item: '', links: [], check: [], done: false, archived: false,
       authorId: c.id, author: c.name, created: now, updated: now, updatedBy: c.name, reminded: '' };
   }
   const was = { who: isNew ? [] : x.who.slice(), done: isNew ? false : x.done, col: isNew ? '' : x.col };
@@ -4714,26 +4753,26 @@ API.wsCardSave = function (c, d) {
   if (has('title') && !isNew) { const t = clipN_(d.title, 300); if (!t) bad_('Назва не може бути порожньою.'); x.title = t; }
   if (has('desc')) x.desc = clipN_(d.desc, 8000);
   if (has('due')) { const due = isDay_(d.due) ? d.due : ''; if (due !== x.due) x.reminded = ''; x.due = due; }
-  if (has('who')) { const ok = W.members.map((m) => m.tgId); x.who = uniq_([].concat(d.who || []).map(String)).filter((id) => ok.indexOf(id) >= 0).slice(0, 12); }
+  if (has('who')) {
+    const ok = W.members.map((m) => m.tgId);
+    x.who = uniq_([].concat(d.who || []).map(String)).filter((id) => ok.indexOf(id) >= 0).slice(0, 12);
+    x.doneBy = (x.doneBy || []).filter((id) => x.who.indexOf(id) >= 0);
+    if (!x.done && !isNew && wsAllDone_(x)) wsFinish_(x);
+  }
   if (has('item')) { const it = W.items.filter((i) => i.id === str_(d.item))[0]; x.item = it ? it.id : ''; if (it && it.circle && !has('circle')) x.circle = it.circle; }
   if (has('circle')) x.circle = wsStrategy_().circles.some((k) => k.id === str_(d.circle)) ? str_(d.circle) : '';
   if (has('links')) x.links = wsLinks_(d.links);
   if (has('addLink')) { const l = wsLinks_([d.addLink])[0]; if (!l) bad_('Встав повне посилання, що починається з https://'); if (x.links.length >= 25) bad_('Забагато посилань.'); x.links.push(l); }
   if (has('check')) x.check = [].concat(d.check || []).slice(0, 60).map((k) => ({ t: clipN_(k && k.t, 300), d: !!(k && k.d) })).filter((k) => k.t);
-  if (has('archived')) x.archived = !!d.archived;
+  if (has('archived')) { if (!d.archived && x.done) wsUnfinish_(x); else x.archived = !!d.archived; }
   if (has('col') && str_(d.col) && str_(d.col) !== x.col) {
     const col = W.cols.filter((k) => k.id === str_(d.col))[0];
     if (!col) bad_('Такої колонки вже немає.');
     const from = W.cols.filter((k) => k.id === x.col)[0];
     x.board = col.board; x.col = col.id; x.pos = endPos(col.id, x.id);
-    if (col.kind === 'done') x.done = true; else if (from && from.kind === 'done') x.done = false;
+    if (col.kind === 'done') wsFinish_(x); else if (x.done || (from && from.kind === 'done')) { x.done = false; x.archived = false; x.doneBy = []; }
   }
-  if (has('done') && !!d.done !== x.done) {
-    x.done = !!d.done;
-    const cols = colsOf(x.board), cur = cols.filter((k) => k.id === x.col)[0];
-    const target = x.done ? cols.filter((k) => k.kind === 'done')[0] : (cur && cur.kind === 'done' ? cols.filter((k) => k.kind !== 'done')[0] : null);
-    if (target && target.id !== x.col) { x.col = target.id; x.pos = endPos(target.id, x.id); }
-  }
+  if (has('done') && !!d.done !== x.done) { if (d.done) wsFinish_(x); else wsUnfinish_(x); }
   if (has('shift') && !isNew) {
     const list = W.cards.filter((y) => y.col === x.col && !y.archived).sort((a, b) => a.pos - b.pos);
     const i = list.indexOf(x), j = i + (Number(d.shift) < 0 ? -1 : 1);
@@ -5132,14 +5171,14 @@ function wsReminder_() {
     if (x.reminded === today) return;
     const d = x.due === today ? 0 : x.due < today ? -1 : 1;
     const head = d === 1 ? '⏰ <b>Завтра дедлайн</b>' : d === 0 ? '🔥 <b>Сьогодні дедлайн</b>' : '⚠️ <b>Дедлайн минув учора</b>';
-    const to = (x.who.length ? x.who : [x.authorId]).filter((id) => isReal_(id) && wants_(id, 'tasks') && (S.wsOpen[x.ws] || isSuperId_(id)));
+    const to = (x.who.length ? x.who.filter((id) => x.doneBy.indexOf(id) < 0) : [x.authorId]).filter((id) => isReal_(id) && wants_(id, 'tasks') && (S.wsOpen[x.ws] || isSuperId_(id)));
     to.forEach((id) => sendApp_(id, head + ' · ' + esc_(S.wsNames[x.ws] || 'робочий простір') + '\n\n<b>' + esc_(x.title) + '</b>' + (x.check.length ? '\n☑️ ' + x.check.filter((k) => k.d).length + ' з ' + x.check.length : ''), 'Відкрити задачу', wsCardLink_(x.id)));
     S.run('UPDATE ws_cards SET reminded = ? WHERE id = ?', [today, x.id]);
   });
 }
 
 Object.assign(NEEDS, {
-  ws: { ws: true }, wsCard: { ws: true, wsComments: true }, wsCardSave: { ws: true }, wsCardDelete: { ws: true }, wsComment: { ws: true, wsComments: true }, wsCommentDelete: { ws: true, wsComments: true },
+  ws: { ws: true }, wsCard: { ws: true, wsComments: true }, wsCardSave: { ws: true }, wsTick: { ws: true }, wsCardDelete: { ws: true }, wsComment: { ws: true, wsComments: true }, wsCommentDelete: { ws: true, wsComments: true },
   wsColSave: { ws: true }, wsColDelete: { ws: true }, wsBoardSave: { ws: true }, wsBoardDelete: { ws: true },
   wsPage: { ws: true, wsPage: true }, wsPageSave: { ws: true }, wsPageDelete: { ws: true }, wsItemSave: { ws: true }, wsItemDelete: { ws: true }, wsStrategySave: { ws: true },
   wsPeopleFind: { ws: true }, wsMemberSave: { ws: true }, wsMemberRemove: { ws: true }, wsOpen: { ws: true },
