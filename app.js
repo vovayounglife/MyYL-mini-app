@@ -258,6 +258,7 @@
   const phUrl = (id) => { const k = id && S.me && S.me.photos && S.me.photos[String(id)]; if (!k) return ''; let o = ''; try { o = new URL(API_URL).origin; } catch (e) { o = ''; } return o + '/p/' + encodeURIComponent(id) + '?k=' + encodeURIComponent(k); };
   const avaHtml = (id, name, style) => { const u = phUrl(id); return u ? `<img class="avatar" src="${esc(u)}" alt="" loading="lazy" style="object-fit:cover;padding:0;${style || ''}">` : `<span class="avatar"${style ? ` style="${style}"` : ''}>${esc(initials(name))}</span>`; };
   const myPhotoAny = () => phUrl(S.me && S.me.user && S.me.user.id) || myPhoto();
+  // для себе: якщо обрано «з Telegram», а сервер ще не знає фото — беремо з Telegram напряму
   const myAvatar = () => myPhotoAny() ? `<img class="avatar lg" src="${esc(myPhotoAny())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
   // невідома роль (напр. службова, якої вже немає в списку) не повинна ламати екран
   const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0] || { key: k, label: '', rank: 99, level: '' };
@@ -2287,9 +2288,11 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const m = me(), p = S.profile || {};
     let h = header('Мій профіль', '', IN_TG ? '' : '<button type="button" class="btn ghost sm" data-a="logout">Вийти</button>');
     h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
-    const hasPh = !!phUrl(m.user.id);
-    h += `<div class="row" style="gap:8px"><label class="btn sm sec2 grow" style="cursor:pointer">${S.phBusy ? 'Завантажую…' : (hasPh ? '📷 Змінити фото' : '📷 Завантажити своє фото')}<input type="file" accept="image/*" data-ch="photoPick" style="display:none"${S.phBusy ? ' disabled' : ''}></label>${hasPh ? '<button type="button" class="btn sm ghost" data-a="photoDel">Прибрати</button>' : ''}</div>
-      <div class="xs muted" style="margin-top:-6px">Твоє фото бачитимуть у складі команди, гілках MyYL і робочому просторі.</div>`;
+    const PH = m.user.photo || { own: false, tg: !!myPhoto(), useTg: true };
+    h += `<div class="card col" style="gap:8px">
+      <label class="toggle-row" style="min-height:44px"><span><span class="b" style="display:block">Моє фото з Telegram</span><span class="xs muted">${PH.tg ? 'береться з твого профілю в Telegram' : 'у Telegram фото не знайдено (або воно приховане)'}</span></span><input type="checkbox" data-ch="photoTg"${PH.useTg ? ' checked' : ''}${S.phBusy ? ' disabled' : ''}></label>
+      <div class="row" style="gap:8px"><label class="btn sm sec2 grow" style="cursor:pointer">${S.phBusy ? 'Завантажую…' : (PH.own ? '📷 Змінити своє фото' : '📷 Завантажити своє фото')}<input type="file" accept="image/*" data-ch="photoPick" style="display:none"${S.phBusy ? ' disabled' : ''}></label>${PH.own ? '<button type="button" class="btn sm ghost" data-a="photoDel">Прибрати</button>' : ''}</div>
+      <div class="xs muted">Фото бачать у складі команди, гілках MyYL і робочому просторі.</div></div>`;
     const act = (m.roles || []).filter((r) => r.status === 'активна');
     if (act.length > 1) h += `<div class="sec">Основна роль</div><div class="card col" style="gap:6px"><select class="in" data-ch="mainRole"><option value="">Автоматично — найвища роль</option>${act.map((r) => `<option value="${esc(r.id)}"${(m.profile || {}).main === r.id ? ' selected' : ''}>${esc(r.label + ' · ' + r.unitName)}</option>`).join('')}</select>
       <div class="xs muted">Тут рахуються твої особисті записи: знані «Без команди», а для вищих ролей — мала група й контактна робота.</div></div>`;
@@ -3935,7 +3938,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
         S.phBusy = true; render();
         const r = await run(() => api('photoSet', { data: data }), 'Фото оновлено');
         S.phBusy = false;
-        if (r) { S.me.photos = S.me.photos || {}; S.me.photos[String(S.me.user.id)] = r.photo; LS.set('me', S.me); }
+        if (r) { S.me.photos = S.me.photos || {}; S.me.photos[String(S.me.user.id)] = r.key || r.photo; S.me.user.photo = Object.assign({}, S.me.user.photo || {}, { own: true, useTg: false }); LS.set('me', S.me); }
         render();
       };
       img.onerror = () => toast('Не вдалося відкрити це фото — спробуй інше');
@@ -3943,10 +3946,19 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     };
     rd.readAsDataURL(f);
   };
+  A.photoTg = async (d, el) => {
+    const want = !!el.checked, P = S.me.user.photo || {};
+    if (!want && !P.own) { el.checked = true; toast('Спершу завантаж своє фото — кнопка нижче'); return; }
+    S.phBusy = true; render();
+    const r = await run(() => api('photoPref', { tg: want }), want ? 'Тепер фото з Telegram' : 'Тепер твоє фото');
+    S.phBusy = false;
+    if (r) { S.me.photos = S.me.photos || {}; if (r.key) S.me.photos[String(S.me.user.id)] = r.key; else delete S.me.photos[String(S.me.user.id)]; S.me.user.photo = { own: r.hasOwn, tg: r.hasTg, useTg: r.tg }; LS.set('me', S.me); }
+    render();
+  };
   A.photoDel = async () => {
     if (!(await confirmAsk('Прибрати своє фото?'))) return;
     const r = await run(() => api('photoSet', { remove: true }), 'Фото прибрано');
-    if (r && S.me.photos) { delete S.me.photos[String(S.me.user.id)]; LS.set('me', S.me); }
+    if (r) { S.me.photos = S.me.photos || {}; if (r.key) S.me.photos[String(S.me.user.id)] = r.key; else delete S.me.photos[String(S.me.user.id)]; S.me.user.photo = Object.assign({}, S.me.user.photo || {}, { own: false, useTg: true }); LS.set('me', S.me); }
     render();
   };
   A.wsTab = (d) => { S.ws.tab = d.v; if (d.v === 'team' && !S.ws.prof) wsLoadProf(); render(); };

@@ -311,6 +311,33 @@ r = await api(NASTIA, 'photoSet', { remove: true });
 me = await api(VOVA, 'me');
 ok(r.ok && !me.data.photos['7'], 'фото: прибрано');
 
+// ── фото з Telegram за замовчуванням ──
+const SONIA_TG = Object.assign({}, SONIA, { photo_url: 'https://t.me/i/userpic/320/sonia.jpg' });
+await api(SONIA_TG, 'me');
+me = await api(VOVA, 'me');
+const sk = me.data.photos['8'];
+ok(sk && sk[0] === 't', 'фото з Telegram запамʼятовано при вході і показується за замовчуванням');
+ph = await W.fetch(new Request('https://x/p/8?k=' + sk), env, ectx);
+ok(ph.status === 302 && ph.headers.get('location') === 'https://t.me/i/userpic/320/sonia.jpg', 'фото з Telegram — переадресація на Telegram');
+r = await api(SONIA, 'photoPref', { tg: false });
+ok(!r.ok, 'без свого фото вимкнути «з Telegram» не можна');
+await api(SONIA, 'photoSet', { data: png });
+me = await api(VOVA, 'me');
+ok(me.data.photos['8'][0] !== 't', 'завантажила своє — показується своє');
+r = await api(SONIA, 'photoPref', { tg: true });
+me = await api(VOVA, 'me');
+ok(r.ok && me.data.photos['8'] === sk, 'галочка «моє фото з Telegram» — знову з Telegram');
+me = await api(SONIA, 'me');
+ok(me.data.user.photo.own && me.data.user.photo.tg && me.data.user.photo.useTg, 'у профілі видно: є своє, є з Telegram, вибрано з Telegram');
+// бот підтягує фото тих, хто не відкривав застосунок з фото
+const fetchWas = globalThis.fetch;
+globalThis.fetch = async (url, opt) => { const m = String(url).split('/').pop(); if (m === 'getUserProfilePhotos') return new Response(JSON.stringify({ ok: true, result: { total_count: 1, photos: [[{ file_id: 'SMALL', width: 160 }, { file_id: 'BIG', width: 320 }]] } })); return fetchWas(url, opt); };
+const t35 = new Date(); t35.setUTCMinutes(35, 0, 0);
+await W.scheduled({ scheduledTime: t35.getTime() }, env, ectx); await Promise.all(waits.splice(0));
+globalThis.fetch = fetchWas;
+me = await api(VOVA, 'me');
+ok(me.data.photos['7'] && me.data.photos['7'][0] === 't', 'бот підтягнув фото з Telegram для Насті');
+
 // ── нагадування про дедлайни ──
 const today = T.kyivDay(new Date());
 const yest = T.kyivDay(new Date(Date.now() - 864e5));

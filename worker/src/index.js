@@ -118,7 +118,11 @@ export default {
   async scheduled(event, env, ctx) {
     const when = new Date(event.scheduledTime || Date.now());
     const p = kyivParts(when);
-    if (when.getUTCMinutes() !== 5) { await drainOutbox(env, 40); return; }
+    if (when.getUTCMinutes() !== 5) {
+      // о :35 — фото з Telegram для тих, хто ще без нього (мало запитів, щоб не впертись у ліміт)
+      if (when.getUTCMinutes() === 35) { try { await tgPhotoFill_(env); } catch (e) { console.warn('tg photos: ' + (e && e.message)); } await drainOutbox(env, 25); return; }
+      await drainOutbox(env, 40); return;
+    }
     const S = new Store(env, ctx);
     await S.loadBase();
     const day = String(S.setting('REMINDER_DAY') || 'SUNDAY').toUpperCase();
@@ -160,7 +164,7 @@ const NEEDS = {
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, clubPick: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
-  dirStats: { log: 'stats' }, installStats: {}, photoSet: {},
+  dirStats: { log: 'stats' }, installStats: {}, photoSet: {}, photoPref: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
@@ -188,6 +192,11 @@ async function runAs_(S, tgUser, action, d, viewAs, actAs) {
     const need = NEEDS[body.action];
     if (!fn || !need) throw new ApiError('bad_action', 'Невідома дія: ' + body.action);
     await S.loadBase();
+    // фото з Telegram: запамʼятовуємо, коли змінилось (приходить разом із перевіреним входом)
+    if (!actAs && tgUser && /^https:\/\/[\w.-]*(t\.me|telegram\.org|telesco\.pe)\//.test(String(tgUser.photo_url || ''))) {
+      const pp = S.b.people[String(tgUser.id)];
+      if (pp && pp.tgphoto !== tgUser.photo_url) S.run('UPDATE people SET tgphoto = ? WHERE tg_id = ?', [String(tgUser.photo_url).slice(0, 500), String(tgUser.id)], true);
+    }
     // «Переглянути, як»: лише власник застосунку працює від імені іншої людини — з усіма її правами
     let actor = null;
     if (actAs) {
@@ -521,7 +530,7 @@ function personFromRow(r) {
   let notif = {}, prefs = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
   try { prefs = r.prefs ? JSON.parse(r.prefs) : {}; } catch (e) { prefs = {}; }
-  return { prefs: prefs, main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif, photo: r.photo || '' };
+  return { prefs: prefs, main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif, photo: r.photo || '', tgphoto: r.tgphoto || '' };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -917,6 +926,7 @@ API.me = function (c) {
   out.lastClubs = {};
   out.caps.report.club.forEach((id) => { if (lc[id]) out.lastClubs[id] = lc[id]; });
   out.photos = photoMap_();
+  if (c.person) out.user.photo = { own: !!c.person.photo, tg: tgPhotoOk_(c.person.tgphoto), useTg: !c.person.photo || (c.person.prefs || {}).photoTg === true };
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
@@ -2678,32 +2688,90 @@ async function handleUpload(req, env, ctx) {
 // ── фото профілю: людина завантажує своє, його видно в усьому застосунку ──
 // у базі людини — лише ключ (змінюється з кожним новим фото), саме фото — окремо; адреса без ключа не відкривається
 const PHOTO_MAX = 300000;
+const fnv_ = (t) => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16); };
+const tgPhotoOk_ = (v) => /^(https:|f:)/.test(String(v || ''));
+// яке фото показувати: своє (якщо завантажене й не вибрано «з Telegram») або з Telegram
+function photoKeyOf_(p) {
+  if (!p) return '';
+  const useTg = !p.photo || (p.prefs || {}).photoTg === true;
+  if (!useTg) return p.photo;
+  return tgPhotoOk_(p.tgphoto) ? 't' + fnv_(p.tgphoto) : (p.photo || '');
+}
 function photoMap_() {
   const o = {};
-  Object.keys(S.b.people).forEach((id) => { const k = S.b.people[id].photo; if (k) o[id] = k; });
+  Object.keys(S.b.people).forEach((id) => { const k = photoKeyOf_(S.b.people[id]); if (k) o[id] = k; });
   return o;
 }
+API.photoPref = function (c, d) {
+  const p = getPerson_(c.id);
+  if (!p) bad_('Спершу заповни профіль.');
+  const tg = !!d.tg;
+  if (!tg && !p.photo) bad_('Спершу завантаж своє фото.');
+  const prefs = Object.assign({}, p.prefs || {});
+  if (tg) prefs.photoTg = true; else delete prefs.photoTg;
+  p.prefs = prefs;
+  S.run('UPDATE people SET prefs = ? WHERE tg_id = ?', [JSON.stringify(prefs), c.id], true);
+  return { tg: tg, key: photoKeyOf_(p), hasTg: tgPhotoOk_(p.tgphoto), hasOwn: !!p.photo };
+};
 API.photoSet = function (c, d) {
+  const pp = getPerson_(c.id);
+  const prefsNoTg = () => { const pr = Object.assign({}, (pp && pp.prefs) || {}); delete pr.photoTg; return JSON.stringify(pr); };
   if (d.remove) {
     S.run('DELETE FROM photos WHERE tg_id = ?', [c.id]);
-    S.run("UPDATE people SET photo = '' WHERE tg_id = ?", [c.id], true);
-    return { photo: '' };
+    S.run("UPDATE people SET photo = '', prefs = ? WHERE tg_id = ?", [prefsNoTg(), c.id], true);
+    const key = pp && tgPhotoOk_(pp.tgphoto) ? 't' + fnv_(pp.tgphoto) : '';
+    return { photo: '', key: key };
   }
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(d.data || ''));
   if (!m) bad_('Це не схоже на фото. Обери картинку JPG чи PNG.');
   if (m[2].length > PHOTO_MAX) bad_('Фото завелике — обери інше.');
   const k = uid_();
   S.run('INSERT OR REPLACE INTO photos (tg_id, k, mime, data, updated) VALUES (?,?,?,?,?)', [c.id, k, m[1], m[2], nowIso()]);
-  if (getPerson_(c.id)) S.run('UPDATE people SET photo = ? WHERE tg_id = ?', [k, c.id], true);
+  if (pp) S.run('UPDATE people SET photo = ?, prefs = ? WHERE tg_id = ?', [k, prefsNoTg(), c.id], true);
   else S.run('INSERT INTO people (tg_id, name, photo) VALUES (?,?,?)', [c.id, c.name, k], true);
-  return { photo: k };
+  return { photo: k, key: k };
 };
 async function handlePhoto(env, url) {
-  const id = url.pathname.slice(3).replace(/[^0-9]/g, '');
-  const row = id ? await env.DB.prepare('SELECT k, mime, data FROM photos WHERE tg_id = ?').bind(id).first() : null;
-  if (!row || !row.k || row.k !== url.searchParams.get('k')) return new Response('Фото не знайдено', { status: 404 });
+  const id = url.pathname.slice(3).replace(/[^0-9]/g, ''), k = url.searchParams.get('k') || '';
+  const nf = () => new Response('Фото не знайдено', { status: 404 });
+  if (!id || !k) return nf();
+  const LONG = { 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' };
+  if (k[0] === 't') {
+    // фото з Telegram: посилання — переадресація, файл бота — віддаємо самі (з кешем Cloudflare)
+    const tgp = await env.DB.prepare('SELECT tgphoto FROM people WHERE tg_id = ?').bind(id).first('tgphoto');
+    if (!tgPhotoOk_(tgp) || 't' + fnv_(tgp) !== k) return nf();
+    if (tgp.indexOf('https:') === 0) return new Response(null, { status: 302, headers: Object.assign({ location: tgp }, LONG) });
+    const cache = typeof caches !== 'undefined' ? caches.default : null;
+    const ck = new Request('https://photo.cache/' + id + '/' + k);
+    if (cache) { const hit = await cache.match(ck); if (hit) return hit; }
+    const info = await tg(env, 'getFile', { file_id: tgp.slice(2) });
+    if (!info.ok || !info.result || !info.result.file_path) return nf();
+    const f = await fetch('https://api.telegram.org/file/bot' + env.BOT_TOKEN + '/' + info.result.file_path);
+    if (!f.ok) return nf();
+    const res = new Response(await f.arrayBuffer(), { headers: Object.assign({ 'content-type': 'image/jpeg' }, LONG) });
+    if (cache) { try { await cache.put(ck, res.clone()); } catch (e) { /* не страшно */ } }
+    return res;
+  }
+  const row = await env.DB.prepare('SELECT k, mime, data FROM photos WHERE tg_id = ?').bind(id).first();
+  if (!row || !row.k || row.k !== k) return nf();
   const bin = Uint8Array.from(atob(row.data), (ch) => ch.charCodeAt(0));
-  return new Response(bin, { headers: { 'content-type': row.mime || 'image/jpeg', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' } });
+  return new Response(bin, { headers: Object.assign({ 'content-type': row.mime || 'image/jpeg' }, LONG) });
+}
+// хто ще без фото з Telegram — беремо через бота (по 15 людей за раз; хто без фото — перевіряємо раз на тиждень)
+async function tgPhotoFill_(env) {
+  const wk = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const rows = ((await env.DB.prepare("SELECT tg_id, tgphoto FROM people WHERE tg_id GLOB '[0-9]*' AND (COALESCE(tgphoto, '') = '' OR (tgphoto LIKE '-%' AND tgphoto < ?)) LIMIT 10").bind('-' + wk).all()).results || []);
+  if (!rows.length) return 0;
+  const today = new Date().toISOString().slice(0, 10), st = [];
+  for (const r of rows) {
+    const res = await tg(env, 'getUserProfilePhotos', { user_id: Number(r.tg_id), limit: 1 });
+    const sizes = res.ok && res.result && res.result.photos && res.result.photos[0];
+    const pick = sizes && sizes.length ? (sizes.filter((x) => x.width >= 300)[0] || sizes[sizes.length - 1]) : null;
+    st.push(env.DB.prepare('UPDATE people SET tgphoto = ? WHERE tg_id = ?').bind(pick ? 'f:' + pick.file_id : '-' + today, r.tg_id));
+  }
+  st.push(env.DB.prepare("UPDATE meta SET v = v + 1 WHERE k = 'ver'"));
+  await env.DB.batch(st);
+  return rows.length;
 }
 async function handleFile(req, env, url) {
   const id = url.pathname.slice(3).replace(/[^a-z0-9]/gi, '');
