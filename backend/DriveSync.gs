@@ -7,6 +7,8 @@
  *   • кожні 10 хвилин забирає з сервера нове і дописує в таблиці команд,
  *     створює папки регіонів/ерій і таблиці команд, відкриває й забирає доступи за ролями.
  *
+ *   • щогодини читає таблиці one-to-one з папок ерій і оновлює їх у робочому просторі MyYL.
+ *
  *  Вставляється ЗАМІСТЬ старого Code.gs у тій самій таблиці «⚙️ Система».
  */
 
@@ -44,6 +46,8 @@ function onOpen() {
     .addItem('🔄 Скопіювати зараз', 'syncNow')
     .addItem('👑 Посилання для власника (власник)', 'menuAdminLink')
     .addItem('🩺 Перевірити стан', 'menuStatus')
+    .addSeparator()
+    .addItem('🗂 Оновити one-to-one в робочому просторі', 'menuOtoNow')
     .addToUi();
 }
 
@@ -72,7 +76,8 @@ function menuStatus() {
   SpreadsheetApp.getUi().alert('Сервер: ' + (p.getProperty('WORKER_URL') || '—') +
     '\nКопіювання на Диск: ' + (trig ? 'увімкнено (кожні 10 хв)' : 'вимкнено') +
     '\nОстаннє копіювання: ' + (p.getProperty('LAST_SYNC') || '—') +
-    '\nЗвітів скопійовано: до №' + (cur.seq || 0));
+    '\nЗвітів скопійовано: до №' + (cur.seq || 0) +
+    '\nOne-to-one в робочому просторі: ' + (p.getProperty('OTO_LAST_TXT') || '—'));
 }
 
 function menuSyncOn() {
@@ -204,6 +209,10 @@ function syncNow() {
       first = false;
     }
     props.setProperty('LAST_SYNC', Utilities.formatDate(new Date(), TZ, 'dd.MM.yyyy HH:mm'));
+    // робочому простору — де лежать таблиці команд і папки ерій (лише коли щось змінилось)
+    try { driveMapPush_(); } catch (e) { console.warn('карта Диску: ' + e); }
+    // раз на годину — таблиці one-to-one для робочого простору (якщо лишився час)
+    try { otoMaybe_(started); } catch (e) { console.warn('one-to-one: ' + e); }
   } finally {
     lock.releaseLock();
   }
@@ -373,6 +382,184 @@ function rewrite_(name, head, rows) {
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, sh.getMaxColumns()).clearContent();
   if (rows.length) sh.getRange(2, 1, rows.length, head.length).setValues(rows.map(function (r) { return r.map(function (v) { return v == null ? '' : v; }); }));
 }
+
+// ═════════════════════════════ ONE-TO-ONE → РОБОЧИЙ ПРОСТІР ═════════════════════════════
+// Читаємо лише бали та дати зустрічей. Нотатки, висновки й молитовні потреби не беремо.
+const WS_ID = 'west';
+const OTO_EVERY_MS = 60 * 60 * 1000;
+const OTO_NAME = /one\s*-?\s*to\s*-?\s*one/i;
+const OTO_SKIP_SHEETS = /як користуватися|зведення|приклад|шаблон|інструкц/i;
+const OTO_PLACEHOLDER = /^(лідер|капітан|керівник|людина)\s*\d*$/i;
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function driveMapPush_() {
+  const props = PropertiesService.getScriptProperties();
+  const m = driveMap_();
+  const ids = function (o) { const r = {}; Object.keys(o || {}).forEach(function (k) { if (o[k] && o[k].id) r[k] = o[k].id; }); return r; };
+  const map = { t: ids(m.t), a: ids(m.a), r: ids(m.r) };
+  const hash = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(map)));
+  if (props.getProperty('DRIVE_MAP_SENT') === hash) return;
+  const res = call_('ws-drive', { map: map });
+  if (res.ok) props.setProperty('DRIVE_MAP_SENT', hash);
+}
+function menuOtoNow() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) { SpreadsheetApp.getUi().alert('Зараз іде копіювання — спробуй за хвилину.'); return; }
+  let r;
+  try { driveMapPush_(); r = otoSync_(Date.now() + 5 * 60 * 1000); } finally { lock.releaseLock(); }
+  SpreadsheetApp.getUi().alert(r.ok ? '✅ One-to-one: таблиць ' + r.files + (r.changed ? ' — оновлено в робочому просторі.' : ' — змін немає.') + (r.pending ? '\nЩе ' + r.pending + ' дочитаю наступного разу.' : '')
+    : '❌ ' + (r.error || 'не вдалося'));
+}
+function otoMaybe_(started) {
+  const props = PropertiesService.getScriptProperties();
+  const last = Number(props.getProperty('OTO_LAST') || 0);
+  const left = TIME_BUDGET_MS - (Date.now() - started);
+  if (Date.now() - last < OTO_EVERY_MS || left < 90 * 1000) return;
+  otoSync_(started + TIME_BUDGET_MS);
+}
+function otoSync_(deadline) {
+  const props = PropertiesService.getScriptProperties();
+  const cfg = call_('ws-config', { ws: WS_ID });
+  if (!cfg.ok) return { ok: false, error: 'сервер: ' + (cfg.error || cfg.message) };
+  const folders = {};
+  (cfg.areas || []).forEach(function (a) { const m = /folders\/([\w-]+)/.exec(a.otoFolder || ''); if (m) folders[m[1]] = 1; });
+  const out = [], seen = {};
+  let pending = 0;
+  Object.keys(folders).forEach(function (fid) {
+    let it;
+    try { it = DriveApp.getFolderById(fid).getFiles(); } catch (e) { console.warn('папка ' + fid + ': ' + e); return; }
+    while (it.hasNext()) {
+      const f = it.next(), name = f.getName(), mime = f.getMimeType();
+      if (!OTO_NAME.test(name) || (mime !== MimeType.GOOGLE_SHEETS && mime !== XLSX_MIME) || seen[f.getId()]) continue;
+      seen[f.getId()] = 1;
+      const key = 'OTO_' + f.getId(), upd = f.getLastUpdated().getTime();
+      let c = null;
+      try { c = JSON.parse(props.getProperty(key) || 'null'); } catch (e) { c = null; }
+      if (!c || c.u !== upd) {
+        if (Date.now() > deadline - 25 * 1000) { pending++; if (!c) continue; }
+        else {
+          try {
+            const title = otoClean_(name);
+            c = { u: upd, d: { id: f.getId(), title: title, area: otoArea_(title), group: otoGroup_(title), ok: true, people: otoRead_(f) } };
+          } catch (e) { console.warn(name + ': ' + e); c = c || { u: upd, d: { id: f.getId(), title: otoClean_(name), area: otoArea_(name), group: otoGroup_(name), ok: false, people: [] } }; }
+          try { props.setProperty(key, JSON.stringify(c)); } catch (e) { console.warn('кеш ' + name + ': ' + e); }
+        }
+      }
+      out.push(c.d);
+    }
+  });
+  // таблиці, яких уже немає в папках, — прибираємо з памʼяті
+  Object.keys(props.getProperties()).forEach(function (k) { if (k.indexOf('OTO_') === 0 && k !== 'OTO_LAST' && k !== 'OTO_LAST_TXT' && !seen[k.slice(4)]) props.deleteProperty(k); });
+  const res = call_('ws-oto', { ws: WS_ID, files: out });
+  if (!res.ok) return { ok: false, error: 'сервер: ' + (res.error || res.message) };
+  props.setProperty('OTO_LAST', String(Date.now()));
+  props.setProperty('OTO_LAST_TXT', Utilities.formatDate(new Date(), TZ, 'dd.MM.yyyy HH:mm') + ' · таблиць ' + out.length);
+  return { ok: true, files: out.length, changed: res.changed, pending: pending };
+}
+// Google Таблиця читається напряму; файл Excel — через тимчасову копію-Таблицю, яку одразу видаляємо
+function otoRead_(file) {
+  if (file.getMimeType() === MimeType.GOOGLE_SHEETS) return otoParseSS_(SpreadsheetApp.openById(file.getId()));
+  const tok = ScriptApp.getOAuthToken();
+  const r = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + file.getId() + '/copy?supportsAllDrives=true', {
+    method: 'post', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true,
+    payload: JSON.stringify({ name: 'тимчасова копія one-to-one (MyYL)', mimeType: MimeType.GOOGLE_SHEETS }),
+  });
+  const tmp = JSON.parse(r.getContentText() || '{}').id;
+  if (!tmp) throw new Error('не вдалося прочитати файл Excel (' + r.getResponseCode() + ')');
+  try { return otoParseSS_(SpreadsheetApp.openById(tmp)); }
+  finally { UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + tmp + '?supportsAllDrives=true', { method: 'delete', headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true }); }
+}
+function otoParseSS_(ss) {
+  const out = [];
+  ss.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    if (OTO_SKIP_SHEETS.test(name)) return;
+    const p = otoPerson_(sh.getDataRange().getValues(), name);
+    if (p) out.push(p);
+  });
+  return out;
+}
+function otoTxt_(v) { if (v == null) return ''; if (isDate_(v)) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd'); return String(v).trim(); }
+function otoDate_(v) {
+  if (v == null || v === '') return null;
+  if (isDate_(v)) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  if (typeof v === 'number' && v > 20000 && v < 80000) return Utilities.formatDate(new Date(Math.round((v - 25569) * 864e5)), 'UTC', 'yyyy-MM-dd');
+  return String(v).trim() || null;
+}
+function otoScore_(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return v >= 0 && v <= 10 ? v : null;
+  const s = String(v).trim().replace(',', '.');
+  if (/^\d+(\.\d+)?$/.test(s)) { const n = +s; return n <= 10 ? n : null; }
+  return null;
+}
+function otoR1_(x) { return Math.round(x * 10) / 10; }
+function otoMean_(a) { return a.reduce(function (s, x) { return s + x; }, 0) / a.length; }
+function otoSphere_(s) { s = String(s).replace(/\s+/g, ' ').trim().toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); }
+function otoPerson_(rows, sheetName) {
+  let personName = '', role = '', meetCols = null, dateRow = null, start = -1;
+  for (let i = 0; i < rows.length && i < 60; i++) {
+    const r = rows[i] || [];
+    const a = otoTxt_(r[0]), b = otoTxt_(r[1]);
+    if (/^Ім.я та прізвище/i.test(a)) personName = b;
+    else if (/^Роль/i.test(a)) role = b;
+    if (!meetCols) {
+      const cols = [];
+      r.forEach(function (c, j) { const m = /Зустріч\s*(\d)/i.exec(otoTxt_(c)); if (m && cols[+m[1] - 1] == null) cols[+m[1] - 1] = j; });
+      if (cols.filter(function (x) { return x != null; }).length >= 2) meetCols = cols;
+    }
+    if (/^Дата зустрічі/i.test(b) || /^Дата зустрічі/i.test(a)) dateRow = r;
+    if (/^Сфера\s*\/\s*пункт/i.test(a)) { start = i + 1; break; }
+  }
+  if (start < 0 || !personName || OTO_PLACEHOLDER.test(personName)) return null;
+  if (!meetCols) meetCols = [2, 4, 6, 8];
+  const spheres = [];
+  let cur = null;
+  for (let i = start; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const a = otoTxt_(r[0]);
+    if (/^ЗАГАЛЬНИЙ БАЛ/i.test(a) || /^РЕЗУЛЬТАТИ/i.test(a)) break;
+    const m = /^(\d+)\.\s*(.+)$/.exec(a);
+    if (m) {
+      const nm = otoSphere_(m[2]);
+      cur = (m[1] === '0' || /без балу|ф[іi]тбек|фідбек|попередніх цілей/i.test(nm)) ? null : { name: nm, items: [] };
+      if (cur) spheres.push(cur);
+      continue;
+    }
+    if (!cur || !a) continue;
+    cur.items.push([0, 1, 2, 3].map(function (k) { return meetCols[k] == null ? null : otoScore_(r[meetCols[k]]); }));
+  }
+  const meetings = [0, 1, 2, 3].map(function (k) {
+    const sp = {};
+    spheres.forEach(function (s) {
+      const v = s.items.map(function (it) { return it[k]; }).filter(function (x) { return x != null; });
+      if (v.length) sp[s.name] = otoR1_(otoMean_(v));
+    });
+    const vals = Object.keys(sp).map(function (x) { return sp[x]; });
+    const date = otoDate_(dateRow && meetCols[k] != null ? dateRow[meetCols[k]] : null);
+    return { held: vals.length > 0 || !!date, date: date, total: vals.length ? otoR1_(otoMean_(vals)) : null, spheres: sp };
+  });
+  return { name: personName, role: role, meetings: meetings };
+}
+function otoArea_(t) {
+  t = String(t);
+  if (/Чернівці\s*У/i.test(t)) return 'cv-u';
+  if (/Чернівці\s*Б/i.test(t)) return 'cv-b';
+  if (/Тернопіл/i.test(t)) return 'ternopil';
+  if (/Льв[іо]в/i.test(t)) return 'lviv';
+  if (/Франк/i.test(t)) return 'if';
+  if (/Закарпат/i.test(t)) return 'zak';
+  if (/офіс|керівники/i.test(t)) return 'office';
+  return 'other';
+}
+function otoGroup_(t) {
+  t = String(t);
+  if (/Капітан/i.test(t)) return 'Капітани';
+  if (/Лідер/i.test(t)) return 'Лідери';
+  if (/керівник|офіс/i.test(t)) return 'Керівники';
+  return 'Інше';
+}
+function otoClean_(t) { return String(t || '').replace(/\.xlsx\s*$/i, '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, ''); }
 
 // ═════════════════════════════ ПОМІЧНИКИ ═════════════════════════════
 

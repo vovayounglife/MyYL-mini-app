@@ -235,6 +235,7 @@ async function runAs_(S, tgUser, action, d, viewAs, actAs) {
     if (need.wsPage) await S.loadWsPage(str_(d.id));
     if (need.wsKv) await S.loadWsKv(str_(d.ws) || WS_DEFAULT, need.wsKv);
     if (need.wsMine) await S.loadWsMine(String(tgUser.id));
+    if (need.wsStats) await S.loadWsStats();
     const data = use(S, () => { const c = ctx_(tgUser); if (actor) c.actor = actor; const out = fn(viewAs ? viewCtx_(c, viewAs) : c, d); if (actor && action === 'me' && out) out.actAs = { id: c.id, name: c.name }; return out; });
     await S.flush();
     return data;
@@ -4162,6 +4163,7 @@ async function handleAdmin(req, env, ctx, url) {
   const body = await req.json().catch(() => ({}));
   const db = env.DB;
   const action = url.pathname.slice('/admin/'.length);
+  if (action.indexOf('ws-') === 0) return json(await wsAdmin_(env, ctx, action, body));
   if (action === 'probe') {
     // виконати запит від імені «власник» (SUPER) і повернути лише час, розмір і помилку — без даних
     const sup = await db.prepare("SELECT tg_id FROM roles WHERE role_key = 'SUPER' AND status = 'активна' LIMIT 1").first('tg_id');
@@ -4515,6 +4517,68 @@ Store.prototype.loadWsDue = async function (from, to) {
   this.wsNames = {};
   (w.results || []).forEach((r) => { this.wsNames[r.id] = r.name || ''; });
 };
+
+// статистика команд регіону простору — з бази MyYL: склад, знані, клуби, малі групи, КР
+const WS_TEAM_ROLES = ROLES.filter((r) => r.level === 'team').sort((a, b) => a.rank - b.rank);
+Store.prototype.loadWsStats = async function () {
+  const W = this.ws, b = this.b;
+  this.wsStats = null;
+  if (!W || !W.row) return;
+  const reg = b.regions.filter((r) => r.name === W.row.region)[0];
+  if (!reg) return;
+  const today = kyivDay(new Date());
+  const w3 = addDaysKey_(today, -91), ly1 = addDaysKey_(today, -365), ly0 = addDaysKey_(ly1, -91);
+  const m12 = addDaysKey_(today.slice(0, 8) + '01', -330).slice(0, 7) + '-01';
+  const none = MODE.none;
+  const [agg, mon, drive] = await this.db.batch([
+    this.db.prepare("SELECT team_id, type, SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS n3, SUM(CASE WHEN date >= ? THEN count ELSE 0 END) AS t3, " +
+      "SUM(CASE WHEN date >= ? THEN leaders ELSE 0 END) AS s3, MAX(CASE WHEN date >= ? THEN count END) AS mx3, MAX(date) AS last, SUM(CASE WHEN date >= ? THEN hours ELSE 0 END) AS h3, " +
+      "COUNT(DISTINCT CASE WHEN date >= ? THEN COALESCE(NULLIF(author_id, ''), author) END) AS p3, SUM(CASE WHEN date >= ? AND date <= ? THEN 1 ELSE 0 END) AS nly, " +
+      "SUM(CASE WHEN date >= ? AND date <= ? THEN count ELSE 0 END) AS tly FROM reports WHERE date >= ? AND date <= ? AND type IN ('club', 'mg', 'kr') AND COALESCE(mode, '') != ? GROUP BY team_id, type")
+      .bind(w3, w3, w3, w3, w3, w3, ly0, ly1, ly0, ly1, ly0, today, none),
+    this.db.prepare("SELECT team_id, substr(date, 1, 7) AS m, COUNT(*) AS n, AVG(count) AS t, AVG(leaders) AS s FROM reports WHERE type = 'club' AND date >= ? AND date <= ? AND COALESCE(mode, '') != ? GROUP BY team_id, m")
+      .bind(m12, today, none),
+    this.db.prepare("SELECT v FROM ws_kv WHERE ws = '_drive' AND k = 'map'"),
+  ]);
+  this.wsStats = { reg: reg, today: today, w3: w3, m12: m12, agg: agg.results || [], mon: mon.results || [], drive: wsJson_(((drive.results || [])[0] || {}).v, {}) || {} };
+};
+function wsAnalyticsLive_() {
+  const X = S.wsStats;
+  if (!X) return null;
+  const b = S.b, kvAreas = S.ws.kv.areas || [];
+  const nk = (x) => String(x || '').toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi, '');
+  const areas = b.areas.filter((a) => a.regionId === X.reg.id).map((a, i) => {
+    const k = kvAreas.filter((z) => nk(z.name) === nk(a.name))[0] || {};
+    const fid = (X.drive.a || {})[a.id];
+    return { key: k.key || a.id, id: a.id, name: a.name, director: k.director || '', acting: !!k.acting, color: k.color || '', order: k.order || 50 + i,
+      folder: fid ? 'https://drive.google.com/drive/folders/' + fid : '', otoFolder: k.otoFolder || '' };
+  });
+  const keyOf = {};
+  areas.forEach((a) => { keyOf[a.id] = a.key; });
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.level === 'team');
+  const months = [];
+  for (let k = 11; k >= 0; k--) { const d = new Date(Date.UTC(Number(X.today.slice(0, 4)), Number(X.today.slice(5, 7)) - 1 - k, 15)); months.push(d.toISOString().slice(0, 7)); }
+  const teams = b.teams.filter((t) => t.active && b.teamRegion(t.id) === X.reg.id).map((t) => {
+    const mine = act.filter((r) => r.unitId === t.id);
+    const people = uniq_(mine.map((r) => r.tgId));
+    const roles = {};
+    WS_TEAM_ROLES.forEach((def) => { const n = uniq_(mine.filter((r) => r.key === def.key).map((r) => r.tgId)).length; if (n) roles[def.label] = n; });
+    const g = (type) => X.agg.filter((r) => r.team_id === t.id && r.type === type)[0] || {};
+    const cl = g('club'), mg = g('mg'), kr = g('kr');
+    const n3 = Number(cl.n3) || 0, nly = Number(cl.nly) || 0;
+    const sheet = (X.drive.t || {})[t.id];
+    return {
+      id: t.id, name: t.name, area: keyOf[t.areaId] || t.areaId, dir: t.dir || '', members: people.length, roles: roles, known: Number(t.known) || 0,
+      clubs: { n: n3, totalTeens: Number(cl.t3) || 0, avgTeens: n3 ? Math.round(cl.t3 / n3 * 10) / 10 : null, avgServ: n3 ? Math.round(cl.s3 / n3 * 10) / 10 : null, maxTeens: cl.mx3 == null ? null : Number(cl.mx3), last: cl.last || '' },
+      clubsLY: { n: nly, avgTeens: nly ? Math.round(cl.tly / nly * 10) / 10 : null },
+      monthly: months.map((m) => { const r = X.mon.filter((z) => z.team_id === t.id && z.m === m)[0]; return { m: m, n: r ? Number(r.n) : 0, teens: r ? Math.round(r.t * 10) / 10 : null, serv: r ? Math.round(r.s * 10) / 10 : null }; }),
+      sg: { n: Number(mg.n3) || 0, avg: Number(mg.n3) ? Math.round(mg.t3 / mg.n3 * 10) / 10 : null },
+      kr: { hours: Math.round((Number(kr.h3) || 0) * 10) / 10, people: Number(kr.p3) || 0 },
+      sheet: sheet ? 'https://docs.google.com/spreadsheets/d/' + sheet + '/edit' : '',
+    };
+  });
+  return { source: 'myyl', region: X.reg.name, updated: nowIso(), window: { from: X.w3, to: X.today }, areas: areas, teams: teams };
+}
 
 // простір спершу закритий: його бачить лише той, хто має найвищі права в MyYL; команді відкривається окремою кнопкою
 function wsOpenMap_(rows) { const o = {}; (rows || []).forEach((r) => { o[r.ws] = !!(wsJson_(r.v, {}) || {}).on; }); return o; }
@@ -4971,7 +5035,7 @@ API.wsProfiles = function (c) {
 API.wsAnalytics = function (c) {
   wsAcc_(c);
   const B = S.wsBig || {};
-  return { analytics: B.analytics || null, oto: B.oto || null, at: B.analyticsAt || '' };
+  return { analytics: wsAnalyticsLive_(), oto: B.oto || null, at: nowIso() };
 };
 API.wsImport = function (c, d) {
   wsAcc_(c, true);
@@ -5012,6 +5076,55 @@ API.wsImport = function (c, d) {
   return { got: got, ws: API.ws(c) };
 };
 
+// ── дані з Google Диску (скрипт «⚙️ Система»): налаштування й one-to-one ──
+const wsNum_ = (v) => (v == null || v === '' || !isFinite(Number(v)) ? null : Math.round(Number(v) * 10) / 10);
+function wsOtoClean_(files) {
+  return files.slice(0, 60).map((f) => ({
+    id: str_(f && f.id).slice(0, 80), title: clipN_(f && f.title, 200), area: str_(f && f.area).slice(0, 30), group: clipN_(f && f.group, 40), ok: !(f && f.ok === false),
+    people: (Array.isArray(f && f.people) ? f.people : []).slice(0, 80).map((p) => ({
+      name: clipN_(p && p.name, 120), role: clipN_(p && p.role, 160),
+      meetings: (Array.isArray(p && p.meetings) ? p.meetings : []).slice(0, 6).map((m) => {
+        const sp = {};
+        Object.keys((m && m.spheres) || {}).slice(0, 20).forEach((k) => { const v = wsNum_(m.spheres[k]); if (v != null) sp[clipN_(k, 80)] = v; });
+        return { held: !!(m && m.held), date: m && m.date ? clipN_(m.date, 20) : null, total: wsNum_(m && m.total), spheres: sp };
+      }),
+    })).filter((p) => p.name),
+  })).filter((f) => f.id);
+}
+async function wsAdmin_(env, ctx, action, body) {
+  const wsId = str_(body.ws) || WS_DEFAULT;
+  const S0 = new Store(env, ctx);
+  await S0.loadBase();
+  await S0.loadWs(wsId);
+  const prev = action === 'ws-oto' ? await env.DB.prepare("SELECT v FROM ws_kv WHERE ws = ? AND k = 'oto'").bind(wsId).first('v') : null;
+  const out = use(S0, () => {
+    const W = S.ws;
+    if (!W.row) return { ok: false, error: 'no_ws' };
+    if (action === 'ws-config') return { ok: true, name: W.row.name, areas: (W.kv.areas || []).map((a) => ({ key: a.key, name: a.name, otoFolder: a.otoFolder, teamFolder: a.teamFolder })) };
+    if (action === 'ws-drive') {
+      // де скрипт «⚙️ Система» створив папки ерій і таблиці команд на Диску
+      const ids = (o) => { const r = {}; Object.keys(o || {}).slice(0, 2000).forEach((k) => { const v = String((o[k] && o[k].id) || o[k] || ''); if (/^[\w-]{10,100}$/.test(v)) r[str_(k).slice(0, 60)] = v; }); return r; };
+      const map = { t: ids(body.map && body.map.t), a: ids(body.map && body.map.a), r: ids(body.map && body.map.r), at: nowIso() };
+      S.run("INSERT OR REPLACE INTO ws_kv (ws, k, v, updated) VALUES ('_drive', 'map', ?, ?)", [JSON.stringify(map), map.at]);
+      return { ok: true, teams: Object.keys(map.t).length, areas: Object.keys(map.a).length };
+    }
+    if (action === 'ws-oto') {
+      if (!Array.isArray(body.files)) return { ok: false, error: 'bad_request' };
+      const files = wsOtoClean_(body.files);
+      const old = (wsJson_(prev, {}) || {}).files || null;
+      if (old && JSON.stringify(old) === JSON.stringify(files)) return { ok: true, changed: false, files: files.length };
+      wsKvSet_('oto', { updated: nowIso(), source: 'drive', files: files });
+      const meta = Object.assign({}, W.kv.meta || {}, { oto: files.length, otoAt: nowIso() });
+      wsKvSet_('meta', meta);
+      wsLog_({ id: '', name: 'Google Диск' }, 'оновлено one-to-one (' + files.length + ' табл.)', '');
+      return { ok: true, changed: true, files: files.length };
+    }
+    return { ok: false, error: 'bad_action' };
+  });
+  await S0.flush();
+  return out;
+}
+
 // ── нагадування про дедлайни (щодня о 9:00 за Києвом): завтра, сьогодні, прострочено на день ──
 function wsReminder_() {
   const today = kyivDay(new Date());
@@ -5030,7 +5143,7 @@ Object.assign(NEEDS, {
   wsColSave: { ws: true }, wsColDelete: { ws: true }, wsBoardSave: { ws: true }, wsBoardDelete: { ws: true },
   wsPage: { ws: true, wsPage: true }, wsPageSave: { ws: true }, wsPageDelete: { ws: true }, wsItemSave: { ws: true }, wsItemDelete: { ws: true }, wsStrategySave: { ws: true },
   wsPeopleFind: { ws: true }, wsMemberSave: { ws: true }, wsMemberRemove: { ws: true }, wsOpen: { ws: true },
-  wsProfiles: { ws: true, wsKv: ['profiles', 'photos'] }, wsAnalytics: { ws: true, wsKv: ['analytics', 'oto'] }, wsImport: { ws: true },
+  wsProfiles: { ws: true, wsKv: ['profiles', 'photos'] }, wsAnalytics: { ws: true, wsKv: ['oto'], wsStats: true }, wsImport: { ws: true },
 });
 NEEDS.me.wsMine = true;
 {
