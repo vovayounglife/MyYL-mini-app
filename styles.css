@@ -680,3 +680,11 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .wcpick { display: flex; flex-direction: column; gap: 4px; }
 .wcpick button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px; border-radius: 12px; border: 1.5px solid transparent; background: var(--soft); color: var(--text); text-align: left; font-size: 14px; font-weight: 600; }
 .wcpick button.on { border-color: var(--cc); background: var(--card); }
+.wsent { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(20, 14, 24, .18); animation: fade .18s ease; }
+.wsent.out { opacity: 0; transition: opacity .2s ease; }
+.wsent-b { min-width: 220px; max-width: 320px; padding: 22px 22px 18px; border-radius: 24px; text-align: center; background: var(--glass-hi, var(--card)); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-brd, var(--line)); box-shadow: 0 20px 50px -14px rgba(0,0,0,.4); animation: pop .28s cubic-bezier(.2,.9,.3,1.3); }
+.wsent-i { width: 56px; height: 56px; margin: 0 auto 10px; border-radius: 50%; background: var(--teal); color: #fff; font: 800 28px/56px Manrope, Inter, sans-serif; }
+.wsent-t { font: 800 19px/1.25 Manrope, Inter, sans-serif; }
+.wsent-s { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.wflash { animation: wflash 1.6s ease; }
+@keyframes wflash { 0%, 40% { box-shadow: 0 0 0 3px var(--teal); } 100% { box-shadow: 0 0 0 0 transparent; } }

@@ -3558,7 +3558,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <div class="f"><span>Хто виконує</span><div class="chips">${d.members.map((m) => `<button type="button" class="chip wwho${f.who.indexOf(m.id) >= 0 ? ' on' : ''}" data-a="wsNfWho" data-id="${esc(m.id)}">${wsAva(m.id, 'xs')}${m.id === d.me.id ? 'Я' : esc(String(m.name).split(/\s+/)[0] || '—')}</button>`).join('')}</div></div>
       <div class="grid2"><label class="f"><span>Дедлайн</span><input class="in" type="date" data-bind="ws.nf.due" value="${esc(f.due)}"></label>
       <label class="f"><span>Колонка</span><select class="in" data-bind="ws.nf.col">${(board ? board.cols : []).filter((k) => k.kind !== 'done').map((k) => `<option value="${esc(k.id)}"${k.id === f.col ? ' selected' : ''}>${esc(k.title)}</option>`).join('')}</select></label></div>
-      <button type="button" class="btn" data-a="wsNfSave">${icon('check', 18)} Додати задачу</button>
+      <button type="button" class="btn" data-a="wsNfSave"${S.ws.nfBusy ? ' disabled' : ''}>${icon('send', 18)} ${f.who.some((id) => id !== d.me.id) ? 'Надіслати задачу' : 'Додати задачу'}</button>
       <div class="xs muted">Задача зʼявиться і на дошці, і в «Стратегії» у своєму напрямку — це одна задача: галочка в будь-якому місці відмічає її скрізь.</div></div>`;
     return h;
   }
@@ -3668,7 +3668,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       h += L.length ? `<div class="card list">${L.map(wsItemRow).join('')}</div>` : `<div class="xs muted" style="padding:0 6px">${k === 'goal' ? 'Що хочемо досягти в цьому напрямку' : 'Конкретні проекти, що ведуть до цілей'}</div>`;
     });
     const cards = d.cards.filter((x) => x.circle === c.id && !x.archived);
-    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => !x.done).length} відкритих</div>` + wsQuickAdd({ circle: c.id });
+    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => !x.done).length} відкритих</div><button type="button" class="btn sm" data-a="wsNew" data-circle="${esc(c.id)}">+ Нова задача в цьому напрямку</button>` + wsQuickAdd({ circle: c.id });
     h += `<div class="col" style="gap:8px">${cards.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || (a.due || '9').localeCompare(b.due || '9')).map((x) => wsCardTile(x, true)).join('')}</div>`;
     return h;
   }
@@ -3684,7 +3684,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (it.desc) h += `<div class="card small wdesc">${wsText(it.desc)}</div>`;
     if (it.url) h += linkChip(it.url, '');
     const cards = d.cards.filter((x) => x.item === it.id && !x.archived);
-    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => x.done).length} з ${cards.length} виконано</div>` + wsQuickAdd({ item: it.id, circle: it.circle });
+    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => x.done).length} з ${cards.length} виконано</div><button type="button" class="btn sm" data-a="wsNew" data-circle="${esc(it.circle)}" data-item="${esc(it.id)}">+ Нова задача</button>` + wsQuickAdd({ item: it.id, circle: it.circle });
     h += `<div class="col" style="gap:8px">${cards.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0)).map((x) => wsCardTile(x, true)).join('')}</div>`;
     return h;
   }
@@ -3943,9 +3943,37 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.wsNfSave = async () => {
     const f = S.ws.nf;
     if (!String(f.title).trim()) return toast('Напиши, що треба зробити');
-    const r = await run(() => api('wsCardSave', { ws: S.ws.id, title: f.title, board: f.board, col: f.col, circle: f.circle, item: f.item, who: f.who, due: f.due }), f.who.length ? 'Задачу додано' + (f.who.some((id) => id !== WD_().me.id) ? ' — виконавці отримали повідомлення' : '') : 'Задачу додано');
-    if (r) { wsPut(r); S.ws.nf = null; } render();
+    if (S.ws.nfBusy) return;
+    S.ws.nfBusy = true;
+    const r = await run(() => api('wsCardSave', { ws: S.ws.id, title: f.title, board: f.board, col: f.col, circle: f.circle, item: f.item, who: f.who, due: f.due }));
+    S.ws.nfBusy = false;
+    if (!r) return render();
+    wsPut(r);
+    // назад у задачі: без форм і вкладених екранів, на дошці з новою задачею
+    const W = S.ws;
+    ['nf', 'open', 'cf', 'circle', 'item', 'itf', 'sf', 'person', 'theme', 'area', 'team', 'otoP', 'page', 'pd', 'pe', 'colEdit', 'boardEdit'].forEach((k) => { W[k] = null; });
+    W.matrix = false; W.members = false; W.tab = 'board'; W.board = r.board || W.board; W.arch = false;
+    if (W.filter === 'mine' && r.who.indexOf(WD_().me.id) < 0) W.filter = 'all';
+    if (W.fcircle && W.fcircle !== r.circle) W.fcircle = '';
+    render(); window.scrollTo(0, 0);
+    const others = r.who.filter((id) => id !== WD_().me.id);
+    wsSent('Задача надіслана', others.length && WD_().open === false ? 'Простір поки закритий — повідомлення в боті не надсилаються' : others.length ? (others.length === 1 ? (wsFirst(others[0]) || 'Виконавець') + ' отримає повідомлення в боті' : plural(others.length, 'виконавець отримає', 'виконавці отримають', 'виконавців отримають') + ' повідомлення в боті') : 'Задачу додано тобі');
+    setTimeout(() => {
+      const el = document.querySelector('[data-a="wsCardOpen"][data-id="' + r.id + '"]');
+      const card = el && el.closest('.wcard');
+      if (card) { try { card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); } catch (e) { /* ок */ } card.classList.add('wflash'); }
+    }, 120);
   };
+  // підтвердження посеред екрана
+  function wsSent(title, sub) {
+    haptic('success');
+    const old = document.querySelector('.wsent'); if (old) old.remove();
+    document.body.insertAdjacentHTML('beforeend', `<div class="wsent" role="status" aria-live="polite"><div class="wsent-b"><div class="wsent-i">✓</div><div class="wsent-t">${esc(title)}</div>${sub ? `<div class="wsent-s">${esc(sub)}</div>` : ''}</div></div>`);
+    const box = document.querySelector('.wsent');
+    const close = () => { if (box && box.parentNode) { box.classList.add('out'); setTimeout(() => box.remove(), 220); } };
+    box.addEventListener('click', close);
+    setTimeout(close, 1700);
+  }
   A.wsColNew = () => { S.ws.colEdit = { board: S.ws.board, title: '' }; render(); };
   A.wsColEdit = (d) => { const c = wsCol(d.id); S.ws.colEdit = { id: c.id, title: c.title, done: c.kind === 'done' }; render(); };
   A.wsColSave = async () => {
