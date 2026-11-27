@@ -67,6 +67,7 @@
     doc: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5',
     phoneApp: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2',
     bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
+    ws: 'M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z',
     tree: 'M12 3v6M12 9H5v5M12 9h7v5M3 14h4v4H3zM17 14h4v4h-4zM10 14h4v4h-4zM12 9v5',
     send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
     task: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9',
@@ -144,7 +145,7 @@
   };
   const statsKey = () => [((S.pick && S.pick.stats) || { keys: [] }).keys.join(','), S.stats.cat, S.stats.period, S.stats.period === 'custom' ? S.stats.from + '_' + S.stats.to : ''].join('|');
   // чи можна зараз перемалювати екран, не збивши людині введення
-  const safeToRender = () => !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.res.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks && !(S.screen === 'club' && S.club.dirty);
+  const safeToRender = () => !(S.screen === 'ws' && S.ws && wsBusyForm()) && !['add', 'onboarding', 'finance', 'profile', 'broadcast', 'report'].includes(S.screen) && !S.evForm && !S.tasks.form && !S.polls.form && !S.res.form && !S.known.edit && !S.known.bulk && !S.structEdit && !S.thanks && !(S.screen === 'club' && S.club.dirty);
 
   function toast(msg, kind) {
     S.toast = msg;
@@ -172,7 +173,7 @@
       fetch(u, { method: 'POST', body: d, keepalive: true }).catch(() => {});
     } catch (e) { /* ок */ }
   }
-  const READ_ACTIONS = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo)$/;
+  const READ_ACTIONS = /^(ws|wsCard|wsPage|wsProfiles|wsAnalytics|wsPeopleFind|me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo)$/;
   const INFLIGHT = {};
   const HOST_FAIL = {};
   async function api(action, data) {
@@ -280,11 +281,12 @@
     if (S.screen === 'polls' && S.polls.form) { S.polls.form = null; return render(); }
     if (S.screen === 'team' && S.team.add) { S.team.add = null; return render(); }
     if (S.screen === 'res' && S.res.form) { S.res.form = null; return render(); }
+    if (S.screen === 'ws' && wsBack()) return;
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
-    return S.stack.length > 0 || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
+    return S.stack.length > 0 || (S.screen === 'ws' && wsCanBack()) || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
       (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form) || (S.screen === 'team' && !!S.team.add) || (S.screen === 'res' && !!S.res.form);
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
@@ -328,6 +330,7 @@
     if (screen === 'polls') { S.polls.form = null; loadPolls(); }
     if (screen === 'myyl') { S.myyl.open = null; loadMyyl(); }
     if (screen === 'broadcast') loadBc();
+    if (screen === 'ws') wsEnter(o);
     if (screen === 'report') initReport();
     if (screen === 'structure') { S.structEdit = null; loadTree(); }
     if (screen === 'stats') { S.stats.find = false; S.stats.showAll = false; S.stats.showMiss = false; }
@@ -376,7 +379,7 @@
       S.me = cached; S.events = cached.events || null;
       const want = wantScreen();
       S.screen = 'home';
-      if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') go(want); else render();
+      if (wsWant(want)) { /* задача чи сторінка простору */ } else if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') go(want); else render();
       try {
         const fresh = await api('me');
         S.me = fresh; S.events = fresh.events || S.events; LS.set('me', fresh);
@@ -395,6 +398,7 @@
       const want = wantScreen();
       S.screen = 'home';
       enter('home', {});
+      if (wsWant(want)) return;
       if (want && VIEWS[want] && want !== 'onboarding' && want !== 'pending') { go(want); return; }
     }
     render();
@@ -792,6 +796,7 @@
     const knownTile = (c.knownTeams || []).length || c.knownNoTeam;
     if (canKnownAdd() && !knownTile) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
     if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 3 ? '3' : '2'}">${qt.join('')}</div>`;
+    h += wsHomeCard();
     h += clubHomeCards();
     // головні розділи: моя команда, знані, корисні ресурси, задачі
     const home = [];
@@ -2030,6 +2035,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       { k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання для служіння', icon: 'res', ic: 'ic-yellow' },
       { k: 'bank', label: 'Банк ідей', sub: 'теми, ігри, пісні, проповіді з клубів усіх команд', icon: 'idea', ic: 'ic-coral' },
       tile('broadcast')].filter(has);
+    (me().ws || []).forEach((w) => team.unshift({ k: 'ws', label: 'Робочий простір', sub: w.name + ' · задачі, сторінки, стратегія', icon: 'ws', ic: 'ic-purple', badge: w.late || w.open || 0 }));
     if ((me().clubPlans || []).length) team.splice(1, 0, { k: 'club', label: 'Наш клуб', sub: 'план, програма, кошик ідей, архів', icon: 'club', ic: 'ic-teal' });
     // 3. звіти
     const reps = [tile('finance') && Object.assign({}, tile('finance'), { label: 'Місячний фінансовий звіт' })];
@@ -3248,6 +3254,841 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   };
 
   // ───────────── ПОДІЇ DOM ─────────────
+  // ═════════════ РОБОЧИЙ ПРОСТІР КОМАНДИ ═════════════
+  // задачі (дошка з колонками), сторінки, стратегія, команда (профілі, ерії, one-to-one)
+  S.ws = { data: null, id: '', tab: 'board', board: '', view: 'cols', filter: 'all', fcircle: '', showDone: false, arch: false, quick: {},
+    open: null, cc: null, cf: null, cmt: '', link: { u: '', t: '' }, linkOpen: false, chk: '',
+    page: null, pd: null, pe: null, pq: '',
+    circle: null, item: null, itf: null, sf: null, cq: '',
+    tteam: 'people', prof: null, person: null, theme: null, matrix: false, an: null, area: null, team: null, otoP: null,
+    members: false, find: null, colEdit: null, boardEdit: null, log: false };
+  const W_ = () => S.ws;
+  const WD_ = () => S.ws.data;
+  const WS_CC = ['#4c6a92', '#a4502f', '#2f6b57', '#8f3550', '#94681f', '#5e4a7d', '#3d6f7a', '#7a5c3d', '#6f655a'];
+  const WS_DOM = { ex: ['Виконання', '#6d3b7d'], inf: ['Вплив', '#b5651d'], rb: ['Стосунки', '#2f5f99'], st: ['Стратегічне мислення', '#2f7a57'] };
+  const WS_ITEM_ORDER = ['idea', 'plan', 'doing', 'pause', 'done'];
+  const WS_ICONS = ['📄', '📝', '📌', '🗓', '🎯', '💡', '📚', '🏕', '🙏', '💰', '📣', '🤝', '🧭', '✅'];
+  const wsMember = (id) => ((WD_() && WD_().members) || []).filter((m) => m.id === id)[0];
+  const wsFirst = (id) => { const m = wsMember(id); return m ? String(m.name || '').split(/\s+/)[0] : ''; };
+  const wsCircle = (id) => ((WD_() && WD_().strategy.circles) || []).filter((c) => c.id === id)[0];
+  const wsCircleN = (id) => { const L = (WD_() && WD_().strategy.circles) || []; return L.findIndex((c) => c.id === id) + 1; };
+  const wsCircleColor = (id) => WS_CC[(wsCircleN(id) - 1 + WS_CC.length) % WS_CC.length];
+  const wsCard = (id) => ((WD_() && WD_().cards) || []).filter((c) => c.id === id)[0];
+  const wsItem = (id) => ((WD_() && WD_().items) || []).filter((c) => c.id === id)[0];
+  const wsCol = (id) => { const d = WD_(); let x = null; (d ? d.boards : []).forEach((b) => b.cols.forEach((c) => { if (c.id === id) x = c; })); return x; };
+  const wsAreaOf = (k) => ((WD_() && WD_().areas) || []).filter((a) => a.key === k)[0];
+  const wsBusyForm = () => !!(S.ws.cf || S.ws.pe || S.ws.itf || S.ws.sf || S.ws.colEdit || S.ws.boardEdit || (S.ws.cmt || '').trim() || (S.ws.cq || '').trim() || Object.keys(S.ws.quick).some((k) => (S.ws.quick[k] || '').trim()));
+  const daysFrom = (k) => Math.round((parseDay(k) - parseDay(ymd(new Date()))) / 864e5);
+  function wsDue(due, done) {
+    if (!due) return '';
+    const n = daysFrom(due), d = parseDay(due), lbl = d.getDate() + ' ' + MSHORT[d.getMonth()];
+    if (done) return `<span class="wdue">🗓 ${lbl}</span>`;
+    if (n < 0) return `<span class="wdue late">⚠️ ${lbl} · прострочено</span>`;
+    if (n === 0) return '<span class="wdue soon">🔥 сьогодні</span>';
+    if (n === 1) return '<span class="wdue soon">⏰ завтра</span>';
+    return `<span class="wdue">🗓 ${lbl}${n <= 6 ? ' · ' + WD[d.getDay()] : ''}</span>`;
+  }
+  function wsAva(id, cls) {
+    const m = wsMember(id), P = S.ws.prof, ph = m && m.pkey && P && P.photos && P.photos[m.pkey];
+    const name = (m && m.name) || '?';
+    if (ph) return `<img class="wava ${cls || ''}" src="${esc(ph)}" alt="${esc(name)}" title="${esc(name)}">`;
+    let h = 0; String(id).split('').forEach((ch) => { h = (h * 31 + ch.charCodeAt(0)) % 997; });
+    return `<span class="wava ${cls || ''}" style="background:${WS_CC[h % WS_CC.length]}" title="${esc(name)}">${esc(initials(name))}</span>`;
+  }
+  function linkKind(u) {
+    const s = String(u || '');
+    if (/docs\.google\.com\/document/.test(s)) return ['📄', 'Google Документ', 'doc'];
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return ['📊', 'Google Таблиця', 'sheet'];
+    if (/docs\.google\.com\/presentation/.test(s)) return ['📽', 'Google Презентація', 'slides'];
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return ['📝', 'Google Форма', 'form'];
+    if (/drive\.google\.com\/(drive\/)?(u\/\d\/)?folders/.test(s)) return ['📁', 'Папка на Диску', 'folder'];
+    if (/drive\.google\.com/.test(s)) return ['📎', 'Файл на Диску', 'file'];
+    let host = ''; try { host = new URL(s).hostname.replace(/^www\./, ''); } catch (e) { host = 'Посилання'; }
+    return ['🔗', host, 'web'];
+  }
+  const linkChip = (u, t) => { const k = linkKind(u); return `<button type="button" class="wlink k-${k[2]}" data-a="wsOpen" data-u="${esc(u)}"><span>${k[0]}</span><span class="grow">${esc(t || k[1])}</span></button>`; };
+  // текст з посиланнями: Google-документи — кнопками, решта — короткими посиланнями
+  function wsInline(s) {
+    let h = esc(s);
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, t, u) => `<button type="button" class="linkish" data-a="wsOpen" data-u="${u}">${t}</button>`);
+    h = h.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (m, pre, u) => { const k = linkKind(u.replace(/&amp;/g, '&')); return pre + (k[2] === 'web' ? `<button type="button" class="linkish" data-a="wsOpen" data-u="${u}">${esc(k[1])}</button>` : `<button type="button" class="wlink inl k-${k[2]}" data-a="wsOpen" data-u="${u}">${k[0]} ${k[1]}</button>`); });
+    return h;
+  }
+  const wsText = (s) => String(s || '').split('\n').map(wsInline).join('<br>');
+  // сторінка: # заголовки, - списки, - [ ] чекбокси (натискаються), > примітка, --- лінія
+  function wsMd(body) {
+    const out = [];
+    String(body || '').split('\n').forEach((ln, i) => {
+      let m;
+      if ((m = ln.match(/^(#{1,3})\s+(.*)$/))) out.push(`<div class="wb-h${m[1].length}">${wsInline(m[2])}</div>`);
+      else if ((m = ln.match(/^\s*[-*]\s+\[( |x|X)\]\s?(.*)$/))) out.push(`<button type="button" class="wb-chk${m[1] !== ' ' ? ' on' : ''}" data-a="wsTick" data-l="${i}"><span class="bx">${m[1] !== ' ' ? '✓' : ''}</span><span class="grow">${wsInline(m[2])}</span></button>`);
+      else if ((m = ln.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/))) out.push(`<div class="wb-li"><span>•</span><span class="grow">${wsInline(m[1])}</span></div>`);
+      else if ((m = ln.match(/^>\s?(.*)$/))) out.push(`<div class="wb-q">${wsInline(m[1])}</div>`);
+      else if (/^-{3,}$/.test(ln.trim())) out.push('<hr class="wb-hr">');
+      else if (!ln.trim()) out.push('<div class="wb-sp"></div>');
+      else out.push(`<div class="wb-p">${wsInline(ln)}</div>`);
+    });
+    return out.join('');
+  }
+  async function wsLoad(silent) {
+    try {
+      const d = await api('ws', { ws: S.ws.id || '' });
+      S.ws.data = d; S.ws.id = d.id;
+      if (!d.boards.some((b) => b.id === S.ws.board)) S.ws.board = (d.boards[0] || {}).id || '';
+      // фото учасників для аватарок — тихо, після першого показу
+      if (!S.ws.prof && d.has && d.has.profiles) setTimeout(wsLoadProf, S.ws.tab === 'team' ? 0 : 600);
+    } catch (e) { if (!S.ws.data) S.ws.data = { error: e.message }; if (!silent) toast(e.message); }
+    if (S.screen === 'ws' && (!wsBusyForm() || !silent)) render();
+  }
+  async function wsLoadProf() {
+    if (S.ws.profLoading) return; S.ws.profLoading = true;
+    try { S.ws.prof = await api('wsProfiles', { ws: S.ws.id }); } catch (e) { S.ws.prof = { profiles: null, photos: {} }; }
+    S.ws.profLoading = false;
+    if (S.screen === 'ws' && !wsBusyForm()) render();
+  }
+  async function wsLoadAn() {
+    try { S.ws.an = await api('wsAnalytics', { ws: S.ws.id }); } catch (e) { S.ws.an = { analytics: null, oto: null }; toast(e.message); }
+    if (S.screen === 'ws') render();
+  }
+  async function wsLoadCard(id) {
+    try { const r = await api('wsCard', { ws: S.ws.id, id: id }); S.ws.cc = r.comments; wsPut(r.card); }
+    catch (e) { toast(e.message); if (S.ws.open === id) S.ws.open = null; }
+    if (S.screen === 'ws') render();
+  }
+  async function wsLoadPage(id) {
+    try { S.ws.pd = await api('wsPage', { ws: S.ws.id, id: id }); }
+    catch (e) { toast(e.message); S.ws.page = null; S.ws.pd = null; }
+    if (S.screen === 'ws') render();
+  }
+  function wsPut(card) {
+    if (!WD_() || !WD_().cards) return;
+    const L = WD_().cards, i = L.findIndex((x) => x.id === card.id);
+    if (i >= 0) L[i] = card; else L.push(card);
+    wsMineSync();
+  }
+  // лічильник «мої задачі» на головній і в «Ще»
+  function wsMineSync() {
+    const d = WD_(); if (!d || !d.cards || !S.me || !S.me.ws) return;
+    const w = S.me.ws.filter((x) => x.id === d.id)[0]; if (!w) return;
+    const today = ymd(new Date()), soon = ymd(new Date(Date.now() + 2 * 864e5));
+    const mine = d.cards.filter((c) => !c.done && !c.archived && c.who.indexOf(d.me.id) >= 0);
+    w.open = mine.length; w.soon = mine.filter((c) => c.due && c.due <= soon).length; w.late = mine.filter((c) => c.due && c.due < today).length;
+  }
+  function wsEnter(o) {
+    const W = S.ws;
+    if (o.ws) W.id = o.ws;
+    ['open', 'cf', 'pe', 'itf', 'sf', 'colEdit', 'boardEdit', 'person', 'theme', 'area', 'team', 'otoP', 'circle', 'item'].forEach((k) => { W[k] = null; });
+    W.members = false; W.matrix = false; W.page = null; W.pd = null;
+    if (o.card) { W.tab = 'board'; W.open = o.card; W.cc = null; }
+    if (o.page) { W.tab = 'pages'; W.page = o.page; }
+    wsLoad(!!W.data).then(() => { if (o.card && WD_() && !WD_().error) wsLoadCard(o.card); if (o.page && WD_() && !WD_().error) wsLoadPage(o.page); });
+  }
+  // «назад» усередині простору: від найглибшого рівня
+  const WS_LAYERS = [
+    ['cf', () => { S.ws.cf = null; }], ['colEdit', () => { S.ws.colEdit = null; }], ['boardEdit', () => { S.ws.boardEdit = null; }],
+    ['open', () => { S.ws.open = null; S.ws.cc = null; S.ws.linkOpen = false; }],
+    ['pe', () => { S.ws.pe = null; }], ['page', () => { const p = S.ws.pd && S.ws.pd.path; const up = p && p.length > 1 ? p[p.length - 2].id : null; S.ws.page = up; S.ws.pd = null; if (up) wsLoadPage(up); }],
+    ['itf', () => { S.ws.itf = null; }], ['item', () => { S.ws.item = null; }], ['sf', () => { S.ws.sf = null; }], ['circle', () => { S.ws.circle = null; }],
+    ['theme', () => { S.ws.theme = null; }], ['matrix', () => { S.ws.matrix = false; }], ['person', () => { S.ws.person = null; }],
+    ['team', () => { S.ws.team = null; }], ['otoP', () => { S.ws.otoP = null; }], ['area', () => { S.ws.area = null; }], ['members', () => { S.ws.members = false; S.ws.find = null; }],
+  ];
+  function wsCanBack() { return WS_LAYERS.some((l) => !!S.ws[l[0]]); }
+  function wsBack() { const l = WS_LAYERS.filter((x) => !!S.ws[x[0]])[0]; if (!l) return false; l[1](); render(); window.scrollTo(0, 0); return true; }
+
+  VIEWS.ws = function () {
+    const W = S.ws, d = W.data;
+    if (!d) return header('Робочий простір') + loading();
+    if (d.error) return header('Робочий простір') + `<div class="empty">${esc(d.error)}</div>`;
+    if (W.members) return wsMembersView();
+    if (W.colEdit) return wsColEditView();
+    if (W.boardEdit) return wsBoardEditView();
+    if (W.open) return wsCardView();
+    if (W.pe) return wsPageEditView();
+    if (W.page) return wsPageView();
+    if (W.itf) return wsItemFormView();
+    if (W.item) return wsItemView();
+    if (W.sf) return wsStratFormView();
+    if (W.circle) return wsCircleView();
+    if (W.theme) return wsThemeView();
+    if (W.matrix) return wsMatrixView();
+    if (W.person) return wsPersonView();
+    if (W.team) return wsTeamView();
+    if (W.otoP) return wsOtoPersonView();
+    if (W.area) return wsAreaView();
+    let h = header('Робочий простір', d.name, d.me.admin ? `<button type="button" class="icon-btn" data-a="wsMembers" aria-label="Команда простору й дані">${icon('profile', 20)}</button>` : '');
+    const tabs = [['board', 'Задачі'], ['pages', 'Сторінки'], ['strategy', 'Стратегія'], ['team', 'Команда']];
+    h += `<div class="seg wtabs" role="tablist">${tabs.map((t) => `<button type="button" role="tab" class="${W.tab === t[0] ? 'on' : ''}" data-a="wsTab" data-v="${t[0]}">${t[1]}</button>`).join('')}</div>`;
+    if (W.tab === 'board') h += wsBoardTab();
+    if (W.tab === 'pages') h += wsPagesTab();
+    if (W.tab === 'strategy') h += wsStratTab();
+    if (W.tab === 'team') h += wsTeamTab();
+    return h;
+  };
+
+  // ───── задачі ─────
+  function wsFiltered() {
+    const W = S.ws, d = W.data, today = ymd(new Date());
+    return d.cards.filter((c) => !c.archived && (W.filter !== 'mine' || c.who.indexOf(d.me.id) >= 0) && (W.filter !== 'late' || (!c.done && c.due && c.due < today)) &&
+      (W.filter !== 'none' || !c.who.length) && (!W.fcircle || c.circle === W.fcircle));
+  }
+  function wsCardTile(c, showCol) {
+    const nc = c.check.length, dc = c.check.filter((k) => k.d).length;
+    const cir = c.circle && wsCircle(c.circle);
+    const col = showCol && wsCol(c.col);
+    return `<button type="button" class="kcard wcard${c.done ? ' done' : ''}" data-a="wsCardOpen" data-id="${esc(c.id)}"${cir ? ` style="--cc:${wsCircleColor(c.circle)}"` : ''}>
+      ${cir ? `<span class="wcir">${wsCircleN(c.circle)} · ${esc(cir.title)}</span>` : ''}
+      <span class="wct">${c.done ? '✓ ' : ''}${esc(c.title)}</span>
+      <span class="wmeta">${wsDue(c.due, c.done)}${col ? `<span class="wchip">${esc(col.title)}</span>` : ''}${nc ? `<span class="wchip${dc === nc ? ' ok' : ''}">☑ ${dc}/${nc}</span>` : ''}${c.links.length ? `<span class="wchip">🔗 ${c.links.length}</span>` : ''}${c.comments ? `<span class="wchip">💬 ${c.comments}</span>` : ''}
+      ${c.who.length ? `<span class="wavas">${c.who.slice(0, 4).map((id) => wsAva(id, 'sm')).join('')}</span>` : ''}</span></button>`;
+  }
+  function wsBoardTab() {
+    const W = S.ws, d = W.data, today = ymd(new Date());
+    const board = d.boards.filter((b) => b.id === W.board)[0] || d.boards[0];
+    let h = '';
+    const mineN = d.cards.filter((c) => !c.archived && !c.done && c.who.indexOf(d.me.id) >= 0).length;
+    const lateN = d.cards.filter((c) => !c.archived && !c.done && c.due && c.due < today).length;
+    h += `<div class="pills" data-noptr>${d.boards.map((b) => `<button type="button" class="pill${board && b.id === board.id ? ' on' : ''}" data-a="wsBoard" data-id="${esc(b.id)}">${esc(b.title)}</button>`).join('')}<button type="button" class="pill multi" data-a="wsBoardNew">+ Дошка</button></div>`;
+    h += `<div class="pills" data-noptr>${[['all', 'Усі'], ['mine', 'Мої' + (mineN ? ' · ' + mineN : '')], ['late', 'Прострочені' + (lateN ? ' · ' + lateN : '')], ['none', 'Без виконавця']].map((x) => `<button type="button" class="pill sm${W.filter === x[0] ? ' on' : ''}" data-a="wsFilter" data-v="${x[0]}">${x[1]}</button>`).join('')}</div>`;
+    h += `<div class="row" style="gap:8px"><select class="in grow" style="min-height:40px" data-ch="wsFCircle" aria-label="Напрямок"><option value="">Усі напрямки</option>${d.strategy.circles.map((c, i) => `<option value="${esc(c.id)}"${W.fcircle === c.id ? ' selected' : ''}>${i + 1}. ${esc(c.title)}</option>`).join('')}</select>
+      <div class="seg" style="flex:0 0 auto"><button type="button" class="${W.view === 'cols' ? 'on' : ''}" data-a="wsView" data-v="cols" aria-label="Колонки">▥</button><button type="button" class="${W.view === 'list' ? 'on' : ''}" data-a="wsView" data-v="list" aria-label="За дедлайнами">☰</button></div></div>`;
+    const list = wsFiltered();
+    if (!board) return h + '<div class="empty">Ще немає дошки</div>';
+    if (W.view === 'list') h += wsDeadlineList(list);
+    else {
+      h += `<div class="board wboard" data-noptr>${board.cols.map((col) => {
+        const cs = list.filter((c) => c.col === col.id).sort((a, b) => a.pos - b.pos);
+        const shown = col.kind === 'done' && !W.showDone ? cs.slice(-5).reverse() : cs;
+        return `<div class="col-st wcol${col.kind === 'done' ? ' wdone' : ''}"><div class="col-h"><span class="grow">${col.kind === 'done' ? '✓ ' : ''}${esc(col.title)}</span><span class="n">${cs.length}</span>
+          <button type="button" class="wcol-m" data-a="wsColEdit" data-id="${esc(col.id)}" aria-label="Налаштувати колонку">⋯</button></div>
+          ${shown.map((c) => wsCardTile(c)).join('')}
+          ${col.kind === 'done' && cs.length > 5 ? `<button type="button" class="link-btn xs" data-a="wsShowDone">${W.showDone ? 'Згорнути' : 'Показати всі ' + cs.length}</button>` : ''}
+          <div class="wquick"><input class="in" type="text" maxlength="300" placeholder="+ Нова задача" data-bind="ws.quick.${esc(col.id)}" value="${esc(W.quick[col.id] || '')}" data-enter="wsQuick" data-col="${esc(col.id)}"><button type="button" class="icon-btn" data-a="wsQuick" data-col="${esc(col.id)}" aria-label="Додати">${icon('plus', 18)}</button></div></div>`;
+      }).join('')}<button type="button" class="col-st wcol wadd" data-a="wsColNew">+ Колонка</button></div>`;
+    }
+    const arch = d.cards.filter((c) => c.archived);
+    h += `<div class="row between"><button type="button" class="link-btn xs" data-a="wsLog">${W.log ? 'Сховати' : '🕘 Що нового в команді'}</button>${arch.length ? `<button type="button" class="link-btn xs" data-a="wsArch">${W.arch ? 'Сховати архів' : '🗄 Архів · ' + arch.length}</button>` : ''}</div>`;
+    if (W.log) h += `<div class="card list">${(d.log || []).length ? d.log.slice(0, 20).map((e) => `<${e.card ? 'button type="button" data-a="wsCardOpen" data-id="' + esc(e.card) + '"' : 'div'} class="li wlog">${wsAva(e.tgId, 'sm')}<span class="grow small"><b>${esc(String(e.name).split(/\s+/)[0])}</b> ${esc(e.text)}<br><span class="xs muted">${esc(fmtWhen(e.ts))}</span></span></${e.card ? 'button' : 'div'}>`).join('') : '<div class="empty">Ще нічого не відбувалося</div>'}</div>`;
+    if (W.arch) h += `<div class="col" style="gap:8px">${arch.map((c) => wsCardTile(c, true)).join('')}</div>`;
+    return h;
+  }
+  function wsDeadlineList(list) {
+    const today = ymd(new Date()), wk = ymd(new Date(Date.now() + 7 * 864e5));
+    const open = list.filter((c) => !c.done);
+    const g = [['⚠️ Прострочено', open.filter((c) => c.due && c.due < today)], ['🔥 Сьогодні й завтра', open.filter((c) => c.due && c.due >= today && daysFrom(c.due) <= 1)],
+      ['🗓 Цього тижня', open.filter((c) => c.due && daysFrom(c.due) > 1 && c.due <= wk)], ['Пізніше', open.filter((c) => c.due && c.due > wk)], ['Без дедлайну', open.filter((c) => !c.due)]];
+    const h = g.filter((x) => x[1].length).map((x) => `<div class="sec">${x[0]} · ${x[1].length}</div><div class="col" style="gap:8px">${x[1].sort((a, b) => (a.due || '9').localeCompare(b.due || '9')).map((c) => wsCardTile(c, true)).join('')}</div>`).join('');
+    return h || '<div class="empty">Відкритих задач немає 🎉</div>';
+  }
+  function wsCardView() {
+    const W = S.ws, d = W.data, c = wsCard(W.open);
+    if (!c) return header('Задача') + loading();
+    const board = d.boards.filter((b) => b.id === c.board)[0] || d.boards[0];
+    const col = wsCol(c.col);
+    const canDel = d.me.admin || c.authorId === d.me.id;
+    let h = header(c.done ? '✓ Виконано' : (col ? col.title : 'Задача'), board ? board.title : '');
+    if (W.cf) {
+      h += `<div class="card col"><label class="f"><span>Назва</span><input class="in" type="text" maxlength="300" data-bind="ws.cf.title" value="${esc(W.cf.title)}"></label>
+        <label class="f"><span>Опис</span><textarea class="in" rows="7" maxlength="8000" data-bind="ws.cf.desc" placeholder="Що саме треба, деталі, посилання…">${esc(W.cf.desc)}</textarea></label>
+        <div class="grid2"><button type="button" class="btn" data-a="wsCardEditSave">${icon('check', 18)} Зберегти</button><button type="button" class="btn ghost" data-a="wsBack">Скасувати</button></div></div>`;
+      return h;
+    }
+    h += `<div class="card col wsheet"><div class="row" style="align-items:flex-start"><h2 class="grow" style="font-size:20px">${esc(c.title)}</h2><button type="button" class="icon-btn" data-a="wsCardEdit" aria-label="Редагувати">✏️</button></div>
+      ${c.desc ? `<div class="small wdesc">${wsText(c.desc)}</div>` : '<button type="button" class="link-btn xs" style="align-self:flex-start" data-a="wsCardEdit">+ Додати опис</button>'}
+      <button type="button" class="btn${c.done ? ' sec2' : ' teal'}" data-a="wsDone">${c.done ? '↩︎ Повернути в роботу' : icon('check', 18) + ' Позначити виконаною'}</button>
+      <div class="f"><span>Колонка</span><div class="chips" data-noptr>${(board ? board.cols : []).map((k) => `<button type="button" class="chip${k.id === c.col ? ' on' : ''}" data-a="wsMove" data-id="${esc(k.id)}">${esc(k.title)}</button>`).join('')}</div></div></div>`;
+    h += `<div class="card col"><div class="f"><span>Хто виконує</span><div class="chips">${d.members.map((m) => `<button type="button" class="chip wwho${c.who.indexOf(m.id) >= 0 ? ' on' : ''}" data-a="wsWho" data-id="${esc(m.id)}">${wsAva(m.id, 'xs')}${esc(String(m.name).split(/\s+/)[0] || '—')}</button>`).join('')}</div></div>
+      <div class="grid2"><label class="f"><span>Дедлайн</span><input class="in" type="date" value="${esc(c.due)}" data-ch="wsDueSet"></label>
+      <div class="f"><span>&nbsp;</span>${c.due ? `<div class="row" style="min-height:48px;gap:6px">${wsDue(c.due, c.done)}<button type="button" class="link-btn xs" data-a="wsDueClear">прибрати</button></div>` : '<div class="xs muted" style="min-height:48px;display:flex;align-items:center">Нагадаю в боті за день, у день і якщо прострочено</div>'}</div></div>
+      <label class="f"><span>Напрямок стратегії</span><select class="in" data-ch="wsCircleSet"><option value="">—</option>${d.strategy.circles.map((k, i) => `<option value="${esc(k.id)}"${k.id === c.circle ? ' selected' : ''}>${i + 1}. ${esc(k.title)}</option>`).join('')}</select></label>
+      ${d.items.length ? `<label class="f"><span>Ціль чи проект</span><select class="in" data-ch="wsItemSet"><option value="">—</option>${d.items.map((it) => `<option value="${esc(it.id)}"${it.id === c.item ? ' selected' : ''}>${it.kind === 'goal' ? '🎯' : '📁'} ${esc(it.title)}</option>`).join('')}</select></label>` : ''}</div>`;
+    // чек-лист
+    const dc = c.check.filter((k) => k.d).length;
+    h += `<div class="card col" style="gap:6px"><div class="row between"><h2>☑️ Чек-лист</h2>${c.check.length ? `<span class="small b">${dc} / ${c.check.length}</span>` : ''}</div>
+      ${c.check.length ? `<span class="track" style="height:5px"><i style="width:${Math.round(dc / c.check.length * 100)}%;background:var(--turq)"></i></span>` : ''}
+      ${c.check.map((k, i) => `<div class="row wchk"><button type="button" class="wb-chk${k.d ? ' on' : ''} grow" data-a="wsChk" data-i="${i}"><span class="bx">${k.d ? '✓' : ''}</span><span class="grow">${esc(k.t)}</span></button><button type="button" class="wx" data-a="wsChkDel" data-i="${i}" aria-label="Прибрати">×</button></div>`).join('')}
+      <div class="wquick"><input class="in" type="text" maxlength="300" placeholder="+ Пункт" data-bind="ws.chk" value="${esc(W.chk)}" data-enter="wsChkAdd"><button type="button" class="icon-btn" data-a="wsChkAdd" aria-label="Додати пункт">${icon('plus', 18)}</button></div></div>`;
+    // посилання
+    h += `<div class="card col" style="gap:8px"><h2>🔗 Документи й посилання</h2>
+      ${c.links.map((l, i) => `<div class="row" style="gap:6px">${linkChip(l.u, l.t)}<button type="button" class="wx" data-a="wsLinkDel" data-i="${i}" aria-label="Прибрати посилання">×</button></div>`).join('')}
+      ${W.linkOpen ? `<input class="in" type="url" inputmode="url" placeholder="https://docs.google.com/…" data-bind="ws.link.u" value="${esc(W.link.u)}">
+        <input class="in" type="text" maxlength="200" placeholder="Назва (необовʼязково)" data-bind="ws.link.t" value="${esc(W.link.t)}">
+        <div class="grid2"><button type="button" class="btn sm" data-a="wsLinkAdd">Додати</button><button type="button" class="btn sm ghost" data-a="wsLinkToggle">Скасувати</button></div>
+        <div class="xs muted">Google Документ, Таблиця, Презентація, Форма чи папка на Диску — або будь-яке посилання. Хто бачить сам файл — налаштовується в Google.</div>`
+      : '<button type="button" class="btn sm sec2" data-a="wsLinkToggle">+ Прикріпити Google-документ чи посилання</button>'}</div>`;
+    // коментарі
+    const C = W.cc;
+    h += `<div class="card col" style="gap:8px"><h2>💬 Коментарі${c.comments ? ' · ' + c.comments : ''}</h2>
+      ${C == null ? '<div class="xs muted">Завантажую…</div>' : C.map((k) => `<div class="row wcm" style="align-items:flex-start">${wsAva(k.tgId, 'sm')}<div class="grow"><div class="small"><b>${esc(k.name)}</b> <span class="xs muted">${esc(fmtWhen(k.created))}</span></div><div class="small">${wsText(k.text)}</div></div>${k.tgId === d.me.id || d.me.admin ? `<button type="button" class="wx" data-a="wsCmtDel" data-id="${esc(k.id)}" aria-label="Видалити коментар">×</button>` : ''}</div>`).join('')}
+      <textarea class="in" rows="2" maxlength="3000" placeholder="Написати коментар… (виконавці отримають повідомлення)" data-bind="ws.cmt">${esc(W.cmt)}</textarea>
+      <button type="button" class="btn sm" data-a="wsCmt">${icon('send', 16)} Надіслати</button></div>`;
+    h += `<div class="xs muted center">Створив(ла) ${esc(c.author)} · ${esc(fmtWhen(c.created))}${c.updatedBy && c.updated !== c.created ? '<br>Змінено: ' + esc(c.updatedBy) + ' · ' + esc(fmtWhen(c.updated)) : ''}</div>
+      <div class="grid2"><button type="button" class="btn sm sec2" data-a="wsShift" data-v="-1">↑ Вище</button><button type="button" class="btn sm sec2" data-a="wsShift" data-v="1">↓ Нижче</button></div>
+      <div class="grid2"><button type="button" class="btn sm ghost" data-a="wsArchive">${c.archived ? '↩︎ З архіву' : '🗄 В архів'}</button>${canDel ? '<button type="button" class="btn sm ghost danger-t" data-a="wsCardDel">Видалити</button>' : '<span></span>'}</div>`;
+    return h;
+  }
+  async function wsSave(patch, okMsg) {
+    const c = wsCard(S.ws.open); if (!c) return null;
+    const r = await run(() => api('wsCardSave', Object.assign({ ws: S.ws.id, id: c.id }, patch)), okMsg);
+    if (r) { wsPut(r); haptic('light'); }
+    render();
+    return r;
+  }
+  function wsColEditView() {
+    const E = S.ws.colEdit, d = WD_();
+    const col = E.id && wsCol(E.id);
+    let h = header(col ? 'Колонка' : 'Нова колонка');
+    h += `<div class="card col"><label class="f"><span>Назва</span><input class="in" type="text" maxlength="60" data-bind="ws.colEdit.title" value="${esc(E.title)}" placeholder="Наприклад: На погодженні"></label>
+      ${col ? `<label class="toggle-row"><span><span class="b" style="display:block">Колонка «Готово»</span><span class="xs muted">задачі тут вважаються виконаними</span></span><input type="checkbox" data-bind="ws.colEdit.done"${E.done ? ' checked' : ''}></label>` : ''}
+      <button type="button" class="btn" data-a="wsColSave">${icon('check', 18)} Зберегти</button>
+      ${col ? `<div class="grid2"><button type="button" class="btn sm sec2" data-a="wsColShift" data-v="-1">← Лівіше</button><button type="button" class="btn sm sec2" data-a="wsColShift" data-v="1">Правіше →</button></div>
+      <button type="button" class="btn sm ghost danger-t" data-a="wsColDel">Видалити колонку</button>` : ''}</div>`;
+    return h;
+  }
+  function wsBoardEditView() {
+    const E = S.ws.boardEdit, d = WD_();
+    let h = header(E.id ? 'Дошка' : 'Нова дошка', E.id ? '' : 'Наприклад: Табори, Фандрейзинг, Навчання');
+    h += `<div class="card col"><label class="f"><span>Назва дошки</span><input class="in" type="text" maxlength="80" data-bind="ws.boardEdit.title" value="${esc(E.title)}"></label>
+      <button type="button" class="btn" data-a="wsBoardSave">${icon('check', 18)} Зберегти</button>
+      ${E.id && d.me.admin && d.boards.length > 1 ? '<button type="button" class="btn sm ghost danger-t" data-a="wsBoardDel">Видалити дошку</button>' : ''}</div>`;
+    return h;
+  }
+
+  // ───── сторінки ─────
+  function wsPagesTab() {
+    const W = S.ws, d = W.data;
+    const q = (W.pq || '').trim().toLowerCase();
+    const kids = (id) => d.pages.filter((p) => p.parent === id);
+    const row = (p) => { const n = kids(p.id).length; return `<button type="button" class="li" data-a="wsPageOpen" data-id="${esc(p.id)}"><span class="wpi">${esc(p.icon || '📄')}</span>
+      <span class="grow"><span class="b" style="display:block">${esc(p.title)}</span><span class="xs muted">${esc(fmtWhen(p.updated))}${p.updatedBy ? ' · ' + esc(String(p.updatedBy).split(/\s+/)[0]) : ''}${n ? ' · ' + plural(n, 'підсторінка', 'підсторінки', 'підсторінок') : ''}</span></span><span class="muted">${icon('chev', 18)}</span></button>`; };
+    let h = '<button type="button" class="btn sec2" data-a="wsPageNew">+ Нова сторінка</button>';
+    if (d.pages.length > 6) h += `<input class="in" type="search" placeholder="Знайти сторінку" value="${esc(W.pq)}" data-bind="ws.pq" data-live="wsPq">`;
+    const list = q ? d.pages.filter((p) => p.title.toLowerCase().indexOf(q) >= 0) : kids('');
+    if (!d.pages.length) return h + '<div class="empty">Тут будуть нотатки зустрічей, плани, інструкції й посилання на документи.<br>Сторінки можна вкладати одна в одну, як у Notion.</div>';
+    h += list.length ? `<div class="card list">${list.map(row).join('')}</div>` : '<div class="empty">Нічого не знайдено</div>';
+    if (!q) {
+      const recent = d.pages.slice().sort((a, b) => (a.updated < b.updated ? 1 : -1)).filter((p) => p.parent).slice(0, 5);
+      if (recent.length) h += `<div class="sec">Нещодавно змінені</div><div class="card list">${recent.map(row).join('')}</div>`;
+    }
+    h += '<div class="xs muted center">Підказка: у тексті <b># Заголовок</b>, <b>- пункт</b>, <b>- [ ] чекбокс</b>, посилання на Google-документи стають кнопками</div>';
+    return h;
+  }
+  function wsPageView() {
+    const W = S.ws, P = W.pd;
+    if (!P || !P.page || P.page.id !== W.page) return header('Сторінка') + loading();
+    const p = P.page, d = W.data;
+    let h = '';
+    if (P.path.length > 1) h += `<div class="wcrumbs">${P.path.slice(0, -1).map((x) => `<button type="button" class="linkish xs" data-a="wsPageOpen" data-id="${esc(x.id)}">${esc(x.icon || '📄')} ${esc(x.title)}</button>`).join('<span class="muted xs"> / </span>')}</div>`;
+    h += header((p.icon ? p.icon + ' ' : '') + p.title, 'Змінено ' + fmtWhen(p.updated) + (p.updatedBy ? ' · ' + p.updatedBy : ''), `<button type="button" class="icon-btn" data-a="wsPageEdit" aria-label="Редагувати">✏️</button>`);
+    h += p.body ? `<div class="card wbody">${wsMd(p.body)}</div>` : '<button type="button" class="card empty" style="width:100%" data-a="wsPageEdit">Порожня сторінка — натисни, щоб писати</button>';
+    h += `<div class="sec">Підсторінки</div>${P.children.length ? `<div class="card list">${P.children.map((x) => `<button type="button" class="li" data-a="wsPageOpen" data-id="${esc(x.id)}"><span class="wpi">${esc(x.icon || '📄')}</span><span class="grow b">${esc(x.title)}</span><span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>` : ''}
+      <button type="button" class="btn sm sec2" data-a="wsPageNew" data-parent="${esc(p.id)}">+ Підсторінка</button>`;
+    if (d.me.admin || p.authorId === d.me.id) h += '<button type="button" class="btn sm ghost danger-t" data-a="wsPageDel">Видалити сторінку</button>';
+    return h;
+  }
+  function wsPageEditView() {
+    const W = S.ws, E = W.pe, d = W.data;
+    const bad = E.id ? [E.id].concat((function walk(id) { return d.pages.filter((x) => x.parent === id).reduce((a, x) => a.concat([x.id], walk(x.id)), []); })(E.id)) : [];
+    let h = header(E.id ? 'Редагування' : 'Нова сторінка', E.conflict ? '' : 'Зміни бачитиме вся команда простору');
+    if (E.conflict) h += `<div class="note small">${esc(E.conflict)}</div>`;
+    h += `<div class="card col"><div class="wicons" data-noptr>${WS_ICONS.map((ic) => `<button type="button" class="${E.icon === ic ? 'on' : ''}" data-a="wsPageIcon" data-v="${ic}">${ic}</button>`).join('')}</div>
+      <input class="in wtitle" type="text" maxlength="200" placeholder="Назва сторінки" data-bind="ws.pe.title" value="${esc(E.title)}">
+      <div class="wtool" data-noptr>${[['h', 'Заголовок'], ['li', '• Список'], ['chk', '☐ Чекбокс'], ['q', '› Примітка'], ['hr', '— Лінія'], ['link', '🔗 Посилання']].map((x) => `<button type="button" data-a="wsIns" data-v="${x[0]}">${x[1]}</button>`).join('')}</div>
+      <textarea id="wsBody" class="in wed" rows="16" maxlength="60000" data-bind="ws.pe.body" placeholder="Пиши тут. Можна вставляти посилання на Google-документи.">${esc(E.body)}</textarea>
+      <label class="f"><span>Вкладена в</span><select class="in" data-bind="ws.pe.parent"><option value="">— верхній рівень —</option>${d.pages.filter((x) => bad.indexOf(x.id) < 0).map((x) => `<option value="${esc(x.id)}"${x.id === E.parent ? ' selected' : ''}>${esc((x.icon || '📄') + ' ' + x.title)}</option>`).join('')}</select></label>
+      <div class="grid2"><button type="button" class="btn" data-a="wsPageSave">${icon('check', 18)} Зберегти</button><button type="button" class="btn ghost" data-a="wsBack">Скасувати</button></div></div>`;
+    return h;
+  }
+
+  // ───── стратегія ─────
+  function wsTargets() {
+    const d = WD_(), cur = d.current || {};
+    return `<div class="wtargets">${d.strategy.targets.map((t) => {
+      const v = cur[t.k], pct = v != null && t.n ? Math.min(100, Math.round(v / t.n * 100)) : 0;
+      return `<div class="wtarget"><div class="wt-v"><b>${v == null ? '—' : nf(v)}</b><span> / ${nf(t.n)}</span></div><div class="xs muted">${esc(t.l)}</div><span class="track" style="height:6px"><i style="width:${pct}%;background:var(--accent)"></i></span><div class="xs b">${v == null ? '' : pct + '%'}</div></div>`;
+    }).join('')}</div>`;
+  }
+  function wsStratTab() {
+    const W = S.ws, d = W.data, st = d.strategy;
+    const vis = String(st.vision || ''), num = (vis.match(/\d{3,}/) || [''])[0];
+    let h = `<div class="card whero"><div class="xs muted">${esc(st.title)}</div><div class="wh-v">${num ? esc(vis.replace(num, '').trim()) + ' <b>' + esc(num) + '</b>' : esc(vis)}</div>${wsTargets()}
+      <div class="xs muted">Лідери й команди — з командних табличок${d.current.at ? ' (' + esc(/^\d{4}-\d{2}-\d{2}$/.test(d.current.at) ? fmtShortDay(d.current.at) : d.current.at) + ')' : ''}, стафи — учасники цього простору</div>
+      <div class="row" style="gap:8px">${st.docUrl ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(st.docUrl)}">📄 Повна стратегія</button>` : ''}${d.me.admin ? '<button type="button" class="btn sm ghost" data-a="wsStratEdit">✏️ Змінити</button>' : ''}</div></div>`;
+    h += `<div class="sec">9 напрямків</div><div class="wcircles">${st.circles.map((c, i) => {
+      const its = d.items.filter((x) => x.circle === c.id), open = d.cards.filter((x) => x.circle === c.id && !x.done && !x.archived).length;
+      return `<button type="button" class="wcircle" style="--cc:${WS_CC[i % WS_CC.length]}" data-a="wsCircle" data-id="${esc(c.id)}"><span class="wc-n">${i + 1}</span><span class="grow"><span class="wc-t">${esc(c.title)}</span>
+        <span class="xs muted">${[its.length ? plural(its.length, 'ціль/проект', 'цілі/проекти', 'цілей/проектів') : '', open ? plural(open, 'задача', 'задачі', 'задач') : ''].filter(Boolean).join(' · ') || 'ще порожньо'}</span></span>${icon('chev', 16)}</button>`;
+    }).join('')}</div>`;
+    const doing = d.items.filter((x) => x.status === 'doing');
+    if (doing.length) h += `<div class="sec">Зараз у роботі</div><div class="card list">${doing.map(wsItemRow).join('')}</div>`;
+    return h;
+  }
+  function wsItemRow(it) {
+    const d = WD_(), open = d.cards.filter((x) => x.item === it.id && !x.archived), done = open.filter((x) => x.done).length;
+    return `<button type="button" class="li" data-a="wsItemOpen" data-id="${esc(it.id)}"><span class="wpi">${it.kind === 'goal' ? '🎯' : '📁'}</span><span class="grow"><span class="b" style="display:block">${esc(it.title)}</span>
+      <span class="row wrap" style="gap:6px;margin-top:3px"><span class="tag st-${it.status}">${esc(d.itemSt[it.status])}</span>${it.owner ? `<span class="xs muted">${esc(wsFirst(it.owner))}</span>` : ''}${it.due ? wsDue(it.due, it.status === 'done') : ''}${open.length ? `<span class="xs muted">задачі ${done}/${open.length}</span>` : ''}</span></span><span class="muted">${icon('chev', 18)}</span></button>`;
+  }
+  function wsCircleView() {
+    const W = S.ws, d = W.data, c = wsCircle(W.circle);
+    if (!c) { W.circle = null; return wsStratTab(); }
+    const i = wsCircleN(c.id);
+    let h = header(i + '. ' + c.title, 'Напрямок стратегії');
+    const its = d.items.filter((x) => x.circle === c.id);
+    ['goal', 'project'].forEach((k) => {
+      const L = its.filter((x) => x.kind === k).sort((a, b) => WS_ITEM_ORDER.indexOf(a.status) - WS_ITEM_ORDER.indexOf(b.status));
+      h += `<div class="row between" style="margin-top:4px"><div class="sec" style="margin:0 4px">${k === 'goal' ? '🎯 Цілі' : '📁 Проекти'}</div><button type="button" class="link-btn xs" data-a="wsItemNew" data-k="${k}">+ ${k === 'goal' ? 'Ціль' : 'Проект'}</button></div>`;
+      h += L.length ? `<div class="card list">${L.map(wsItemRow).join('')}</div>` : `<div class="xs muted" style="padding:0 6px">${k === 'goal' ? 'Що хочемо досягти в цьому напрямку' : 'Конкретні проекти, що ведуть до цілей'}</div>`;
+    });
+    const cards = d.cards.filter((x) => x.circle === c.id && !x.archived);
+    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => !x.done).length} відкритих</div>` + wsQuickAdd({ circle: c.id });
+    h += `<div class="col" style="gap:8px">${cards.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || (a.due || '9').localeCompare(b.due || '9')).map((x) => wsCardTile(x, true)).join('')}</div>`;
+    return h;
+  }
+  const wsQuickAdd = (o) => `<div class="wquick"><input class="in" type="text" maxlength="300" placeholder="+ Нова задача сюди" data-bind="ws.cq" value="${esc(S.ws.cq)}" data-enter="wsCq"${o.item ? ` data-item="${esc(o.item)}"` : ''}${o.circle ? ` data-circle="${esc(o.circle)}"` : ''}><button type="button" class="icon-btn" data-a="wsCq"${o.item ? ` data-item="${esc(o.item)}"` : ''}${o.circle ? ` data-circle="${esc(o.circle)}"` : ''} aria-label="Додати задачу">${icon('plus', 18)}</button></div>`;
+  function wsItemView() {
+    const W = S.ws, d = W.data, it = wsItem(W.item);
+    if (!it) { W.item = null; return wsCircleView(); }
+    const c = wsCircle(it.circle);
+    let h = header((it.kind === 'goal' ? '🎯 ' : '📁 ') + it.title, c ? wsCircleN(c.id) + '. ' + c.title : '', `<button type="button" class="icon-btn" data-a="wsItemEdit" aria-label="Редагувати">✏️</button>`);
+    h += `<div class="chips">${WS_ITEM_ORDER.map((k) => `<button type="button" class="chip${it.status === k ? ' on' : ''}" data-a="wsItemSt" data-v="${k}">${esc(d.itemSt[k])}</button>`).join('')}</div>`;
+    h += `<div class="card rows">${it.owner ? `<div class="kv"><span>Відповідальна людина</span><span>${esc((wsMember(it.owner) || {}).name || '')}</span></div>` : ''}${it.due ? `<div class="kv"><span>Термін</span><span>${wsDue(it.due, it.status === 'done')}</span></div>` : ''}
+      <div class="kv"><span>Змінено</span><span>${esc(fmtWhen(it.updated))}</span></div></div>`;
+    if (it.desc) h += `<div class="card small wdesc">${wsText(it.desc)}</div>`;
+    if (it.url) h += linkChip(it.url, '');
+    const cards = d.cards.filter((x) => x.item === it.id && !x.archived);
+    h += `<div class="sec">✅ Задачі · ${cards.filter((x) => x.done).length} з ${cards.length} виконано</div>` + wsQuickAdd({ item: it.id, circle: it.circle });
+    h += `<div class="col" style="gap:8px">${cards.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0)).map((x) => wsCardTile(x, true)).join('')}</div>`;
+    return h;
+  }
+  function wsItemFormView() {
+    const W = S.ws, f = W.itf, d = W.data;
+    let h = header(f.id ? 'Редагування' : (f.kind === 'goal' ? 'Нова ціль' : 'Новий проект'));
+    h += `<div class="card col"><div class="seg"><button type="button" class="${f.kind === 'goal' ? 'on' : ''}" data-a="wsItfKind" data-v="goal">🎯 Ціль</button><button type="button" class="${f.kind !== 'goal' ? 'on' : ''}" data-a="wsItfKind" data-v="project">📁 Проект</button></div>
+      <label class="f"><span>Назва</span><input class="in" type="text" maxlength="200" data-bind="ws.itf.title" value="${esc(f.title)}"></label>
+      <label class="f"><span>Напрямок</span><select class="in" data-bind="ws.itf.circle">${d.strategy.circles.map((c, i) => `<option value="${esc(c.id)}"${c.id === f.circle ? ' selected' : ''}>${i + 1}. ${esc(c.title)}</option>`).join('')}</select></label>
+      <label class="f"><span>Опис</span><textarea class="in" rows="4" maxlength="4000" data-bind="ws.itf.desc" placeholder="Що саме, як зрозуміємо, що вийшло">${esc(f.desc)}</textarea></label>
+      <div class="grid2"><label class="f"><span>Відповідальна людина</span><select class="in" data-bind="ws.itf.owner"><option value="">—</option>${d.members.map((m) => `<option value="${esc(m.id)}"${m.id === f.owner ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
+      <label class="f"><span>Термін</span><input class="in" type="date" data-bind="ws.itf.due" value="${esc(f.due)}"></label></div>
+      <label class="f"><span>Документ (необовʼязково)</span><input class="in" type="url" inputmode="url" placeholder="https://docs.google.com/…" data-bind="ws.itf.url" value="${esc(f.url)}"></label>
+      <div class="grid2"><button type="button" class="btn" data-a="wsItemSave">${icon('check', 18)} Зберегти</button><button type="button" class="btn ghost" data-a="wsBack">Скасувати</button></div>
+      ${f.id ? '<button type="button" class="btn sm ghost danger-t" data-a="wsItemDel">Видалити</button>' : ''}</div>`;
+    return h;
+  }
+  function wsStratFormView() {
+    const f = S.ws.sf;
+    let h = header('Стратегія', 'Бачить уся команда простору');
+    h += `<div class="card col"><label class="f"><span>Назва</span><input class="in" type="text" maxlength="120" data-bind="ws.sf.title" value="${esc(f.title)}"></label>
+      <label class="f"><span>Візія (з числом цілі)</span><input class="in" type="text" maxlength="200" data-bind="ws.sf.vision" value="${esc(f.vision)}"></label>
+      <label class="f"><span>Посилання на документ стратегії</span><input class="in" type="url" data-bind="ws.sf.docUrl" value="${esc(f.docUrl)}"></label>
+      <div class="f"><span>Цілі</span>${f.targets.map((t, i) => `<div class="row" style="gap:8px"><input class="in" style="flex:0 0 110px" type="number" min="0" inputmode="numeric" data-bind="ws.sf.targets.${i}.n" value="${esc(t.n)}"><input class="in grow" type="text" maxlength="40" data-bind="ws.sf.targets.${i}.l" value="${esc(t.l)}"></div>`).join('')}</div>
+      <div class="f"><span>Напрямки</span>${f.circles.map((c, i) => `<div class="row" style="gap:8px"><span class="wc-n" style="--cc:${WS_CC[i % WS_CC.length]}">${i + 1}</span><input class="in grow" type="text" maxlength="120" data-bind="ws.sf.circles.${i}.title" value="${esc(c.title)}"></div>`).join('')}</div>
+      <div class="grid2"><button type="button" class="btn" data-a="wsStratSave">${icon('check', 18)} Зберегти</button><button type="button" class="btn ghost" data-a="wsBack">Скасувати</button></div></div>`;
+    return h;
+  }
+
+  // ───── команда: люди, профілі сильних сторін, ерії, one-to-one ─────
+  function wsTeamTab() {
+    const W = S.ws;
+    let h = `<div class="seg">${[['people', 'Люди'], ['areas', 'Ерії й команди'], ['oto', 'One-to-one']].map((x) => `<button type="button" class="${W.tteam === x[0] ? 'on' : ''}" data-a="wsTTeam" data-v="${x[0]}">${x[1]}</button>`).join('')}</div>`;
+    if (W.tteam === 'people') h += wsPeopleTab();
+    if (W.tteam === 'areas') h += wsAreasTab();
+    if (W.tteam === 'oto') h += wsOtoTab();
+    return h;
+  }
+  const wsProfP = (k) => { const P = S.ws.prof && S.ws.prof.profiles; return P && k ? P.people.filter((p) => p.id === k)[0] : null; };
+  const wsTheme = (id) => { const P = S.ws.prof && S.ws.prof.profiles; return P ? P.themes.filter((t) => t.id === id)[0] : null; };
+  const themeChip = (id, rank, plain) => { const t = wsTheme(id); if (!t) return ''; const dm = WS_DOM[t.dom] || ['', '#777']; const tag = plain ? 'span' : 'button'; return `<${tag}${plain ? '' : ' type="button" data-a="wsTheme" data-id="' + esc(id) + '"'} class="wth" style="--dc:${dm[1]}">${rank ? `<i>${rank}</i>` : ''}${esc(t.ua)}</${tag}>`; };
+  function wsPeopleTab() {
+    const W = S.ws, d = W.data;
+    if (!S.ws.prof) { wsLoadProf(); }
+    const today = ymd(new Date());
+    let h = `<div class="col" style="gap:8px">${d.members.map((m) => {
+      const p = wsProfP(m.pkey), a = wsAreaOf(m.area);
+      const mine = d.cards.filter((c) => !c.done && !c.archived && c.who.indexOf(m.id) >= 0), late = mine.filter((c) => c.due && c.due < today).length;
+      return `<button type="button" class="card wperson" data-a="wsPerson" data-id="${esc(m.id)}">${wsAva(m.id, 'lg')}<span class="grow"><span class="b" style="display:block">${esc(m.name || '—')}</span>
+        <span class="xs muted">${a ? esc(a.name) : ''}${m.role === 'admin' ? (a ? ' · ' : '') + 'керує простором' : ''}</span>
+        ${p ? `<span class="wths">${(p.top10 || []).slice(0, 5).map((id) => themeChip(id, 0, true)).join('')}</span>` : ''}
+        <span class="xs">${mine.length ? '✅ ' + plural(mine.length, 'задача', 'задачі', 'задач') + (late ? ' · <b style="color:#b3261e">' + late + ' прострочено</b>' : '') : '<span class="muted">відкритих задач немає</span>'}</span></span></button>`;
+    }).join('')}</div>`;
+    if (S.ws.prof && S.ws.prof.profiles) h += '<button type="button" class="btn sm sec2" data-a="wsMatrix">🧩 Сильні сторони всієї команди</button>';
+    else if (S.ws.prof) h += `<div class="xs muted center">Профілі сильних сторін ще не завантажені${d.me.admin ? ' — додай файл даних у налаштуваннях простору (кнопка вгорі)' : ''}</div>`;
+    return h;
+  }
+  function wsPersonView() {
+    const W = S.ws, d = W.data, m = wsMember(W.person);
+    if (!m) { W.person = null; return VIEWS.ws(); }
+    const p = wsProfP(m.pkey), a = wsAreaOf(m.area);
+    let h = header(m.name || 'Учасник', a ? a.name : '');
+    h += `<div class="card row" style="gap:14px">${wsAva(m.id, 'xl')}<div class="grow col" style="gap:6px">${m.username ? `<button type="button" class="linkish small" data-a="wsOpen" data-u="https://t.me/${esc(m.username)}">✈️ @${esc(m.username)}</button>` : ''}
+      ${a ? `<button type="button" class="linkish small" data-a="wsAreaGo" data-k="${esc(a.key)}">📊 Аналітика ерії ${esc(a.name)}</button>` : ''}</div></div>`;
+    const cards = d.cards.filter((c) => !c.archived && c.who.indexOf(m.id) >= 0);
+    const open = cards.filter((c) => !c.done);
+    h += `<div class="sec">✅ Задачі · ${open.length} відкритих</div>${open.length ? `<div class="col" style="gap:8px">${open.sort((x, y) => (x.due || '9').localeCompare(y.due || '9')).map((c) => wsCardTile(c, true)).join('')}</div>` : '<div class="xs muted" style="padding:0 6px">Немає відкритих задач</div>'}`;
+    if (p) {
+      const cnt = p.counts || {}, tot = Object.keys(WS_DOM).reduce((s, k) => s + (cnt[k] || 0), 0) || 1;
+      h += `<div class="sec">Сильні сторони (CliftonStrengths)</div><div class="card col" style="gap:10px">
+        <div class="wdoms">${Object.keys(WS_DOM).map((k) => `<i style="flex:${cnt[k] || 0};background:${WS_DOM[k][1]}"></i>`).join('')}</div>
+        <div class="row wrap" style="gap:10px">${Object.keys(WS_DOM).map((k) => `<span class="xs"><b style="color:${WS_DOM[k][1]}">●</b> ${WS_DOM[k][0]} · ${cnt[k] || 0}</span>`).join('')}</div>
+        <div class="wths">${(p.top10 || []).map((id, i) => themeChip(id, i + 1)).join('')}</div></div>`;
+      (p.top5 || []).forEach((x, i) => {
+        const t = wsTheme(x.theme);
+        h += `<details class="card det"><summary><span class="wc-n" style="--cc:${(WS_DOM[(t || {}).dom] || ['', '#777'])[1]}">${i + 1}</span>&nbsp; ${esc((t || {}).ua || x.theme)}</summary><div class="small col" style="padding:0 16px 14px;gap:8px">${(x.ua || []).map((s) => `<div>${esc(s)}</div>`).join('')}</div></details>`;
+      });
+    } else if (S.ws.prof) h += '<div class="xs muted center">Профілю сильних сторін для цієї людини ще немає</div>';
+    else h += loading();
+    return h;
+  }
+  function wsMatrixView() {
+    const P = S.ws.prof && S.ws.prof.profiles, d = WD_();
+    if (!P) return header('Сильні сторони команди') + loading();
+    const ppl = P.people;
+    const rows = P.themes.map((t) => ({ t: t, n: ppl.filter((p) => (t.ranks || {})[p.id] && t.ranks[p.id] <= 10).length, avg: t.avg || 99 }))
+      .sort((a, b) => b.n - a.n || a.avg - b.avg);
+    let h = header('Сильні сторони команди', 'місце теми в топ-10 кожного');
+    h += `<div class="row wrap" style="gap:10px">${Object.keys(WS_DOM).map((k) => `<span class="xs"><b style="color:${WS_DOM[k][1]}">●</b> ${WS_DOM[k][0]}</span>`).join('')}</div>`;
+    h += `<div class="card rtab-w" style="padding:0"><table class="rtab wmx"><thead><tr><th>Тема</th>${ppl.map((p) => `<th>${esc(p.ua)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr><td><button type="button" class="linkish small" data-a="wsTheme" data-id="${esc(r.t.id)}"><b style="color:${(WS_DOM[r.t.dom] || ['', '#777'])[1]}">●</b> ${esc(r.t.ua)}</button></td>${ppl.map((p) => { const k = (r.t.ranks || {})[p.id]; return `<td class="${k && k <= 5 ? 'top5' : k && k <= 10 ? 'top10' : ''}">${k && k <= 10 ? k : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return h;
+  }
+  function wsThemeView() {
+    const t = wsTheme(S.ws.theme), P = S.ws.prof && S.ws.prof.profiles;
+    if (!t) { S.ws.theme = null; return VIEWS.ws(); }
+    const dm = WS_DOM[t.dom] || ['', '#777'], tx = (t.txt && t.txt.ua) || {};
+    let h = header(t.ua, (t.en ? t.en + ' · ' : '') + dm[0]);
+    const who = P.people.filter((p) => (t.ranks || {})[p.id] && t.ranks[p.id] <= 10).sort((a, b) => t.ranks[a.id] - t.ranks[b.id]);
+    if (who.length) h += `<div class="chips">${who.map((p) => `<span class="chip" style="display:inline-flex;align-items:center">${esc(p.ua)} · <b>&nbsp;#${t.ranks[p.id]}</b></span>`).join('')}</div>`;
+    if (tx.short) h += `<div class="card small" style="border-left:4px solid ${dm[1]}">${esc(tx.short)}</div>`;
+    [['act', 'Як використовувати'], ['blind', 'На що зважати'], ['why', 'Чому це важливо']].forEach((x) => { if (tx[x[0]]) h += `<details class="card det"><summary>${x[1]}</summary><div class="small" style="padding:0 16px 14px;white-space:pre-line">${esc(tx[x[0]])}</div></details>`; });
+    return h;
+  }
+  const kpi = (v, l) => `<div class="card kpi"><div class="v">${v == null ? '—' : v}</div><div class="l">${l}</div></div>`;
+  function wsTot(list) {
+    const t = { teams: list.length, members: 0, known: 0, clubs: 0, teens: 0, active: 0 };
+    list.forEach((x) => { t.members += x.members || 0; t.known += x.known || 0; const c = x.clubs || {}; t.clubs += c.n || 0; t.teens += c.totalTeens || 0; if (c.n) t.active++; });
+    t.avg = t.clubs ? df(t.teens / t.clubs) : null;
+    return t;
+  }
+  function wsAnGate() {
+    if (!S.ws.an) { wsLoadAn(); return loading(); }
+    if (!S.ws.an.analytics) return `<div class="empty">Аналітику командних табличок ще не завантажено${WD_().me.admin ? '.<br>Додай файл даних у налаштуваннях простору.' : '.'}</div>`;
+    return '';
+  }
+  function wsAreasTab() {
+    const g = wsAnGate(); if (g) return g;
+    const A = S.ws.an.analytics, d = WD_(), T = wsTot(A.teams);
+    let h = `<div class="xs muted">Дані з командних табличок${A.updated ? ' · ' + esc(/^\d{4}-\d{2}-\d{2}$/.test(A.updated) ? fmtShortDay(A.updated) : A.updated) : ''}${A.window ? ' · клуби за ' + esc(fmtShortDay(A.window.from)) + ' – ' + esc(fmtShortDay(A.window.to)) : ''}</div>`;
+    h += `<div class="kpis">${kpi(T.teams, 'команд · ' + T.active + ' з клубами')}${kpi(nf(T.members), 'людей у командах')}${kpi(nf(T.known), 'знаних по імені')}${kpi(T.clubs, 'клубів · ' + (T.avg || '—') + ' підлітків у середньому')}</div>`;
+    const areas = (d.areas.length ? d.areas.slice().sort((a, b) => a.order - b.order) : []).filter((a) => A.teams.some((t) => t.area === a.key));
+    h += `<div class="col" style="gap:8px">${areas.map((a) => {
+      const L = A.teams.filter((t) => t.area === a.key), t = wsTot(L);
+      return `<button type="button" class="card warea" style="--cc:${a.color || '#6f655a'}" data-a="wsArea" data-k="${esc(a.key)}"><span class="grow"><span class="b" style="display:block">${esc(a.name)}</span><span class="xs muted">${esc(a.director)}${a.acting ? ' (в.о.)' : ''}</span>
+        <span class="wnums"><span><b>${t.teams}</b> команд</span><span><b>${t.members}</b> людей</span><span><b>${t.known}</b> знаних</span><span><b>${t.clubs}</b> клубів</span><span><b>${t.avg || '—'}</b> сер.</span></span></span>${icon('chev', 18)}</button>`;
+    }).join('')}</div>`;
+    return h;
+  }
+  function wsAreaView() {
+    const g = wsAnGate(); const a = wsAreaOf(S.ws.area) || { key: S.ws.area, name: S.ws.area };
+    if (g) return header(a.name) + g;
+    const L = S.ws.an.analytics.teams.filter((t) => t.area === a.key).sort((x, y) => (y.members || 0) - (x.members || 0)), T = wsTot(L);
+    let h = header(a.name, (a.director || '') + (a.acting ? ' (в.о.)' : ''));
+    h += `<div class="kpis">${kpi(T.teams, 'команд')}${kpi(T.members, 'людей')}${kpi(T.known, 'знаних')}${kpi(T.clubs, 'клубів · ' + (T.avg || '—') + ' сер.')}</div>`;
+    h += `<div class="row" style="gap:8px">${a.teamFolder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.teamFolder)}">📁 Таблички команд</button>` : ''}${a.otoFolder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.otoFolder)}">📁 One-to-one</button>` : ''}</div>`;
+    h += `<div class="card list">${L.map((t) => `<button type="button" class="li" data-a="wsTeamOpen" data-id="${esc(t.id)}"><span class="grow"><span class="b" style="display:block">${esc(t.name)}</span>
+      <span class="xs muted">${t.members || 0} у команді · ${t.known || 0} знаних · клубів ${(t.clubs || {}).n || 0}${(t.clubs || {}).avgTeens != null ? ' · ' + df(t.clubs.avgTeens) + ' підлітків' : ''}</span></span>${icon('chev', 18)}</button>`).join('')}</div>`;
+    return h;
+  }
+  function wsTeamView() {
+    const A = S.ws.an && S.ws.an.analytics, t = A && A.teams.filter((x) => x.id === S.ws.team)[0];
+    if (!t) { S.ws.team = null; return VIEWS.ws(); }
+    const c = t.clubs || {}, ly = t.clubsLY || {};
+    let h = header(t.name, (wsAreaOf(t.area) || {}).name || '');
+    h += `<div class="kpis">${kpi(t.members || 0, 'у команді')}${kpi(t.known || 0, 'знаних по імені' + (t.knownBy ? ' · ведуть ' + t.knownBy : ''))}${kpi(c.n || 0, 'клубів за 3 міс.')}${kpi(c.avgTeens != null ? df(c.avgTeens) : '—', 'підлітків у середньому' + (ly.avgTeens != null ? ' · рік тому ' + df(ly.avgTeens) : ''))}</div>`;
+    const R = t.roles || {};
+    h += `<div class="card rows">${Object.keys(R).filter((k) => R[k]).map((k) => `<div class="kv"><span>${esc(k)}</span><span>${R[k]}</span></div>`).join('')}
+      ${c.maxTeens != null ? `<div class="kv"><span>Найбільше на клубі</span><span>${c.maxTeens}</span></div>` : ''}${c.avgServ != null ? `<div class="kv"><span>Служать на клубі (сер.)</span><span>${df(c.avgServ)}</span></div>` : ''}
+      ${c.last ? `<div class="kv"><span>Останній клуб</span><span>${esc(fmtShortDay(c.last))}</span></div>` : ''}${t.sg && t.sg.n ? `<div class="kv"><span>Малі групи</span><span>${t.sg.n} · сер. ${df(t.sg.avg)}</span></div>` : ''}
+      ${t.kr && t.kr.hours ? `<div class="kv"><span>Контактна робота</span><span>${df(t.kr.hours)} год</span></div>` : ''}</div>`;
+    const M = (t.monthly || []).slice(-12);
+    if (M.length) {
+      const mx = Math.max.apply(null, M.map((x) => x.teens || 0).concat([1]));
+      h += `<div class="card col"><h2>Підлітків на клубі · по місяцях</h2><div class="chart">${M.map((x, i) => `<div class="bar${i === M.length - 1 ? ' last' : ''}"><span>${x.teens != null ? df(x.teens) : ''}</span><i style="height:${Math.round((x.teens || 0) / mx * 120)}px"></i></div>`).join('')}</div>
+        <div class="chart-labels">${M.map((x) => `<span>${MSHORT[Number(x.m.slice(5, 7)) - 1]}</span>`).join('')}</div></div>`;
+    }
+    h += `<button type="button" class="btn sm sec2" data-a="wsOpen" data-u="https://docs.google.com/spreadsheets/d/${esc(t.id)}/edit">📊 Відкрити табличку команди</button>`;
+    return h;
+  }
+  function wsOtoTab() {
+    const g = wsAnGate(); if (g && !(S.ws.an && S.ws.an.oto)) return g;
+    const O = S.ws.an.oto;
+    if (!O || !O.files || !O.files.length) return '<div class="empty">Даних one-to-one ще немає</div>';
+    const d = WD_();
+    let h = '';
+    const areas = d.areas.slice().sort((a, b) => a.order - b.order).filter((a) => O.files.some((f) => f.area === a.key));
+    areas.forEach((a) => {
+      const files = O.files.filter((f) => f.area === a.key && f.ok !== false);
+      const ppl = [].concat.apply([], files.map((f) => (f.people || []).map((p, i) => Object.assign({ fid: f.id, i: i, group: f.group }, p))));
+      const held = ppl.reduce((s, p) => s + (p.meetings || []).filter((m) => m.held).length, 0);
+      h += `<div class="sec">${esc(a.name)} · зустрічей ${held} з ${ppl.length * 4}</div><div class="card list">${ppl.map((p) => {
+        const ms = p.meetings || [], last = ms.filter((m) => m.held).slice(-1)[0];
+        return `<button type="button" class="li" data-a="wsOtoP" data-f="${esc(p.fid)}" data-i="${p.i}"><span class="grow"><span class="b" style="display:block">${esc(p.name)}</span><span class="xs muted">${esc(p.role || p.group || '')}</span></span>
+          <span class="wdots">${ms.map((m) => `<i class="${m.held ? 'on' : ''}"></i>`).join('')}</span>${last && last.total != null ? `<span class="badge">${df(last.total)}</span>` : ''}</button>`;
+      }).join('') || '<div class="empty">—</div>'}</div>`;
+    });
+    return h;
+  }
+  function wsOtoPersonView() {
+    const O = S.ws.an && S.ws.an.oto, k = S.ws.otoP, f = O && O.files.filter((x) => x.id === k.f)[0], p = f && f.people[k.i];
+    if (!p) { S.ws.otoP = null; return VIEWS.ws(); }
+    let h = header(p.name, p.role || f.group || '');
+    (p.meetings || []).forEach((m, i) => {
+      h += `<div class="card col" style="gap:6px"><div class="row between"><h2>Зустріч ${i + 1}</h2><span class="small ${m.held ? 'b' : 'muted'}">${m.held ? (m.date ? esc(fmtShortDay(m.date)) : 'була') : 'ще не було'}${m.total != null ? ' · ' + df(m.total) : ''}</span></div>
+        ${Object.keys(m.spheres || {}).map((s) => `<div class="row" style="gap:8px"><span class="small grow">${esc(s)}</span><span class="track" style="width:90px"><i style="width:${Math.min(100, (m.spheres[s] || 0) * 10)}%;background:var(--turq)"></i></span><span class="xs b" style="width:24px;text-align:right">${df(m.spheres[s])}</span></div>`).join('')}</div>`;
+    });
+    if (f.id) h += `<button type="button" class="btn sm sec2" data-a="wsOpen" data-u="https://docs.google.com/spreadsheets/d/${esc(f.id)}/edit">📊 Відкрити таблицю one-to-one</button>`;
+    return h;
+  }
+
+  // ───── учасники й дані простору (для тих, хто керує) ─────
+  function wsMembersView() {
+    const W = S.ws, d = W.data, F = W.find || {};
+    let h = header('Команда простору', plural(d.members.length, 'учасник', 'учасники', 'учасників'));
+    h += `<div class="card list">${d.members.map((m) => `<div class="li" style="flex-wrap:wrap;gap:8px">${wsAva(m.id, 'sm')}<span class="grow b">${esc(m.name || m.id)}</span>
+      ${m.id !== d.me.id ? `<button type="button" class="wx" data-a="wsMemDel" data-id="${esc(m.id)}" aria-label="Прибрати">×</button>` : ''}
+      <div class="grid3" style="width:100%"><select class="in" style="min-height:38px" data-ch="wsMemRole" data-id="${esc(m.id)}" aria-label="Права"><option value="member">Учасник</option><option value="admin"${m.role === 'admin' ? ' selected' : ''}>Керує</option></select>
+      <select class="in" style="min-height:38px" data-ch="wsMemArea" data-id="${esc(m.id)}" aria-label="Ерія"><option value="">Ерія…</option>${d.areas.map((a) => `<option value="${esc(a.key)}"${a.key === m.area ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+      <select class="in" style="min-height:38px" data-ch="wsMemKey" data-id="${esc(m.id)}" aria-label="Профіль"><option value="">Профіль…</option>${(d.pnames || []).map((p) => `<option value="${esc(p.id)}"${p.id === m.pkey ? ' selected' : ''}>${esc(p.ua || p.id)}</option>`).join('')}</select></div></div>`).join('')}</div>`;
+    h += `<div class="sec">Додати людину з MyYL</div><input class="in" type="search" placeholder="Імʼя або прізвище" value="${esc(F.q || '')}" data-bind="ws.find.q" data-live="wsFind">
+      ${F.list == null ? '<div class="xs muted">Шукаю…</div>' : F.list.length ? `<div class="card list">${F.list.map((p) => `<button type="button" class="li" data-a="wsMemAdd" data-id="${esc(p.id)}"><span class="grow"><b>${esc(p.name)}</b><br><span class="xs muted">${esc(p.role)}</span></span><span class="chip">+ Додати</span></button>`).join('')}</div>` : `<div class="xs muted">${F.q && F.q.trim().length >= 2 ? 'Нікого не знайдено. Людина має спершу зареєструватися в MyYL.' : 'Почни вводити імʼя.'}</div>`}`;
+    h += `<div class="sec">Дані простору</div><div class="card col" style="gap:8px"><div class="small">Профілі сильних сторін, фото, ерії, аналітика командних табличок і one-to-one оновлюються файлом даних (.json).</div>
+      ${d.has && d.has.updated ? `<div class="xs muted">Останнє оновлення: ${esc(fmtWhen(d.has.updated))}${d.has.profiles ? ' · профілів ' + d.has.profiles : ''}${d.has.analytics ? ' · команд ' + d.has.analytics : ''}${d.has.oto ? ' · таблиць 1:1 ' + d.has.oto : ''}</div>` : '<div class="xs muted">Ще не завантажувалися</div>'}
+      <label class="btn sm sec2" style="cursor:pointer">${W.imp ? 'Завантажую…' : '⬆️ Завантажити файл даних'}<input type="file" accept=".json,application/json" data-ch="wsImport" style="display:none"${W.imp ? ' disabled' : ''}></label></div>`;
+    return h;
+  }
+
+  // ───── дії ─────
+  A.wsTab = (d) => { S.ws.tab = d.v; if (d.v === 'team' && !S.ws.prof) wsLoadProf(); render(); };
+  A.wsBack = () => { wsBack(); };
+  A.wsOpen = (d, el, e) => { if (e) e.preventDefault(); if (d.u) tg.openLink(d.u); };
+  A.wsBoard = (d) => { S.ws.board = d.id; render(); };
+  A.wsBoardNew = () => { S.ws.boardEdit = { title: '' }; render(); };
+  A.wsBoardSave = async () => {
+    const E = S.ws.boardEdit; if (!String(E.title).trim()) return toast('Назви дошку');
+    const r = await run(() => api('wsBoardSave', { ws: S.ws.id, id: E.id || '', title: E.title }), 'Збережено');
+    if (r) { S.ws.data = r; if (r.newBoard) S.ws.board = r.newBoard; S.ws.boardEdit = null; } render();
+  };
+  A.wsBoardDel = async () => {
+    if (!(await confirmAsk('Видалити дошку? На ній не має бути задач.'))) return;
+    const r = await run(() => api('wsBoardDelete', { ws: S.ws.id, id: S.ws.boardEdit.id }), 'Дошку видалено');
+    if (r) { S.ws.data = r; S.ws.board = r.boards[0].id; S.ws.boardEdit = null; } render();
+  };
+  A.wsFilter = (d) => { S.ws.filter = d.v; render(); };
+  A.wsFCircle = (d, el) => { S.ws.fcircle = el.value; render(); };
+  A.wsView = (d) => { S.ws.view = d.v; render(); };
+  A.wsShowDone = () => { S.ws.showDone = !S.ws.showDone; render(); };
+  A.wsLog = () => { S.ws.log = !S.ws.log; render(); };
+  A.wsArch = () => { S.ws.arch = !S.ws.arch; render(); };
+  A.wsQuick = async (d) => {
+    const t = String(S.ws.quick[d.col] || '').trim(); if (!t) return;
+    const patch = { ws: S.ws.id, title: t, col: d.col };
+    if (S.ws.filter === 'mine') patch.who = [S.ws.data.me.id];
+    if (S.ws.fcircle) patch.circle = S.ws.fcircle;
+    S.ws.quick[d.col] = '';
+    const r = await run(() => api('wsCardSave', patch));
+    if (r) { wsPut(r); haptic('light'); } else S.ws.quick[d.col] = t;
+    render();
+    const i = document.querySelector('[data-bind="ws.quick.' + d.col + '"]'); if (i && r) i.focus();
+  };
+  A.wsCq = async (d) => {
+    const t = String(S.ws.cq || '').trim(); if (!t) return;
+    const r = await run(() => api('wsCardSave', { ws: S.ws.id, title: t, item: d.item || '', circle: d.circle || '' }));
+    if (r) { wsPut(r); S.ws.cq = ''; haptic('light'); } render();
+  };
+  A.wsColNew = () => { S.ws.colEdit = { board: S.ws.board, title: '' }; render(); };
+  A.wsColEdit = (d) => { const c = wsCol(d.id); S.ws.colEdit = { id: c.id, title: c.title, done: c.kind === 'done' }; render(); };
+  A.wsColSave = async () => {
+    const E = S.ws.colEdit; if (!String(E.title).trim()) return toast('Назви колонку');
+    const r = await run(() => api('wsColSave', Object.assign({ ws: S.ws.id, title: E.title }, E.id ? { id: E.id, done: !!E.done } : { board: E.board })), 'Збережено');
+    if (r) { S.ws.data = r; S.ws.colEdit = null; } render();
+  };
+  A.wsColShift = async (d) => { const r = await run(() => api('wsColSave', { ws: S.ws.id, id: S.ws.colEdit.id, shift: Number(d.v) })); if (r) { S.ws.data = r; S.ws.colEdit = null; } render(); };
+  A.wsColDel = async () => {
+    if (!(await confirmAsk('Видалити колонку?'))) return;
+    const r = await run(() => api('wsColDelete', { ws: S.ws.id, id: S.ws.colEdit.id }), 'Колонку видалено');
+    if (r) { S.ws.data = r; S.ws.colEdit = null; } render();
+  };
+  A.wsCardOpen = (d) => { S.ws.open = d.id; S.ws.cc = null; S.ws.cf = null; S.ws.cmt = ''; S.ws.chk = ''; S.ws.linkOpen = false; render(); window.scrollTo(0, 0); wsLoadCard(d.id); };
+  A.wsCardEdit = () => { const c = wsCard(S.ws.open); S.ws.cf = { title: c.title, desc: c.desc }; render(); };
+  A.wsCardEditSave = async () => { const f = S.ws.cf; if (!String(f.title).trim()) return toast('Назва не може бути порожньою'); const r = await wsSave({ title: f.title, desc: f.desc }, 'Збережено'); if (r) { S.ws.cf = null; render(); } };
+  A.wsDone = async () => { const c = wsCard(S.ws.open); await wsSave({ done: !c.done }, c.done ? 'Повернуто в роботу' : 'Виконано — дякую! 🙌'); };
+  A.wsMove = (d) => wsSave({ col: d.id });
+  A.wsWho = (d) => { const c = wsCard(S.ws.open), w = c.who.slice(), i = w.indexOf(d.id); if (i >= 0) w.splice(i, 1); else w.push(d.id); return wsSave({ who: w }); };
+  A.wsDueSet = (d, el) => wsSave({ due: el.value || '' });
+  A.wsDueClear = () => wsSave({ due: '' });
+  A.wsCircleSet = (d, el) => wsSave({ circle: el.value });
+  A.wsItemSet = (d, el) => wsSave({ item: el.value });
+  A.wsChk = (d) => { const c = wsCard(S.ws.open), k = c.check.map((x) => Object.assign({}, x)); k[d.i].d = !k[d.i].d; return wsSave({ check: k }); };
+  A.wsChkDel = (d) => { const c = wsCard(S.ws.open), k = c.check.slice(); k.splice(Number(d.i), 1); return wsSave({ check: k }); };
+  A.wsChkAdd = async () => {
+    const t = String(S.ws.chk || '').trim(); if (!t) return;
+    const c = wsCard(S.ws.open); S.ws.chk = '';
+    const r = await wsSave({ check: c.check.concat([{ t: t, d: false }]) });
+    if (!r) S.ws.chk = t; else { const i = document.querySelector('[data-bind="ws.chk"]'); if (i) i.focus(); }
+  };
+  A.wsLinkToggle = () => { S.ws.linkOpen = !S.ws.linkOpen; S.ws.link = { u: '', t: '' }; render(); };
+  A.wsLinkAdd = async () => {
+    const L = S.ws.link, u = String(L.u || '').trim();
+    if (!/^https?:\/\//i.test(u)) return toast('Встав повне посилання, що починається з https://');
+    const r = await wsSave({ addLink: { u: u, t: L.t } }, 'Прикріплено');
+    if (r) { S.ws.linkOpen = false; S.ws.link = { u: '', t: '' }; render(); }
+  };
+  A.wsLinkDel = async (d) => { if (!(await confirmAsk('Відкріпити посилання?'))) return; const c = wsCard(S.ws.open), L = c.links.slice(); L.splice(Number(d.i), 1); return wsSave({ links: L }); };
+  A.wsCmt = async () => {
+    const t = String(S.ws.cmt || '').trim(); if (!t) return;
+    const r = await run(() => api('wsComment', { ws: S.ws.id, card: S.ws.open, text: t }));
+    if (r) { S.ws.cmt = ''; S.ws.cc = r.comments; wsPut(r.card); haptic('light'); } render();
+  };
+  A.wsCmtDel = async (d) => {
+    if (!(await confirmAsk('Видалити коментар?'))) return;
+    const r = await run(() => api('wsCommentDelete', { ws: S.ws.id, card: S.ws.open, id: d.id }));
+    if (r) { S.ws.cc = r.comments; if (r.card) wsPut(r.card); } render();
+  };
+  A.wsShift = (d) => wsSave({ shift: Number(d.v) });
+  A.wsArchive = async () => { const c = wsCard(S.ws.open); const r = await wsSave({ archived: !c.archived }, c.archived ? 'Повернуто з архіву' : 'Перенесено в архів'); if (r && r.archived) { S.ws.open = null; render(); } };
+  A.wsCardDel = async () => {
+    const c = wsCard(S.ws.open);
+    if (!(await confirmAsk('Видалити задачу «' + c.title + '» разом з коментарями?'))) return;
+    const r = await run(() => api('wsCardDelete', { ws: S.ws.id, id: c.id }), 'Задачу видалено');
+    if (r) { WD_().cards = WD_().cards.filter((x) => x.id !== c.id); wsMineSync(); S.ws.open = null; } render();
+  };
+  // сторінки
+  A.wsPq = () => { clearTimeout(A.wsPq.t); A.wsPq.t = setTimeout(() => { render(); const i = document.querySelector('[data-live="wsPq"]'); if (i) { i.focus(); const n = i.value.length; try { i.setSelectionRange(n, n); } catch (e) { /* ок */ } } }, 250); };
+  A.wsPageOpen = (d) => { S.ws.tab = 'pages'; S.ws.page = d.id; S.ws.pd = null; S.ws.pe = null; render(); window.scrollTo(0, 0); wsLoadPage(d.id); };
+  A.wsPageNew = (d) => { S.ws.pe = { id: '', parent: d.parent || '', title: '', icon: '📄', body: '', base: '' }; render(); window.scrollTo(0, 0); };
+  A.wsPageEdit = () => { const p = S.ws.pd.page; S.ws.pe = { id: p.id, parent: p.parent, title: p.title, icon: p.icon || '📄', body: p.body, base: p.updated }; render(); };
+  A.wsPageIcon = (d) => { S.ws.pe.icon = d.v; render(); };
+  A.wsIns = (d) => {
+    const ta = document.getElementById('wsBody'); if (!ta) return;
+    const v = ta.value, s = ta.selectionStart || 0, e = ta.selectionEnd || s;
+    const ls = v.lastIndexOf('\n', s - 1) + 1;
+    const PRE = { h: '# ', li: '- ', chk: '- [ ] ', q: '> ' };
+    let nv, pos;
+    if (PRE[d.v]) { nv = v.slice(0, ls) + PRE[d.v] + v.slice(ls); pos = s + PRE[d.v].length; }
+    else if (d.v === 'hr') { const ins = (s && v[s - 1] !== '\n' ? '\n' : '') + '---\n'; nv = v.slice(0, s) + ins + v.slice(e); pos = s + ins.length; }
+    else { const sel = v.slice(s, e) || 'назва'; const ins = '[' + sel + '](https://)'; nv = v.slice(0, s) + ins + v.slice(e); pos = s + ins.length - 1; }
+    ta.value = nv; S.ws.pe.body = nv; ta.focus(); try { ta.setSelectionRange(pos, pos); } catch (x) { /* ок */ }
+  };
+  A.wsPageSave = async () => {
+    const E = S.ws.pe;
+    try {
+      const r = await api('wsPageSave', { ws: S.ws.id, id: E.id, parent: E.parent, title: E.title, icon: E.icon, body: E.body, base: E.base });
+      toast('Збережено', 'success');
+      S.ws.pe = null; S.ws.page = r.page.id; S.ws.pd = r;
+      wsLoad(true);
+    } catch (e) {
+      if (e.code === 'conflict') {
+        // хтось змінив сторінку: показуємо свіжу версію поруч не затираючи — текст людини лишається в редакторі
+        E.conflict = e.message;
+        try { const fresh = await api('wsPage', { ws: S.ws.id, id: E.id }); E.base = fresh.page.updated; S.ws.pd = fresh; E.conflict += '\n\nСвіжа версія: «' + String(fresh.page.body).slice(0, 300) + (fresh.page.body.length > 300 ? '…' : '') + '». Натисни «Зберегти» ще раз, щоб записати свою.'; } catch (x) { /* ок */ }
+        haptic('error');
+      } else toast(e.message, 'error');
+    }
+    render(); window.scrollTo(0, 0);
+  };
+  A.wsTick = async (d) => {
+    const P = S.ws.pd; if (!P) return;
+    const L = String(P.page.body).split('\n'), i = Number(d.l);
+    L[i] = L[i].replace(/\[( |x|X)\]/, (m, x) => (x === ' ' ? '[x]' : '[ ]'));
+    const body = L.join('\n'), old = P.page.body;
+    P.page.body = body; render();
+    try { const r = await api('wsPageSave', { ws: S.ws.id, id: P.page.id, parent: P.page.parent, title: P.page.title, icon: P.page.icon, body: body, base: P.page.updated }); S.ws.pd = r; haptic('light'); }
+    catch (e) { P.page.body = old; toast(e.code === 'conflict' ? 'Сторінку щойно змінили — оновлюю' : e.message, 'error'); if (e.code === 'conflict') wsLoadPage(P.page.id); }
+    render();
+  };
+  A.wsPageDel = async () => {
+    const p = S.ws.pd.page, n = WD_().pages.filter((x) => x.parent === p.id).length;
+    if (!(await confirmAsk('Видалити сторінку «' + p.title + '»' + (n ? ' разом з підсторінками' : '') + '?'))) return;
+    const r = await run(() => api('wsPageDelete', { ws: S.ws.id, id: p.id }), 'Видалено');
+    if (r) { S.ws.page = r.parent || null; S.ws.pd = null; if (r.parent) wsLoadPage(r.parent); wsLoad(true); } render();
+  };
+  // стратегія
+  A.wsCircle = (d) => { S.ws.circle = d.id; S.ws.cq = ''; render(); window.scrollTo(0, 0); };
+  A.wsItemOpen = (d) => { const it = wsItem(d.id); S.ws.tab = 'strategy'; if (it) S.ws.circle = it.circle || S.ws.circle; S.ws.item = d.id; S.ws.cq = ''; render(); window.scrollTo(0, 0); };
+  A.wsItemNew = (d) => { S.ws.itf = { id: '', kind: d.k || 'project', circle: S.ws.circle || WD_().strategy.circles[0].id, title: '', desc: '', status: 'plan', owner: '', due: '', url: '' }; render(); };
+  A.wsItemEdit = () => { const it = wsItem(S.ws.item); S.ws.itf = Object.assign({}, it); render(); };
+  A.wsItfKind = (d) => { S.ws.itf.kind = d.v; render(); };
+  A.wsItemSave = async () => {
+    const f = S.ws.itf; if (!String(f.title).trim()) return toast('Напиши назву');
+    const r = await run(() => api('wsItemSave', Object.assign({ ws: S.ws.id }, f)), 'Збережено');
+    if (r) { S.ws.data = r.ws; S.ws.itf = null; S.ws.item = r.item.id; S.ws.circle = r.item.circle; } render();
+  };
+  A.wsItemSt = async (d) => { const it = wsItem(S.ws.item); const r = await run(() => api('wsItemSave', Object.assign({ ws: S.ws.id }, it, { status: d.v }))); if (r) { S.ws.data = r.ws; haptic('light'); } render(); };
+  A.wsItemDel = async () => {
+    if (!(await confirmAsk('Видалити? Задачі лишаться, але відвʼяжуться.'))) return;
+    const r = await run(() => api('wsItemDelete', { ws: S.ws.id, id: S.ws.itf.id }), 'Видалено');
+    if (r) { S.ws.data = r; S.ws.itf = null; S.ws.item = null; } render();
+  };
+  A.wsStratEdit = () => { const s = WD_().strategy; S.ws.sf = JSON.parse(JSON.stringify({ title: s.title, vision: s.vision, docUrl: s.docUrl, targets: s.targets, circles: s.circles })); render(); };
+  A.wsStratSave = async () => { const r = await run(() => api('wsStrategySave', Object.assign({ ws: S.ws.id }, S.ws.sf)), 'Стратегію збережено'); if (r) { S.ws.data = r; S.ws.sf = null; } render(); };
+  // команда
+  A.wsTTeam = (d) => { S.ws.tteam = d.v; render(); };
+  A.wsPerson = (d) => { S.ws.person = d.id; render(); window.scrollTo(0, 0); };
+  A.wsTheme = (d) => { S.ws.theme = d.id; render(); window.scrollTo(0, 0); };
+  A.wsMatrix = () => { S.ws.matrix = true; render(); window.scrollTo(0, 0); };
+  A.wsArea = (d) => { S.ws.area = d.k; render(); window.scrollTo(0, 0); };
+  A.wsAreaGo = (d) => { S.ws.tab = 'team'; S.ws.tteam = 'areas'; S.ws.person = null; S.ws.area = d.k; render(); window.scrollTo(0, 0); };
+  A.wsTeamOpen = (d) => { S.ws.team = d.id; render(); window.scrollTo(0, 0); };
+  A.wsOtoP = (d) => { S.ws.otoP = { f: d.f, i: Number(d.i) }; render(); window.scrollTo(0, 0); };
+  // учасники
+  A.wsMembers = () => { S.ws.members = true; S.ws.find = { q: '', list: null }; render(); wsFindRun(); };
+  async function wsFindRun() {
+    const F = S.ws.find; if (!F) return;
+    const q = F.q || '';
+    try { const L = await api('wsPeopleFind', { ws: S.ws.id, q: q }); if (S.ws.find && S.ws.find.q === q) S.ws.find.list = L; } catch (e) { if (S.ws.find) S.ws.find.list = []; }
+    if (S.screen === 'ws' && S.ws.members) { render(); const i = document.querySelector('[data-live="wsFind"]'); if (i && q) { i.focus(); const n = i.value.length; try { i.setSelectionRange(n, n); } catch (e) { /* ок */ } } }
+  }
+  A.wsFind = () => { clearTimeout(A.wsFind.t); A.wsFind.t = setTimeout(wsFindRun, 350); };
+  A.wsMemAdd = async (d) => { const r = await run(() => api('wsMemberSave', { ws: S.ws.id, id: d.id }), 'Додано — людина отримала повідомлення'); if (r) { S.ws.data = r; S.ws.find.list = (S.ws.find.list || []).filter((x) => x.id !== d.id); } render(); };
+  A.wsMemDel = async (d) => { const m = wsMember(d.id); if (!(await confirmAsk('Прибрати ' + (m ? m.name : '') + ' з простору?'))) return; const r = await run(() => api('wsMemberRemove', { ws: S.ws.id, id: d.id }), 'Прибрано'); if (r) S.ws.data = r; render(); };
+  const memSet = async (id, patch) => { const r = await run(() => api('wsMemberSave', Object.assign({ ws: S.ws.id, id: id }, patch)), 'Збережено'); if (r) S.ws.data = r; render(); };
+  A.wsMemRole = (d, el) => memSet(d.id, { role: el.value });
+  A.wsMemArea = (d, el) => memSet(d.id, { area: el.value });
+  A.wsMemKey = (d, el) => memSet(d.id, { pkey: el.value });
+  A.wsImport = (d, el) => {
+    const f = el.files && el.files[0]; if (!f) return;
+    if (f.size > 6 * 1024 * 1024) return toast('Файл завеликий');
+    const rd = new FileReader();
+    rd.onload = async () => {
+      let obj; try { obj = JSON.parse(String(rd.result)); } catch (e) { return toast('Це не файл даних (.json)'); }
+      S.ws.imp = true; render();
+      const r = await run(() => api('wsImport', Object.assign({ ws: S.ws.id }, obj)));
+      S.ws.imp = false;
+      if (r) { S.ws.data = r.ws; S.ws.prof = null; S.ws.an = null; toast('Оновлено: ' + r.got.join(', '), 'success'); wsLoadProf(); }
+      render();
+    };
+    rd.readAsText(f);
+  };
+  // Enter у полі швидкого додавання
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if (e.key !== 'Enter' || !el || !el.dataset || !el.dataset.enter || e.isComposing) return;
+    e.preventDefault();
+    const fn = A[el.dataset.enter]; if (fn) fn(el.dataset, el, e);
+  });
+  // головна: мої задачі в робочих просторах
+  function wsHomeCard() {
+    const L = ((S.me && S.me.ws) || []).filter((w) => w.open);
+    return L.map((w) => `<button type="button" class="card cl-home wshome" data-a="tabGo" data-s="ws"><div class="row between"><span class="cl-h">🗂 Робочий простір</span><span class="xs muted">${esc(w.name)}</span></div>
+      <div class="cl-topic">${plural(w.open, 'задача', 'задачі', 'задач')} на тобі</div><div class="cl-meta">${w.late ? `<span style="color:#b3261e">⚠️ прострочено: ${w.late}</span>` : ''}${w.soon ? `<span>🔥 дедлайн скоро: ${w.soon}</span>` : ''}</div>
+      <span class="cl-cta">Відкрити ${icon('chev', 16)}</span></button>`).join('');
+  }
+  // посилання з бота: wsc_<задача>, wsp_<сторінка>
+  function wsWant(want) {
+    let m;
+    if (!S.me || !(S.me.ws || []).length) return false;
+    if ((m = /^wsc_([A-Za-z0-9]+)$/.exec(want))) { go('ws', { card: m[1] }); return true; }
+    if ((m = /^wsp_([A-Za-z0-9]+)$/.exec(want))) { go('ws', { page: m[1] }); return true; }
+    return false;
+  }
+
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-a]');
     if (!el || el.disabled) return;
@@ -3340,6 +4181,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.login) pollLogin(); });
   // ── потягни вниз — оновити поточний екран ──
   const PULL_RELOAD = {
+    ws: () => Promise.all([wsLoad(true), S.ws.open ? wsLoadCard(S.ws.open) : null, S.ws.page && !S.ws.pe ? wsLoadPage(S.ws.page) : null]),
     home: () => Promise.all([refreshMe(), loadEvents()]), more: refreshMe, calendar: loadEvents, stats: loadStats, known: () => loadKnown(true), team: loadTeam, finance: loadFin,
     requests: loadReqs, perms: loadPerms, inst: loadInst, mystats: loadMyStats, ach: loadAch, bugs: loadBugs, dupes: loadDupes, res: loadRes, dirs: loadDirs,
     tasks: loadTasks, polls: loadPolls, myyl: loadMyyl, structure: loadTree, pending: refreshMe, bank: loadBank, club: () => (S.club.dirty ? null : loadClub()), clubIdeas: () => reloadIdeas(),

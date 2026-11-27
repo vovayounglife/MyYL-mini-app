@@ -125,6 +125,7 @@ export default {
     const DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     if (DAYS[p.dow % 7] === day && p.hour === hour) { await S.loadLog(weekKey_(new Date())); use(S, () => weeklyReminder()); }
     if (p.hour === 9) { await S.loadEvents(); use(S, () => eventReminder()); }
+    if (p.hour === 9) { const t0 = kyivDay(when); await S.loadWsDue(addDaysKey_(t0, -1), addDaysKey_(t0, 1)); use(S, () => wsReminder_()); }
     // хто вже в боті, але ще записаний у складі «без MyYL» — обʼєднуємо
     use(S, () => linkPlaceholders_());
     await S.flush();
@@ -229,6 +230,11 @@ async function runAs_(S, tgUser, action, d, viewAs, actAs) {
     if (need.ck) await S.loadCheckins(String(tgUser.id));
     if (need.mine) await S.loadMine(String(tgUser.id));
     if (need.usage) await S.loadTeamUsage(str_(d.id));
+    if (need.ws) await S.loadWs(str_(d.ws) || WS_DEFAULT);
+    if (need.wsComments) await S.loadWsComments(str_(d.card || d.id));
+    if (need.wsPage) await S.loadWsPage(str_(d.id));
+    if (need.wsKv) await S.loadWsKv(str_(d.ws) || WS_DEFAULT, need.wsKv);
+    if (need.wsMine) await S.loadWsMine(String(tgUser.id));
     const data = use(S, () => { const c = ctx_(tgUser); if (actor) c.actor = actor; const out = fn(viewAs ? viewCtx_(c, viewAs) : c, d); if (actor && action === 'me' && out) out.actAs = { id: c.id, name: c.name }; return out; });
     await S.flush();
     return data;
@@ -670,7 +676,7 @@ function ctx_(tg) {
   return { id: id, tg: tg, person: person, roles: roles, active: active, allRoles: all, get name() { const p = getPerson_(id); return (p && p.name) || fullName_(tg); } };
 }
 // ── «Відобразити як для»: перегляд застосунку очима нижчої ролі (лише читання) ──
-const VIEW_OK = /^(me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo|myStats|report)$/;
+const VIEW_OK = /^(ws|wsCard|wsPage|wsProfiles|wsAnalytics|me|knownList|stats|dirStats|installStats|teamMembers|events|tasks|polls|resList|requests|financeGet|finTx|structureTree|myylTree|permsGet|audCount|claimFind|broadcastInfo|myStats|report)$/;
 // ролі, якими людина може «подивитися»: усі нижчі за її найвищу (без «власник»)
 function viewRoles_(c) {
   if (!c.roles.length) return [];
@@ -4407,4 +4413,597 @@ function weekLabel_(k) {
 }
 
 // для тестів
-export const __test = { nameScore_, API, Store, use, verifyInitData, weekKey_, kyivDay, weeklyReminder, eventReminder, resetBase: () => { BASE = null; } };
+// ───────────────────────────── РОБОЧИЙ ПРОСТІР КОМАНДИ ─────────────────────────────
+// Дошка задач (колонки, картки, виконавці, дедлайни, коментарі, посилання на Google-документи), сторінки з підсторінками,
+// стратегія (цілі, 9 напрямків, проекти), профілі команди й аналітика командних табличок. Доступ — лише учасникам простору.
+const WS_DEFAULT = 'west';
+const WS_CIRCLES = [['c01', 'Покращення системи навчання'], ['c02', 'Рекрутинг'], ['c03', 'Контактна робота'], ['c04', 'Піклування про команду'],
+  ['c05', 'Якісні табори і клуби різних форматів'], ['c06', 'Бренд Young Life'], ['c07', 'Підзвітність та комунікація'], ['c08', 'Молитовна стратегія'], ['c09', 'Фандрейзинг']]
+  .map((x) => ({ id: x[0], title: x[1] }));
+const WS_STRATEGY = { title: 'Стратегія West Side 2026–2027', vision: 'Young Life West Side 2340', docUrl: 'https://docs.google.com/document/d/1X6XmpYlWfBF6mSglV5pAwjZ-99hmogd3NfUYhp6Ws7M/edit',
+  targets: [{ k: 'leaders', l: 'лідерів', n: 2000 }, { k: 'teams', l: 'команд', n: 300 }, { k: 'staff', l: 'стафів', n: 40 }] };
+const WS_ITEM_ST = { idea: 'Ідея', plan: 'Заплановано', doing: 'В роботі', done: 'Готово', pause: 'Пауза' };
+const WS_BIG = ['profiles', 'photos', 'analytics', 'oto'];
+const WS_DEF_COLS = [['Треба зробити', ''], ['В роботі', ''], ['Чекає', ''], ['Готово', 'done']];
+const clipN_ = (v, n) => String(v == null ? '' : v).replace(/\r\n?/g, '\n').trim().slice(0, n);
+const wsList_ = (v) => String(v || '').split(',').filter(Boolean);
+const wsJson_ = (v, def) => { try { const x = JSON.parse(v || ''); return x == null ? def : x; } catch (e) { return def; } };
+const isDay_ = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+
+function wsCardRow_(r) {
+  return { id: r.id, board: r.board_id || '', col: r.col_id || '', pos: Number(r.pos) || 0, title: r.title || '', desc: r.descr || '', due: r.due || '', who: wsList_(r.assignees),
+    circle: r.circle || '', item: r.item_id || '', links: wsJson_(r.links, []), check: wsJson_(r.checklist, []), done: !!Number(r.done), archived: !!Number(r.archived),
+    authorId: r.author_id || '', author: r.author || '', created: r.created || '', updated: r.updated || '', updatedBy: r.updated_by || '', reminded: r.reminded || '' };
+}
+function wsPageRow_(r) {
+  return { id: r.id, parent: r.parent_id || '', title: r.title || '', icon: r.icon || '', pos: Number(r.pos) || 0, authorId: r.author_id || '', created: r.created || '',
+    updated: r.updated || '', updatedBy: r.updated_by || '', len: Number(r.len) || 0 };
+}
+function wsItemRow_(r) {
+  return { id: r.id, circle: r.circle || '', kind: r.kind === 'goal' ? 'goal' : 'project', title: r.title || '', desc: r.descr || '', status: WS_ITEM_ST[r.status] ? r.status : 'plan',
+    owner: r.owner || '', due: r.due || '', url: r.url || '', pos: Number(r.pos) || 0, created: r.created || '', updated: r.updated || '' };
+}
+
+Store.prototype.loadWs = async function (wsId) {
+  const q = (sql) => this.db.prepare(sql).bind(wsId);
+  const since = new Date(Date.now() - 60 * 864e5).toISOString();
+  const res = await this.db.batch([
+    q('SELECT * FROM ws WHERE id = ?'),
+    q('SELECT * FROM ws_members WHERE ws = ?'),
+    q('SELECT * FROM ws_boards WHERE ws = ? ORDER BY pos'),
+    q('SELECT * FROM ws_cols WHERE ws = ? ORDER BY pos'),
+    this.db.prepare('SELECT * FROM ws_cards WHERE ws = ? AND (archived = 0 OR updated >= ?)').bind(wsId, since),
+    q('SELECT id, parent_id, title, icon, pos, author_id, created, updated, updated_by, LENGTH(body) AS len FROM ws_pages WHERE ws = ?'),
+    q('SELECT * FROM ws_items WHERE ws = ? ORDER BY pos'),
+    q("SELECT k, v, updated FROM ws_kv WHERE ws = ? AND k NOT IN ('profiles', 'photos', 'analytics', 'oto')"),
+    q('SELECT * FROM ws_log WHERE ws = ? ORDER BY ts DESC LIMIT 40'),
+    q('SELECT card_id, COUNT(*) AS n FROM ws_comments WHERE ws = ? GROUP BY card_id'),
+  ]);
+  const [w, m, b, cl, cd, pg, it, kv, lg, cc] = res.map((x) => x.results || []);
+  const W = { id: wsId, row: w[0] || null, kv: {}, kvAt: {}, cc: {} };
+  W.members = m.map((r) => ({ tgId: String(r.tg_id), role: r.role === 'admin' ? 'admin' : 'member', pkey: r.pkey || '', area: r.area || '', added: r.added || '' }));
+  W.boards = b.map((r) => ({ id: r.id, title: r.title || '', pos: Number(r.pos) || 0 }));
+  W.cols = cl.map((r) => ({ id: r.id, board: r.board_id, title: r.title || '', kind: r.kind === 'done' ? 'done' : '', pos: Number(r.pos) || 0 }));
+  W.cards = cd.map(wsCardRow_);
+  W.pages = pg.map(wsPageRow_);
+  W.items = it.map(wsItemRow_);
+  kv.forEach((r) => { W.kv[r.k] = wsJson_(r.v, null); W.kvAt[r.k] = r.updated || ''; });
+  W.log = lg.map((r) => ({ ts: r.ts, tgId: r.tg_id || '', name: r.name || '', text: r.text || '', card: r.card_id || '' }));
+  cc.forEach((r) => { W.cc[r.card_id] = Number(r.n) || 0; });
+  // перша дошка зʼявляється сама
+  if (W.row && !W.boards.length) {
+    const bid = 'b' + uid_(), now = nowIso();
+    W.boards.push({ id: bid, title: 'Задачі', pos: 1 });
+    this.run('INSERT INTO ws_boards (id, ws, title, pos, created) VALUES (?,?,?,?,?)', [bid, wsId, 'Задачі', 1, now]);
+    WS_DEF_COLS.forEach((x, i) => {
+      const col = { id: 'c' + uid_(), board: bid, title: x[0], kind: x[1], pos: i + 1 };
+      W.cols.push(col);
+      this.run('INSERT INTO ws_cols (id, ws, board_id, title, kind, pos) VALUES (?,?,?,?,?,?)', [col.id, wsId, bid, col.title, col.kind, col.pos]);
+    });
+  }
+  this.ws = W;
+};
+Store.prototype.loadWsComments = async function (cardId) {
+  const rs = await this.db.prepare('SELECT * FROM ws_comments WHERE card_id = ? ORDER BY created').bind(cardId || '').all();
+  this.wsComments = (rs.results || []).map((r) => ({ id: r.id, card: r.card_id, tgId: r.tg_id || '', name: r.name || '', text: r.text || '', created: r.created || '' }));
+};
+Store.prototype.loadWsPage = async function (id) {
+  this.wsPageBody = (await this.db.prepare('SELECT body FROM ws_pages WHERE id = ?').bind(id || '').first('body')) || '';
+};
+Store.prototype.loadWsKv = async function (wsId, keys) {
+  const rs = await this.db.prepare('SELECT k, v, updated FROM ws_kv WHERE ws = ? AND k IN (' + keys.map(() => '?').join(',') + ')').bind(wsId, ...keys).all();
+  this.wsBig = {};
+  (rs.results || []).forEach((r) => { this.wsBig[r.k] = wsJson_(r.v, null); this.wsBig[r.k + 'At'] = r.updated || ''; });
+};
+Store.prototype.loadWsMine = async function (tgId) {
+  const [w, m, c] = await this.db.batch([
+    this.db.prepare('SELECT id, name FROM ws ORDER BY created'),
+    this.db.prepare('SELECT ws, role FROM ws_members WHERE tg_id = ?').bind(tgId),
+    this.db.prepare("SELECT ws, due FROM ws_cards WHERE archived = 0 AND done = 0 AND assignees LIKE ?").bind('%,' + tgId + ',%'),
+  ]);
+  this.wsMine = { all: w.results || [], member: m.results || [], cards: c.results || [] };
+};
+Store.prototype.loadWsDue = async function (from, to) {
+  const [c, w] = await this.db.batch([
+    this.db.prepare("SELECT * FROM ws_cards WHERE archived = 0 AND done = 0 AND due >= ? AND due <= ?").bind(from, to),
+    this.db.prepare('SELECT id, name FROM ws'),
+  ]);
+  this.wsDue = (c.results || []).map((r) => Object.assign(wsCardRow_(r), { ws: r.ws }));
+  this.wsNames = {};
+  (w.results || []).forEach((r) => { this.wsNames[r.id] = r.name || ''; });
+};
+
+// у «Ще» й на головній: у яких просторах людина і скільки її задач горить
+function wsMineOut_(c) {
+  const M = S.wsMine;
+  if (!M || c.view) return [];
+  const sup = isSuper_(c);
+  const today = kyivDay(new Date()), soon = addDaysKey_(today, 2);
+  return M.all.filter((w) => sup || M.member.some((m) => m.ws === w.id)).map((w) => {
+    const mine = M.cards.filter((x) => x.ws === w.id);
+    return { id: w.id, name: w.name || '', open: mine.length, soon: mine.filter((x) => x.due && x.due <= soon).length, late: mine.filter((x) => x.due && x.due < today).length };
+  });
+}
+
+// хто тут і з якими правами (той, хто має найвищі права в MyYL, — завжди керує й стає учасником сам)
+function wsAcc_(c, admin) {
+  const W = S.ws;
+  if (!W || !W.row) bad_('Робочий простір не знайдено.');
+  let m = W.members.filter((x) => x.tgId === c.id)[0];
+  const sup = isSuper_(c);
+  if (!m && !sup) deny_('Цей робочий простір — лише для його команди.');
+  if (!m && sup) {
+    m = { tgId: c.id, role: 'admin', pkey: wsAutoKey_(c.name), area: '', added: nowIso() };
+    W.members.push(m);
+    S.run('INSERT OR IGNORE INTO ws_members (ws, tg_id, role, pkey, area, added) VALUES (?,?,?,?,?,?)', [W.id, m.tgId, m.role, m.pkey, m.area, m.added]);
+  }
+  const isAdmin = sup || m.role === 'admin';
+  if (admin && !isAdmin) deny_('Це може зробити лише той, хто керує простором.');
+  return { m: m, admin: isAdmin };
+}
+const wsName_ = (id) => (getPerson_(id) || {}).name || '';
+function wsAutoKey_(name) {
+  const P = (S.ws && S.ws.kv.pnames) || [];
+  const hit = P.filter((p) => [p.ua, p.full, p.en].filter(Boolean).some((n) => nameScore_(n, name).s >= 1));
+  return hit.length === 1 ? hit[0].id : '';
+}
+function wsMemberOut_(m) {
+  const p = getPerson_(m.tgId) || {};
+  return { id: m.tgId, name: p.name || '', username: p.username || '', role: m.role, pkey: m.pkey, area: m.area };
+}
+function wsCardOut_(x) {
+  const W = S.ws;
+  return { id: x.id, board: x.board, col: x.col, pos: x.pos, title: x.title, desc: x.desc, due: x.due, who: x.who, circle: x.circle, item: x.item, links: x.links, check: x.check,
+    done: x.done, archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
+}
+function wsStrategy_() {
+  const s = Object.assign({}, WS_STRATEGY, S.ws.kv.strategy || {});
+  s.circles = (S.ws.kv.circles && S.ws.kv.circles.length ? S.ws.kv.circles : WS_CIRCLES).map((x) => ({ id: x.id, title: x.title }));
+  return s;
+}
+function wsWriteCard_(x) {
+  S.run('INSERT OR REPLACE INTO ws_cards (id, ws, board_id, col_id, pos, title, descr, due, assignees, circle, item_id, links, checklist, done, archived, author_id, author, created, updated, updated_by, reminded) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [x.id, S.ws.id, x.board, x.col, x.pos, x.title, x.desc, x.due, x.who.length ? ',' + x.who.join(',') + ',' : '', x.circle, x.item, JSON.stringify(x.links), JSON.stringify(x.check),
+      x.done ? 1 : 0, x.archived ? 1 : 0, x.authorId, x.author, x.created, x.updated, x.updatedBy, x.reminded || '']);
+}
+function wsLog_(c, text, cardId) {
+  const e = { ts: nowIso(), tgId: c.id, name: c.name, text: text, card: cardId || '' };
+  S.ws.log.unshift(e);
+  S.run('INSERT INTO ws_log (ws, ts, tg_id, name, text, card_id) VALUES (?,?,?,?,?,?)', [S.ws.id, e.ts, e.tgId, e.name, e.text, e.card]);
+  S.run('DELETE FROM ws_log WHERE ws = ? AND ts < ?', [S.ws.id, new Date(Date.now() - 90 * 864e5).toISOString()]);
+}
+const wsUrl_ = (u) => { const s = clipN_(u, 1500); return /^https?:\/\/[^\s]+$/i.test(s) ? s : ''; };
+function wsLinks_(arr) {
+  return [].concat(arr || []).slice(0, 25).map((l) => ({ t: clipN_(l && l.t, 200), u: wsUrl_(l && l.u) })).filter((l) => l.u);
+}
+const wsCardLink_ = (id) => 'wsc_' + id;
+const wsTag_ = () => '«' + esc_(S.ws.row.name || 'Робочий простір') + '»';
+function wsNotify_(ids, c, text, cardId) {
+  uniq_(ids).filter((id) => id !== c.id && isReal_(id) && wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', wsCardLink_(cardId)));
+}
+
+API.ws = function (c) {
+  const A = wsAcc_(c);
+  const W = S.ws;
+  const cur = W.kv.current || {};
+  return {
+    id: W.id, name: W.row.name || '', me: { id: c.id, admin: A.admin, pkey: A.m.pkey, area: A.m.area },
+    members: W.members.map(wsMemberOut_).sort((a, b) => a.name.localeCompare(b.name, 'uk')),
+    boards: W.boards.map((b) => ({ id: b.id, title: b.title, cols: W.cols.filter((x) => x.board === b.id).sort((a, b2) => a.pos - b2.pos).map((x) => ({ id: x.id, title: x.title, kind: x.kind })) })),
+    cards: W.cards.map(wsCardOut_),
+    pages: W.pages.sort((a, b) => a.pos - b.pos || (a.created < b.created ? -1 : 1)),
+    items: W.items.sort((a, b) => a.pos - b.pos),
+    strategy: wsStrategy_(), itemSt: WS_ITEM_ST,
+    areas: W.kv.areas || [],
+    current: { staff: W.members.length, leaders: cur.leaders == null ? null : cur.leaders, teams: cur.teams == null ? null : cur.teams, at: cur.at || '' },
+    has: W.kv.meta || {}, pnames: A.admin ? (W.kv.pnames || []) : [],
+    log: W.log.slice(0, 30),
+  };
+};
+API.wsCard = function (c, d) {
+  wsAcc_(c);
+  const x = S.ws.cards.filter((y) => y.id === str_(d.id))[0];
+  if (!x) bad_('Задачу не знайдено — можливо, її видалили.');
+  return { card: wsCardOut_(x), comments: S.wsComments || [] };
+};
+API.wsCardSave = function (c, d) {
+  const A = wsAcc_(c);
+  const W = S.ws, now = nowIso();
+  let x = d.id ? W.cards.filter((y) => y.id === str_(d.id))[0] : null;
+  if (d.id && !x) bad_('Задачу не знайдено — можливо, її видалили.');
+  const isNew = !x;
+  const colsOf = (bid) => W.cols.filter((k) => k.board === bid).sort((a, b) => a.pos - b.pos);
+  const endPos = (colId, skip) => W.cards.filter((y) => y.col === colId && y.id !== skip && !y.archived).reduce((a, y) => Math.max(a, y.pos), 0) + 1;
+  if (isNew) {
+    const title = clipN_(d.title, 300);
+    if (!title) bad_('Напиши назву задачі.');
+    const board = W.boards.filter((b) => b.id === str_(d.board))[0] || W.boards[0];
+    if (!board) bad_('Спершу створи дошку.');
+    const col = colsOf(board.id).filter((k) => k.id === str_(d.col))[0] || colsOf(board.id)[0];
+    if (!col) bad_('На дошці немає колонок.');
+    x = { id: uid_(), board: board.id, col: col.id, pos: endPos(col.id), title: title, desc: '', due: '', who: [], circle: '', item: '', links: [], check: [], done: col.kind === 'done', archived: false,
+      authorId: c.id, author: c.name, created: now, updated: now, updatedBy: c.name, reminded: '' };
+  }
+  const was = { who: isNew ? [] : x.who.slice(), done: isNew ? false : x.done, col: isNew ? '' : x.col };
+  const has = (k) => Object.prototype.hasOwnProperty.call(d, k);
+  if (has('title') && !isNew) { const t = clipN_(d.title, 300); if (!t) bad_('Назва не може бути порожньою.'); x.title = t; }
+  if (has('desc')) x.desc = clipN_(d.desc, 8000);
+  if (has('due')) { const due = isDay_(d.due) ? d.due : ''; if (due !== x.due) x.reminded = ''; x.due = due; }
+  if (has('who')) { const ok = W.members.map((m) => m.tgId); x.who = uniq_([].concat(d.who || []).map(String)).filter((id) => ok.indexOf(id) >= 0).slice(0, 12); }
+  if (has('item')) { const it = W.items.filter((i) => i.id === str_(d.item))[0]; x.item = it ? it.id : ''; if (it && it.circle && !has('circle')) x.circle = it.circle; }
+  if (has('circle')) x.circle = wsStrategy_().circles.some((k) => k.id === str_(d.circle)) ? str_(d.circle) : '';
+  if (has('links')) x.links = wsLinks_(d.links);
+  if (has('addLink')) { const l = wsLinks_([d.addLink])[0]; if (!l) bad_('Встав повне посилання, що починається з https://'); if (x.links.length >= 25) bad_('Забагато посилань.'); x.links.push(l); }
+  if (has('check')) x.check = [].concat(d.check || []).slice(0, 60).map((k) => ({ t: clipN_(k && k.t, 300), d: !!(k && k.d) })).filter((k) => k.t);
+  if (has('archived')) x.archived = !!d.archived;
+  if (has('col') && str_(d.col) && str_(d.col) !== x.col) {
+    const col = W.cols.filter((k) => k.id === str_(d.col))[0];
+    if (!col) bad_('Такої колонки вже немає.');
+    const from = W.cols.filter((k) => k.id === x.col)[0];
+    x.board = col.board; x.col = col.id; x.pos = endPos(col.id, x.id);
+    if (col.kind === 'done') x.done = true; else if (from && from.kind === 'done') x.done = false;
+  }
+  if (has('done') && !!d.done !== x.done) {
+    x.done = !!d.done;
+    const cols = colsOf(x.board), cur = cols.filter((k) => k.id === x.col)[0];
+    const target = x.done ? cols.filter((k) => k.kind === 'done')[0] : (cur && cur.kind === 'done' ? cols.filter((k) => k.kind !== 'done')[0] : null);
+    if (target && target.id !== x.col) { x.col = target.id; x.pos = endPos(target.id, x.id); }
+  }
+  if (has('shift') && !isNew) {
+    const list = W.cards.filter((y) => y.col === x.col && !y.archived).sort((a, b) => a.pos - b.pos);
+    const i = list.indexOf(x), j = i + (Number(d.shift) < 0 ? -1 : 1);
+    if (i >= 0 && list[j]) { const o = list[j], p = o.pos; o.pos = x.pos; x.pos = p; if (o.pos === x.pos) x.pos += Number(d.shift) < 0 ? -0.5 : 0.5; o.updated = now; wsWriteCard_(o); }
+  }
+  x.updated = now; x.updatedBy = c.name;
+  if (isNew) W.cards.push(x);
+  wsWriteCard_(x);
+  const colName = (W.cols.filter((k) => k.id === x.col)[0] || {}).title || '';
+  if (isNew) wsLog_(c, 'створив(ла) задачу «' + x.title + '»', x.id);
+  else if (x.done && !was.done) wsLog_(c, 'виконав(ла) «' + x.title + '»', x.id);
+  else if (was.col && was.col !== x.col) wsLog_(c, 'перемістив(ла) «' + x.title + '» → ' + colName, x.id);
+  // повідомлення: новим виконавцям; автору — коли задачу виконав хтось інший
+  const added = x.who.filter((id) => was.who.indexOf(id) < 0);
+  if (added.length && !x.done) wsNotify_(added, c, '📌 <b>' + esc_(c.name) + '</b> доручає тобі задачу в ' + wsTag_() + ':\n\n<b>' + esc_(x.title) + '</b>' +
+    (x.due ? '\n🗓 Дедлайн: ' + fmtDue_(x.due) : '') + (x.desc ? '\n\n' + esc_(x.desc.slice(0, 600)) : ''), x.id);
+  if (x.done && !was.done && !isNew) wsNotify_([x.authorId], c, '✅ <b>' + esc_(c.name) + '</b> виконав(ла) задачу «' + esc_(x.title) + '»', x.id);
+  return wsCardOut_(x);
+};
+API.wsCardDelete = function (c, d) {
+  const A = wsAcc_(c);
+  const W = S.ws, x = W.cards.filter((y) => y.id === str_(d.id))[0];
+  if (!x) bad_('Задачу не знайдено.');
+  if (!A.admin && x.authorId !== c.id) deny_('Видалити задачу може її автор або той, хто керує простором. Можна перенести в архів.');
+  W.cards.splice(W.cards.indexOf(x), 1);
+  S.run('DELETE FROM ws_comments WHERE card_id = ?', [x.id]);
+  S.run('DELETE FROM ws_cards WHERE id = ?', [x.id]);
+  wsLog_(c, 'видалив(ла) задачу «' + x.title + '»', '');
+  return { ok: true };
+};
+API.wsComment = function (c, d) {
+  wsAcc_(c);
+  const x = S.ws.cards.filter((y) => y.id === str_(d.card))[0];
+  if (!x) bad_('Задачу не знайдено.');
+  const text = clipN_(d.text, 3000);
+  if (!text) bad_('Напиши коментар.');
+  const k = { id: uid_(), card: x.id, tgId: c.id, name: c.name, text: text, created: nowIso() };
+  S.run('INSERT INTO ws_comments (id, ws, card_id, tg_id, name, text, created) VALUES (?,?,?,?,?,?,?)', [k.id, S.ws.id, k.card, k.tgId, k.name, k.text, k.created]);
+  (S.wsComments = S.wsComments || []).push(k);
+  S.ws.cc[x.id] = (S.ws.cc[x.id] || 0) + 1;
+  wsLog_(c, 'прокоментував(ла) «' + x.title + '»', x.id);
+  wsNotify_(x.who.concat([x.authorId]), c, '💬 <b>' + esc_(c.name) + '</b> у задачі «' + esc_(x.title) + '»:\n\n' + esc_(text.slice(0, 700)), x.id);
+  return { card: wsCardOut_(x), comments: S.wsComments };
+};
+API.wsCommentDelete = function (c, d) {
+  const A = wsAcc_(c);
+  const k = (S.wsComments || []).filter((y) => y.id === str_(d.id))[0];
+  if (!k) bad_('Коментар не знайдено.');
+  if (k.tgId !== c.id && !A.admin) deny_('Видалити можна лише свій коментар.');
+  S.run('DELETE FROM ws_comments WHERE id = ?', [k.id]);
+  S.wsComments.splice(S.wsComments.indexOf(k), 1);
+  S.ws.cc[k.card] = Math.max(0, (S.ws.cc[k.card] || 1) - 1);
+  const x = S.ws.cards.filter((y) => y.id === k.card)[0];
+  return { card: x ? wsCardOut_(x) : null, comments: S.wsComments };
+};
+API.wsColSave = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws;
+  let col = d.id ? W.cols.filter((k) => k.id === str_(d.id))[0] : null;
+  if (d.id && !col) bad_('Колонку не знайдено.');
+  if (!col) {
+    const board = W.boards.filter((b) => b.id === str_(d.board))[0];
+    if (!board) bad_('Дошку не знайдено.');
+    const cols = W.cols.filter((k) => k.board === board.id);
+    if (cols.length >= 12) bad_('Забагато колонок на одній дошці.');
+    col = { id: 'c' + uid_(), board: board.id, title: '', kind: '', pos: cols.reduce((a, k) => Math.max(a, k.pos), 0) + 1 };
+    // нову колонку ставимо перед «Готово»
+    const done = cols.filter((k) => k.kind === 'done')[0];
+    if (done) { col.pos = done.pos; done.pos += 1; S.run('UPDATE ws_cols SET pos = ? WHERE id = ?', [done.pos, done.id]); }
+    W.cols.push(col);
+  }
+  if (Object.prototype.hasOwnProperty.call(d, 'title') || !col.title) { const t = clipN_(d.title, 60); if (!t) bad_('Назви колонку.'); col.title = t; }
+  if (Object.prototype.hasOwnProperty.call(d, 'done')) {
+    col.kind = d.done ? 'done' : '';
+    if (d.done) W.cols.filter((k) => k.board === col.board && k.id !== col.id && k.kind === 'done').forEach((k) => { k.kind = ''; S.run('UPDATE ws_cols SET kind = ? WHERE id = ?', ['', k.id]); });
+  }
+  if (d.shift) {
+    const list = W.cols.filter((k) => k.board === col.board).sort((a, b) => a.pos - b.pos);
+    const i = list.indexOf(col), o = list[i + (Number(d.shift) < 0 ? -1 : 1)];
+    if (o) { const p = o.pos; o.pos = col.pos; col.pos = p; if (o.pos === col.pos) col.pos += Number(d.shift) < 0 ? -0.5 : 0.5; S.run('UPDATE ws_cols SET pos = ? WHERE id = ?', [o.pos, o.id]); }
+  }
+  S.run('INSERT OR REPLACE INTO ws_cols (id, ws, board_id, title, kind, pos) VALUES (?,?,?,?,?,?)', [col.id, W.id, col.board, col.title, col.kind, col.pos]);
+  return API.ws(c);
+};
+API.wsColDelete = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws, col = W.cols.filter((k) => k.id === str_(d.id))[0];
+  if (!col) bad_('Колонку не знайдено.');
+  if (W.cols.filter((k) => k.board === col.board).length <= 1) bad_('На дошці має лишитися хоча б одна колонка.');
+  if (W.cards.some((x) => x.col === col.id && !x.archived)) bad_('Спершу перенеси задачі з цієї колонки.');
+  W.cols.splice(W.cols.indexOf(col), 1);
+  S.run('DELETE FROM ws_cols WHERE id = ?', [col.id]);
+  return API.ws(c);
+};
+API.wsBoardSave = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws;
+  const title = clipN_(d.title, 80);
+  if (!title) bad_('Назви дошку.');
+  let b = d.id ? W.boards.filter((x) => x.id === str_(d.id))[0] : null;
+  if (d.id && !b) bad_('Дошку не знайдено.');
+  if (b) { b.title = title; S.run('UPDATE ws_boards SET title = ? WHERE id = ?', [title, b.id]); return API.ws(c); }
+  if (W.boards.length >= 20) bad_('Забагато дошок.');
+  b = { id: 'b' + uid_(), title: title, pos: W.boards.reduce((a, x) => Math.max(a, x.pos), 0) + 1 };
+  W.boards.push(b);
+  S.run('INSERT INTO ws_boards (id, ws, title, pos, created) VALUES (?,?,?,?,?)', [b.id, W.id, b.title, b.pos, nowIso()]);
+  WS_DEF_COLS.filter((x, i) => i !== 2).forEach((x, i) => {
+    const col = { id: 'c' + uid_(), board: b.id, title: x[0], kind: x[1], pos: i + 1 };
+    W.cols.push(col);
+    S.run('INSERT INTO ws_cols (id, ws, board_id, title, kind, pos) VALUES (?,?,?,?,?,?)', [col.id, W.id, b.id, col.title, col.kind, col.pos]);
+  });
+  const out = API.ws(c); out.newBoard = b.id; return out;
+};
+API.wsBoardDelete = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, b = W.boards.filter((x) => x.id === str_(d.id))[0];
+  if (!b) bad_('Дошку не знайдено.');
+  if (W.boards.length <= 1) bad_('Має лишитися хоча б одна дошка.');
+  if (W.cards.some((x) => x.board === b.id && !x.archived)) bad_('На дошці ще є задачі — перенеси або видали їх.');
+  W.boards.splice(W.boards.indexOf(b), 1);
+  W.cols = W.cols.filter((k) => k.board !== b.id);
+  S.run('DELETE FROM ws_cols WHERE board_id = ?', [b.id]);
+  S.run('DELETE FROM ws_cards WHERE board_id = ?', [b.id]);
+  S.run('DELETE FROM ws_boards WHERE id = ?', [b.id]);
+  return API.ws(c);
+};
+
+// ── сторінки (як у Notion): текст із заголовками, списками, чекбоксами й посиланнями; підсторінки ──
+function wsPath_(id) {
+  const out = [], seen = {};
+  let p = S.ws.pages.filter((x) => x.id === id)[0];
+  while (p && !seen[p.id]) { seen[p.id] = 1; out.unshift({ id: p.id, title: p.title, icon: p.icon }); p = S.ws.pages.filter((x) => x.id === p.parent)[0]; }
+  return out;
+}
+function wsDescendants_(id) {
+  const out = [];
+  const walk = (pid) => S.ws.pages.filter((x) => x.parent === pid).forEach((x) => { if (out.indexOf(x.id) < 0) { out.push(x.id); walk(x.id); } });
+  walk(id);
+  return out;
+}
+API.wsPage = function (c, d) {
+  wsAcc_(c);
+  const p = S.ws.pages.filter((x) => x.id === str_(d.id))[0];
+  if (!p) bad_('Сторінку не знайдено — можливо, її видалили.');
+  return { page: Object.assign({}, p, { body: S.wsPageBody || '' }), path: wsPath_(p.id), children: S.ws.pages.filter((x) => x.parent === p.id).sort((a, b) => a.pos - b.pos) };
+};
+API.wsPageSave = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws, now = nowIso();
+  let p = d.id ? W.pages.filter((x) => x.id === str_(d.id))[0] : null;
+  if (d.id && !p) bad_('Сторінку не знайдено — можливо, її видалили.');
+  if (p && d.base && d.base !== p.updated) throw new ApiError('conflict', (p.updatedBy || 'Хтось') + ' щойно змінив(ла) цю сторінку. Глянь свіжу версію — твій текст збережено в редакторі.');
+  const parent = str_(d.parent);
+  if (parent) {
+    if (!W.pages.some((x) => x.id === parent)) bad_('Батьківську сторінку не знайдено.');
+    if (p && (parent === p.id || wsDescendants_(p.id).indexOf(parent) >= 0)) bad_('Не можна вкласти сторінку саму в себе.');
+  }
+  const title = clipN_(d.title, 200) || 'Без назви';
+  const icon = clipN_(d.icon, 8);
+  const body = clipN_(d.body, 60000);
+  if (!p) {
+    if (W.pages.length >= 1000) bad_('Забагато сторінок.');
+    p = { id: uid_(), parent: parent, title: title, icon: icon, pos: W.pages.filter((x) => x.parent === parent).reduce((a, x) => Math.max(a, x.pos), 0) + 1, authorId: c.id, created: now, updated: now, updatedBy: c.name, len: body.length };
+    W.pages.push(p);
+    S.run('INSERT INTO ws_pages (id, ws, parent_id, title, icon, body, pos, author_id, created, updated, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [p.id, W.id, p.parent, p.title, p.icon, body, p.pos, p.authorId, p.created, p.updated, p.updatedBy]);
+    wsLog_(c, 'створив(ла) сторінку «' + p.title + '»', '');
+  } else {
+    p.parent = parent; p.title = title; p.icon = icon; p.updated = now; p.updatedBy = c.name; p.len = body.length;
+    S.run('UPDATE ws_pages SET parent_id = ?, title = ?, icon = ?, body = ?, updated = ?, updated_by = ? WHERE id = ?', [p.parent, p.title, p.icon, body, p.updated, p.updatedBy, p.id]);
+  }
+  return { page: Object.assign({}, p, { body: body }), path: wsPath_(p.id), children: W.pages.filter((x) => x.parent === p.id).sort((a, b) => a.pos - b.pos) };
+};
+API.wsPageDelete = function (c, d) {
+  const A = wsAcc_(c);
+  const W = S.ws, p = W.pages.filter((x) => x.id === str_(d.id))[0];
+  if (!p) bad_('Сторінку не знайдено.');
+  if (!A.admin && p.authorId !== c.id) deny_('Видалити сторінку може її автор або той, хто керує простором.');
+  const ids = [p.id].concat(wsDescendants_(p.id));
+  S.run('DELETE FROM ws_pages WHERE id IN (SELECT value FROM json_each(?))', [JSON.stringify(ids)]);
+  W.pages = W.pages.filter((x) => ids.indexOf(x.id) < 0);
+  wsLog_(c, 'видалив(ла) сторінку «' + p.title + '»', '');
+  return { ok: true, removed: ids.length, parent: p.parent };
+};
+
+// ── стратегія: цілі й проекти в 9 напрямках ──
+API.wsItemSave = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws, now = nowIso();
+  let it = d.id ? W.items.filter((x) => x.id === str_(d.id))[0] : null;
+  if (d.id && !it) bad_('Не знайдено.');
+  const title = clipN_(d.title, 200);
+  if (!title) bad_('Напиши назву.');
+  const circle = wsStrategy_().circles.some((k) => k.id === str_(d.circle)) ? str_(d.circle) : '';
+  const owner = W.members.some((m) => m.tgId === str_(d.owner)) ? str_(d.owner) : '';
+  const v = { circle: circle, kind: d.kind === 'goal' ? 'goal' : 'project', title: title, desc: clipN_(d.desc, 4000), status: WS_ITEM_ST[d.status] ? d.status : 'plan', owner: owner,
+    due: isDay_(d.due) ? d.due : '', url: wsUrl_(d.url) };
+  if (!it) { it = Object.assign({ id: uid_(), pos: W.items.reduce((a, x) => Math.max(a, x.pos), 0) + 1, created: now }, v); W.items.push(it); wsLog_(c, 'додав(ла) ' + (v.kind === 'goal' ? 'ціль' : 'проект') + ' «' + title + '»', ''); }
+  else Object.assign(it, v);
+  it.updated = now;
+  S.run('INSERT OR REPLACE INTO ws_items (id, ws, circle, kind, title, descr, status, owner, due, url, pos, created, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [it.id, W.id, it.circle, it.kind, it.title, it.desc, it.status, it.owner, it.due, it.url, it.pos, it.created, it.updated]);
+  return { item: it, ws: API.ws(c) };
+};
+API.wsItemDelete = function (c, d) {
+  wsAcc_(c);
+  const W = S.ws, it = W.items.filter((x) => x.id === str_(d.id))[0];
+  if (!it) bad_('Не знайдено.');
+  W.items.splice(W.items.indexOf(it), 1);
+  W.cards.filter((x) => x.item === it.id).forEach((x) => { x.item = ''; });
+  S.run("UPDATE ws_cards SET item_id = '' WHERE item_id = ?", [it.id]);
+  S.run('DELETE FROM ws_items WHERE id = ?', [it.id]);
+  return API.ws(c);
+};
+function wsKvSet_(k, v) {
+  const s = JSON.stringify(v);
+  if (s.length > 1900000) bad_('Завеликий файл даних («' + k + '»).');
+  S.ws.kv[k] = v;
+  S.run('INSERT OR REPLACE INTO ws_kv (ws, k, v, updated) VALUES (?,?,?,?)', [S.ws.id, k, s, nowIso()]);
+}
+API.wsStrategySave = function (c, d) {
+  wsAcc_(c, true);
+  const cur = wsStrategy_();
+  const s = { title: clipN_(d.title, 120) || cur.title, vision: clipN_(d.vision, 200) || cur.vision, docUrl: d.docUrl != null ? wsUrl_(d.docUrl) : cur.docUrl,
+    targets: (Array.isArray(d.targets) ? d.targets : cur.targets).slice(0, 6).map((t) => ({ k: str_(t.k).slice(0, 20), l: clipN_(t.l, 40), n: Math.max(0, Math.round(Number(t.n) || 0)) })).filter((t) => t.l) };
+  wsKvSet_('strategy', s);
+  if (Array.isArray(d.circles)) {
+    const ids = cur.circles.map((k) => k.id);
+    const list = d.circles.slice(0, 15).map((k, i) => ({ id: ids.indexOf(str_(k.id)) >= 0 ? str_(k.id) : 'c' + uid_().slice(0, 6), title: clipN_(k.title, 120) })).filter((k) => k.title);
+    if (list.length) wsKvSet_('circles', list);
+  }
+  return API.ws(c);
+};
+
+// ── учасники ──
+API.wsPeopleFind = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, q = str_(d.q).toLowerCase();
+  const inWs = W.members.map((m) => m.tgId);
+  const st = loadStruct_();
+  const region = st.regions.filter((r) => r.name === W.row.region)[0];
+  const roleLine = (id) => loadRoles_().filter((r) => r.tgId === id && r.status === ST.ACTIVE && r.key !== 'SUPER').map((r) => r.label + (r.level === 'nat' ? '' : ' · ' + unitName_(r.level, r.unitId))).slice(0, 2).join(', ');
+  let ids;
+  if (q.length >= 2) ids = Object.keys(S.b.people).filter((id) => isReal_(id) && String(S.b.people[id].name || '').toLowerCase().indexOf(q) >= 0);
+  else {
+    // підказка: хто служить на рівні ерії чи регіону цього простору або в офісі ерії
+    const inReg = (r) => region && ((r.level === 'region' && r.unitId === region.id) || (r.level === 'area' && st.area[r.unitId] && st.area[r.unitId].regionId === region.id));
+    ids = uniq_(loadRoles_().filter((r) => r.status === ST.ACTIVE && r.key !== 'SUPER' && inReg(r)).map((r) => r.tgId)).filter(isReal_);
+  }
+  return ids.filter((id) => inWs.indexOf(id) < 0).slice(0, 25).map((id) => ({ id: id, name: (S.b.people[id] || {}).name || id, role: roleLine(id) }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'uk'));
+};
+API.wsMemberSave = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, id = str_(d.id);
+  if (!isReal_(id) || !getPerson_(id)) bad_('Цієї людини ще немає в MyYL.');
+  let m = W.members.filter((x) => x.tgId === id)[0];
+  const isNew = !m;
+  if (!m) { m = { tgId: id, role: 'member', pkey: wsAutoKey_(wsName_(id)), area: '', added: nowIso() }; W.members.push(m); }
+  if (d.role) {
+    const role = d.role === 'admin' ? 'admin' : 'member';
+    if (role === 'member' && m.role === 'admin' && W.members.filter((x) => x.role === 'admin').length <= 1 && !isSuper_(c)) bad_('Має лишитися хоча б одна людина, що керує простором.');
+    m.role = role;
+  }
+  if (d.pkey != null) m.pkey = str_(d.pkey).slice(0, 40);
+  if (d.area != null) m.area = str_(d.area).slice(0, 40);
+  S.run('INSERT OR REPLACE INTO ws_members (ws, tg_id, role, pkey, area, added) VALUES (?,?,?,?,?,?)', [W.id, m.tgId, m.role, m.pkey, m.area, m.added]);
+  if (isNew && id !== c.id && wants_(id, 'tasks')) sendApp_(id, '👋 <b>' + esc_(c.name) + '</b> додав(ла) тебе в робочий простір ' + wsTag_() + '.\n\nТут задачі команди з дедлайнами, сторінки й документи, стратегія та профілі.', 'Відкрити простір', 'ws');
+  if (isNew) wsLog_(c, 'додав(ла) ' + wsName_(id) + ' в команду простору', '');
+  return API.ws(c);
+};
+API.wsMemberRemove = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, m = W.members.filter((x) => x.tgId === str_(d.id))[0];
+  if (!m) bad_('Цієї людини немає в просторі.');
+  if (m.tgId === c.id) bad_('Себе прибрати не можна.');
+  if (m.role === 'admin' && W.members.filter((x) => x.role === 'admin').length <= 1) bad_('Має лишитися хоча б одна людина, що керує простором.');
+  W.members.splice(W.members.indexOf(m), 1);
+  S.run('DELETE FROM ws_members WHERE ws = ? AND tg_id = ?', [W.id, m.tgId]);
+  return API.ws(c);
+};
+
+// ── профілі (сильні сторони) та аналітика командних табличок; оновлюються файлом даних ──
+API.wsProfiles = function (c) {
+  wsAcc_(c);
+  const B = S.wsBig || {};
+  return { profiles: B.profiles || null, photos: B.photos || {}, at: B.profilesAt || '' };
+};
+API.wsAnalytics = function (c) {
+  wsAcc_(c);
+  const B = S.wsBig || {};
+  return { analytics: B.analytics || null, oto: B.oto || null, at: B.analyticsAt || '' };
+};
+API.wsImport = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, got = [];
+  const meta = Object.assign({}, W.kv.meta || {});
+  if (d.profiles && Array.isArray(d.profiles.people) && Array.isArray(d.profiles.themes)) {
+    wsKvSet_('profiles', { themes: d.profiles.themes, people: d.profiles.people, domains: d.profiles.domains || null });
+    wsKvSet_('pnames', d.profiles.people.map((p) => ({ id: str_(p.id), ua: str_(p.ua), en: str_(p.en), full: str_(p.full) })));
+    meta.profiles = d.profiles.people.length; got.push('профілі: ' + d.profiles.people.length);
+    // підвʼязати учасників до профілів за імʼям
+    W.members.filter((m) => !m.pkey).forEach((m) => {
+      m.pkey = wsAutoKey_(wsName_(m.tgId));
+      if (m.pkey) S.run('UPDATE ws_members SET pkey = ? WHERE ws = ? AND tg_id = ?', [m.pkey, W.id, m.tgId]);
+    });
+  }
+  if (d.photos && typeof d.photos === 'object') {
+    const ph = {};
+    Object.keys(d.photos).slice(0, 60).forEach((k) => { const v = String(d.photos[k] || ''); if (/^data:image\/(jpeg|png|webp);base64,/.test(v) && v.length < 400000) ph[str_(k)] = v; });
+    wsKvSet_('photos', ph); got.push('фото: ' + Object.keys(ph).length);
+  }
+  if (d.analytics && Array.isArray(d.analytics.teams)) {
+    wsKvSet_('analytics', d.analytics);
+    const teams = d.analytics.teams;
+    wsKvSet_('current', { leaders: teams.reduce((a, t) => a + (Number(t.members) || 0), 0), teams: teams.length, at: str_(d.analytics.updated) || nowIso().slice(0, 10) });
+    meta.analytics = teams.length; got.push('команди: ' + teams.length);
+  }
+  if (d.oto && Array.isArray(d.oto.files)) { wsKvSet_('oto', d.oto); meta.oto = d.oto.files.length; got.push('one-to-one: ' + d.oto.files.length); }
+  if (Array.isArray(d.areas)) {
+    wsKvSet_('areas', d.areas.slice(0, 20).map((a) => ({ key: str_(a.key).slice(0, 30), name: clipN_(a.name, 60), director: clipN_(a.director, 80), acting: !!a.acting, color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '',
+      teamFolder: wsUrl_(a.teamFolder), otoFolder: wsUrl_(a.otoFolder), order: Number(a.order) || 0 })).filter((a) => a.key && a.name));
+    got.push('ерії: ' + d.areas.length);
+  }
+  if (d.strategy && typeof d.strategy === 'object') { API.wsStrategySave(c, d.strategy); got.push('стратегія'); }
+  if (!got.length) bad_('У файлі немає даних для простору.');
+  meta.updated = nowIso();
+  wsKvSet_('meta', meta);
+  wsLog_(c, 'оновив(ла) дані простору (' + got.join(', ') + ')', '');
+  return { got: got, ws: API.ws(c) };
+};
+
+// ── нагадування про дедлайни (щодня о 9:00 за Києвом): завтра, сьогодні, прострочено на день ──
+function wsReminder_() {
+  const today = kyivDay(new Date());
+  (S.wsDue || []).forEach((x) => {
+    if (x.reminded === today) return;
+    const d = x.due === today ? 0 : x.due < today ? -1 : 1;
+    const head = d === 1 ? '⏰ <b>Завтра дедлайн</b>' : d === 0 ? '🔥 <b>Сьогодні дедлайн</b>' : '⚠️ <b>Дедлайн минув учора</b>';
+    const to = (x.who.length ? x.who : [x.authorId]).filter((id) => isReal_(id) && wants_(id, 'tasks'));
+    to.forEach((id) => sendApp_(id, head + ' · ' + esc_(S.wsNames[x.ws] || 'робочий простір') + '\n\n<b>' + esc_(x.title) + '</b>' + (x.check.length ? '\n☑️ ' + x.check.filter((k) => k.d).length + ' з ' + x.check.length : ''), 'Відкрити задачу', wsCardLink_(x.id)));
+    S.run('UPDATE ws_cards SET reminded = ? WHERE id = ?', [today, x.id]);
+  });
+}
+
+Object.assign(NEEDS, {
+  ws: { ws: true }, wsCard: { ws: true, wsComments: true }, wsCardSave: { ws: true }, wsCardDelete: { ws: true }, wsComment: { ws: true, wsComments: true }, wsCommentDelete: { ws: true, wsComments: true },
+  wsColSave: { ws: true }, wsColDelete: { ws: true }, wsBoardSave: { ws: true }, wsBoardDelete: { ws: true },
+  wsPage: { ws: true, wsPage: true }, wsPageSave: { ws: true }, wsPageDelete: { ws: true }, wsItemSave: { ws: true }, wsItemDelete: { ws: true }, wsStrategySave: { ws: true },
+  wsPeopleFind: { ws: true }, wsMemberSave: { ws: true }, wsMemberRemove: { ws: true },
+  wsProfiles: { ws: true, wsKv: ['profiles', 'photos'] }, wsAnalytics: { ws: true, wsKv: ['analytics', 'oto'] }, wsImport: { ws: true },
+});
+NEEDS.me.wsMine = true;
+{
+  const meBase = API.me;
+  API.me = function (c, d) { const o = meBase(c, d); if (o && o.status === 'active') o.ws = wsMineOut_(c); return o; };
+}
+
+export const __test = { wsReminder_, nameScore_, API, Store, use, verifyInitData, weekKey_, kyivDay, weeklyReminder, eventReminder, resetBase: () => { BASE = null; } };

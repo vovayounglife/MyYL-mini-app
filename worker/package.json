@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/api.test.mjs"
+    "test": "node test/api.test.mjs && node test/ws.test.mjs"
   }
 }
