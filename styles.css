@@ -706,3 +706,6 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .hed-lbl input { width: 20px; height: 20px; flex: none; accent-color: var(--accent, #e8692e); }
 .icon-btn.sm { width: 34px; height: 34px; min-width: 34px; font-size: 12px; }
 .icon-btn.sm:disabled { opacity: .3; }
+.hed-ic { width: 30px; height: 30px; flex: none; }
+.hed-grp { padding: 10px 14px 2px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.hed-plus { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; line-height: 1; }

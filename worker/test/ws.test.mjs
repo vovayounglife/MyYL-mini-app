@@ -380,6 +380,8 @@ me = await api(NASTIA, 'me');
 ok(me.data.user.home.order[0] === 'events' && me.data.user.home.hide[0] === 'tiles', 'вигляд головної збережено в профілі');
 me = await api(VOVA, 'me');
 ok(me.data.user.home === null, 'в інших людей головна без змін');
+r = await api(NASTIA, 'homeSet', { order: ['m_calendar', 'week', 'm_<script>', 'm_bank'], hide: [] });
+ok(r.ok && r.data.home.order.join() === 'm_calendar,week,m_bank', 'вигляд головної: ярлики з «Ще», без сміття');
 r = await api(NASTIA, 'homeSet', { reset: true });
 me = await api(NASTIA, 'me');
 ok(r.ok && me.data.user.home === null, 'вигляд головної: «як було»');

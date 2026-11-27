@@ -2914,7 +2914,8 @@ const clubOut_ = (r) => ({ id: r.id, date: r.date, none: r.mode === MODE.none, w
 
 // вигляд головного екрана: які блоки показувати і в якому порядку (зберігається в профілі — однаково на всіх пристроях)
 const HOME_BLOCKS = ['alerts', 'week', 'quick', 'ws', 'club', 'tiles', 'events', 'scope'];
-const homeKeys_ = (a) => uniq_((Array.isArray(a) ? a : []).map(String)).filter((k) => HOME_BLOCKS.indexOf(k) >= 0);
+// свої блоки + ярлики з «Ще» (m_<екран>)
+const homeKeys_ = (a) => uniq_((Array.isArray(a) ? a : []).map(String)).filter((k) => HOME_BLOCKS.indexOf(k) >= 0 || /^m_[a-z]{2,20}$/.test(k)).slice(0, 40);
 function homeOut_(h) {
   if (!h || typeof h !== 'object') return null;
   return { order: homeKeys_(h.order), hide: homeKeys_(h.hide) };

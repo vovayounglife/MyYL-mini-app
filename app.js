@@ -863,13 +863,16 @@
     has.ws = (m.ws || []).length > 0;
     has.club = !!clubHomeCards();
     has.scope = !!m.scopeCard;
-    return HOME_DEF.filter((d) => has[d[0]]).map((d) => d[0]);
+    return HOME_DEF.filter((d) => has[d[0]]).map((d) => d[0]).concat(homeLinks().map((x) => 'm_' + x.k));
   }
+  // ярлики з «Ще», які можна поставити на головну
+  const homeLinks = () => { const out = []; moreSections().forEach(([t, items]) => items.forEach((m) => { if (!m.a && out.every((x) => x.k !== m.k)) out.push(Object.assign({ grp: t }, m)); })); return out; };
+  const homeLinkTile = (x) => `<button type="button" class="tile h" style="position:relative" data-a="tabGo" data-s="${esc(x.k)}"><span class="ic ${x.ic}">${icon(x.icon, 18)}</span><span class="grow"><span style="display:block">${esc(x.label)}</span><span class="xs muted" style="font-weight:400">${esc(x.sub || '')}</span></span>${x.badge ? `<span class="badge" style="position:absolute;top:8px;right:8px">${x.badge}</span>` : ''}</button>`;
   // порядок: збережений + нові блоки (яких ще не було) на своїх звичних місцях
   function homeLayout() {
     const saved = S.homeDraft || (me().user || {}).home || null;
     const def = HOME_DEF.map((d) => d[0]);
-    let order = saved && saved.order && saved.order.length ? saved.order.filter((k) => def.indexOf(k) >= 0) : def.slice();
+    let order = saved && saved.order && saved.order.length ? saved.order.filter((k) => def.indexOf(k) >= 0 || /^m_/.test(k)) : def.slice();
     def.forEach((k, i) => { if (order.indexOf(k) < 0) { const prev = def.slice(0, i).reverse().find((x) => order.indexOf(x) >= 0); order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, k); } });
     return { order: order, hide: (saved && saved.hide) || [] };
   }
@@ -880,7 +883,15 @@
     if (offer) h += `<div class="card col" style="gap:10px">${offer}</div>`;
     const B = homeBlocks(), L = homeLayout();
     const shown = L.order.filter((k) => L.hide.indexOf(k) < 0);
-    shown.forEach((k) => { h += B[k] ? (k === 'quick' ? B.quick(shown.indexOf('week') >= 0) : B[k]()) : ''; });
+    // ярлики з «Ще», що стоять поруч, — однією сіткою по два
+    let run = [];
+    const flush = () => { if (run.length) h += `<div class="grid2">${run.map(homeLinkTile).join('')}</div>`; run = []; };
+    shown.forEach((k) => {
+      if (/^m_/.test(k)) { const x = moreItem(k.slice(2)); if (x && !x.a) run.push(x); return; }
+      flush();
+      h += B[k] ? (k === 'quick' ? B.quick(shown.indexOf('week') >= 0) : B[k]()) : '';
+    });
+    flush();
     if (!shown.length) h += '<div class="empty small">Усі блоки сховано — налаштуй, що показувати</div>';
     h += `<button type="button" class="link-btn small" style="align-self:center;margin-top:6px" data-a="homeEdit">${icon('more', 16)} Налаштувати вигляд екрану</button>`;
     return h;
@@ -888,18 +899,31 @@
   function homeEditView() {
     const L = homeLayout(), av = homeAvail();
     const rows = L.order.filter((k) => av.indexOf(k) >= 0);
-    const name = (k) => HOME_DEF.filter((d) => d[0] === k)[0];
+    const links = homeLinks();
+    const name = (k) => { if (/^m_/.test(k)) { const x = links.filter((y) => 'm_' + y.k === k)[0] || {}; return [k, x.label || '', 'ярлик з «Ще»', x]; } return HOME_DEF.filter((d) => d[0] === k)[0]; };
     let h = header('Вигляд головного екрана', 'Обери блоки й постав їх у потрібному порядку');
     h += `<div class="card list hed" data-noptr>${rows.map((k, i) => {
       const d = name(k), on = L.hide.indexOf(k) < 0;
       return `<div class="hed-row${on ? '' : ' off'}" data-k="${k}">
         <span class="hed-grip" aria-label="Перетягни, щоб пересунути">☰</span>
-        <label class="grow hed-lbl"><input type="checkbox" data-ch="homeToggle" data-k="${k}"${on ? ' checked' : ''}><span><span class="b" style="display:block">${esc(d[1])}</span><span class="xs muted">${esc(d[2])}</span></span></label>
+        ${d[3] ? `<span class="grow hed-lbl"><span class="ic ${d[3].ic} hed-ic">${icon(d[3].icon, 16)}</span><span><span class="b" style="display:block">${esc(d[1])}</span><span class="xs muted">${esc(d[2])}</span></span></span><button type="button" class="icon-btn sm" data-a="homeDel" data-k="${k}" aria-label="Прибрати з головної">✕</button>`
+          : `<label class="grow hed-lbl"><input type="checkbox" data-ch="homeToggle" data-k="${k}"${on ? ' checked' : ''}><span><span class="b" style="display:block">${esc(d[1])}</span><span class="xs muted">${esc(d[2])}</span></span></label>`}
         <button type="button" class="icon-btn sm" data-a="homeMove" data-k="${k}" data-v="-1" aria-label="Вище"${i === 0 ? ' disabled' : ''}>▲</button>
         <button type="button" class="icon-btn sm" data-a="homeMove" data-k="${k}" data-v="1" aria-label="Нижче"${i === rows.length - 1 ? ' disabled' : ''}>▼</button>
       </div>`;
     }).join('')}</div>`;
     h += '<div class="xs muted" style="text-align:center">Тягни за ☰ або тисни стрілки. Сховані блоки нікуди не зникають — їх можна повернути будь-коли.</div>';
+    // додати з «Ще»
+    const free = links.filter((x) => L.order.indexOf('m_' + x.k) < 0);
+    if (free.length) {
+      h += '<div class="sec">Додати з «Ще»</div>';
+      let grp = '';
+      h += `<div class="card list">${free.map((x) => {
+        const head = x.grp !== grp ? `<div class="xs muted hed-grp">${esc(x.grp)}</div>` : '';
+        grp = x.grp;
+        return head + `<button type="button" class="li" data-a="homeAdd" data-k="${esc(x.k)}"><span class="ic ${x.ic}">${icon(x.icon, 18)}</span><span class="grow"><span class="b" style="display:block">${esc(x.label)}</span><span class="small muted">${esc(x.sub || '')}</span></span><span class="hed-plus" aria-hidden="true">+</span></button>`;
+      }).join('')}</div>`;
+    }
     h += `<div class="grid2"><button type="button" class="btn ghost" data-a="homeReset">Як було</button><button type="button" class="btn" data-a="homeSave"${S.homeBusy ? ' disabled' : ''}>Готово</button></div>`;
     return h;
   }
@@ -2099,7 +2123,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
 
   // ───────────── ЩЕ ─────────────
-  VIEWS.more = function () {
+  // пункти «Ще» по групах — і для екрана «Ще», і для ярликів на головній
+  function moreSections() {
     const c = caps();
     const tiles = sectionTiles();
     const tile = (k) => tiles.filter((t) => t.k === k)[0];
@@ -2134,10 +2159,15 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const app = [{ k: 'install', label: IS_INSTALLED ? 'Застосунок MyYL' : 'Додати на головний екран', sub: IS_INSTALLED ? 'встановлено ✓' : (S.homeSt === 'added' ? 'іконку додано ✓' : 'іконка YL на телефоні — як це зробити'), icon: 'phoneApp', ic: 'ic-teal' }];
     app.push({ k: 'bug', label: 'Повідомити про помилку', sub: 'щось не працює чи незручно — напиши', icon: 'send', ic: 'ic-coral' });
     if (c.isSuper) app.push({ k: 'bugs', label: 'Повідомлення про помилки', sub: 'що пишуть користувачі', icon: 'bell', ic: 'ic-purple', badge: me().bugsOpen });
+    return [['Особисте', mine], ['Команда', team], ['Звіти', reps.filter(has)], ['Керування', manage.filter(has)], ['Застосунок', app]];
+  }
+  const moreItem = (k) => { let f = null; moreSections().forEach(([, items]) => items.forEach((m) => { if (!f && m.k === k) f = m; })); return f; };
+  VIEWS.more = function () {
+    const c = caps();
     const list = (items) => `<div class="card list">${items.map((m) => `<button type="button" class="li" ${m.a ? `data-a="${m.a}"` : `data-a="tabGo" data-s="${m.k}"`}><span class="ic ${m.ic}">${icon(m.icon, 18)}</span>
       <span class="grow"><span class="b" style="display:block">${esc(m.label)}</span><span class="small muted">${esc(m.sub)}</span></span>${m.badge ? `<span class="badge">${m.badge}</span>` : ''}<span class="muted">${icon('chev', 18)}</span></button>`).join('')}</div>`;
     let h = header('Ще');
-    [['Особисте', mine], ['Команда', team], ['Звіти', reps.filter(has)], ['Керування', manage.filter(has)], ['Застосунок', app]].forEach(([t, items]) => {
+    moreSections().forEach(([t, items]) => {
       if (items.length) h += `<div class="sec">${t}</div>` + list(items);
     });
     if (ACT_AS) h += `<div class="card row view-pick"><span class="grow small"><b>🎭 Ти зараз як: ${esc((S.me && S.me.actAs && S.me.actAs.name) || ACT_AS.name)}</b><br><span class="xs muted">повний функціонал цієї людини</span></span><button type="button" class="btn sm" data-a="actExit">Повернутися до себе</button></div>`;
@@ -4044,6 +4074,18 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const a = D.order.indexOf(vis[i]), b = D.order.indexOf(vis[j]);
     D.order[a] = vis[j]; D.order[b] = vis[i];
     delete D.reset;
+  };
+  A.homeAdd = (d) => {
+    const D = homeD(), k = 'm_' + d.k;
+    if (D.order.indexOf(k) < 0) D.order.push(k);
+    delete D.reset; haptic('success'); toast('Додано — внизу списку, можна пересунути');
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  };
+  A.homeDel = (d) => {
+    const D = homeD(), i = D.order.indexOf(d.k);
+    if (i >= 0) D.order.splice(i, 1);
+    delete D.reset; haptic('light');
+    const y = window.scrollY; render(); window.scrollTo(0, y);
   };
   A.homeMove = (d) => { homeShift(d.k, Number(d.v)); haptic('light'); const y = window.scrollY; render(); window.scrollTo(0, y); };
   A.homeReset = () => { S.homeDraft = { order: HOME_DEF.map((x) => x[0]), hide: [], reset: true }; haptic('light'); render(); };
