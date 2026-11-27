@@ -665,3 +665,18 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .wsh-task { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); text-align: left; font-weight: 600; font-size: 14px; }
 .wsh-go { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .wsh-go button { min-height: 52px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); font-size: 12px; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.wcard { flex-direction: row; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 12px; }
+.wopen { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; }
+.wtick { flex: 0 0 auto; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--muted); background: transparent; color: #fff; font-weight: 800; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.wtick.on { background: var(--teal); border-color: var(--teal); }
+.wtick:active { transform: scale(.9); }
+.wav { position: relative; display: inline-flex; }
+.wavas .wav { margin-left: -6px; }
+.wavas .wav .wava { margin-left: 0; }
+.wav.ok .wava { box-shadow: 0 0 0 2px var(--teal); }
+.wav.ok::after { content: '✓'; position: absolute; right: -3px; bottom: -3px; width: 13px; height: 13px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 9px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 1.5px solid var(--card); }
+.wsh-task { gap: 10px; }
+.wsh-task .wopen { flex-direction: row; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.wcpick { display: flex; flex-direction: column; gap: 4px; }
+.wcpick button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px; border-radius: 12px; border: 1.5px solid transparent; background: var(--soft); color: var(--text); text-align: left; font-size: 14px; font-weight: 600; }
+.wcpick button.on { border-color: var(--cc); background: var(--card); }
