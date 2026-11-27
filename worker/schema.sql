@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, area_id TEXT NOT NULL, na
 
 CREATE TABLE IF NOT EXISTS people (
   tg_id TEXT PRIMARY KEY, username TEXT, name TEXT, phone TEXT, email TEXT, bday TEXT, repent TEXT, baptism TEXT,
-  lpyl TEXT, resp TEXT, title TEXT, registered TEXT, notif TEXT, main TEXT, ig TEXT, family TEXT, prefs TEXT
+  lpyl TEXT, resp TEXT, title TEXT, registered TEXT, notif TEXT, main TEXT, ig TEXT, family TEXT, prefs TEXT, photo TEXT
 );
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY, tg_id TEXT NOT NULL, name TEXT, role_key TEXT NOT NULL, level TEXT NOT NULL, unit_id TEXT NOT NULL DEFAULT '',
@@ -113,3 +113,6 @@ CREATE TABLE IF NOT EXISTS ws_kv (ws TEXT NOT NULL, k TEXT NOT NULL, v TEXT, upd
 CREATE TABLE IF NOT EXISTS ws_log (ws TEXT, ts TEXT, tg_id TEXT, name TEXT, text TEXT, card_id TEXT);
 CREATE INDEX IF NOT EXISTS ws_log_ws ON ws_log (ws, ts);
 INSERT OR IGNORE INTO ws (id, name, region, created) VALUES ('west', 'Young Life West Side', 'West', '2026-11-27T12:00:00.000Z');
+
+-- 032: фото профілю
+CREATE TABLE IF NOT EXISTS photos (tg_id TEXT PRIMARY KEY, k TEXT, mime TEXT, data TEXT, updated TEXT);

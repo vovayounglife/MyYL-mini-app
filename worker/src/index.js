@@ -104,6 +104,7 @@ export default {
       if (url.pathname === '/tg' && req.method === 'POST') return await handleTelegram(req, env, ctx);
       if (url.pathname === '/upload' && req.method === 'POST') return await handleUpload(req, env, ctx);
       if (url.pathname.indexOf('/f/') === 0 && req.method === 'GET') return await handleFile(req, env, url);
+      if (url.pathname.indexOf('/p/') === 0 && req.method === 'GET') return await handlePhoto(env, url);
       if (url.pathname.startsWith('/auth/') && req.method === 'POST') return await handleAuth(req, env, url);
       if (url.pathname.startsWith('/admin/') && req.method === 'POST') return await handleAdmin(req, env, ctx, url);
       if (req.method === 'POST' && (url.pathname === '/' || url.pathname === '/api')) return await handleApi(req, env, ctx);
@@ -159,7 +160,7 @@ const NEEDS = {
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, clubPick: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
-  dirStats: { log: 'stats' }, installStats: {},
+  dirStats: { log: 'stats' }, installStats: {}, photoSet: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
@@ -520,7 +521,7 @@ function personFromRow(r) {
   let notif = {}, prefs = {};
   try { notif = r.notif ? JSON.parse(r.notif) : {}; } catch (e) { notif = {}; }
   try { prefs = r.prefs ? JSON.parse(r.prefs) : {}; } catch (e) { prefs = {}; }
-  return { prefs: prefs, main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif };
+  return { prefs: prefs, main: r.main || '', registered: r.registered || '', tgId: r.tg_id, username: r.username || '', name: r.name || '', phone: r.phone || '', email: r.email || '', bday: r.bday || '', repent: r.repent || '', baptism: r.baptism || '', lpyl: r.lpyl || '', resp: r.resp || '', title: r.title || '', ig: r.ig || '', family: r.family || '', notif: notif, photo: r.photo || '' };
 }
 function roleFromRow(r) {
   const def = roleDef_(r.role_key);
@@ -915,6 +916,7 @@ API.me = function (c) {
   out.clubPlans = myClubPlans_(c);
   out.lastClubs = {};
   out.caps.report.club.forEach((id) => { if (lc[id]) out.lastClubs[id] = lc[id]; });
+  out.photos = photoMap_();
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
   return out;
@@ -2673,6 +2675,36 @@ async function handleUpload(req, env, ctx) {
     return json({ ok: false, error: 'error', message: e.message || 'Помилка' });
   }
 }
+// ── фото профілю: людина завантажує своє, його видно в усьому застосунку ──
+// у базі людини — лише ключ (змінюється з кожним новим фото), саме фото — окремо; адреса без ключа не відкривається
+const PHOTO_MAX = 300000;
+function photoMap_() {
+  const o = {};
+  Object.keys(S.b.people).forEach((id) => { const k = S.b.people[id].photo; if (k) o[id] = k; });
+  return o;
+}
+API.photoSet = function (c, d) {
+  if (d.remove) {
+    S.run('DELETE FROM photos WHERE tg_id = ?', [c.id]);
+    S.run("UPDATE people SET photo = '' WHERE tg_id = ?", [c.id], true);
+    return { photo: '' };
+  }
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(d.data || ''));
+  if (!m) bad_('Це не схоже на фото. Обери картинку JPG чи PNG.');
+  if (m[2].length > PHOTO_MAX) bad_('Фото завелике — обери інше.');
+  const k = uid_();
+  S.run('INSERT OR REPLACE INTO photos (tg_id, k, mime, data, updated) VALUES (?,?,?,?,?)', [c.id, k, m[1], m[2], nowIso()]);
+  if (getPerson_(c.id)) S.run('UPDATE people SET photo = ? WHERE tg_id = ?', [k, c.id], true);
+  else S.run('INSERT INTO people (tg_id, name, photo) VALUES (?,?,?)', [c.id, c.name, k], true);
+  return { photo: k };
+};
+async function handlePhoto(env, url) {
+  const id = url.pathname.slice(3).replace(/[^0-9]/g, '');
+  const row = id ? await env.DB.prepare('SELECT k, mime, data FROM photos WHERE tg_id = ?').bind(id).first() : null;
+  if (!row || !row.k || row.k !== url.searchParams.get('k')) return new Response('Фото не знайдено', { status: 404 });
+  const bin = Uint8Array.from(atob(row.data), (ch) => ch.charCodeAt(0));
+  return new Response(bin, { headers: { 'content-type': row.mime || 'image/jpeg', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' } });
+}
 async function handleFile(req, env, url) {
   const id = url.pathname.slice(3).replace(/[^a-z0-9]/gi, '');
   const row = await env.DB.prepare('SELECT * FROM resources WHERE id = ?').bind(id).first();
@@ -3149,11 +3181,11 @@ API.installStats = function (c0, d) {
   const people = Object.keys(byId).map((id) => {
     const per = getPerson_(id) || {};
     const rs = byId[id].roles.sort((a, b) => a.rank - b.rank), top = rs.filter((r) => r.key !== 'SUPER')[0];
-    return { name: per.name || rs[0].name, role: top ? top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, '') : '', reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '', at: per.registered || '' };
+    return { id: isReal_(id) ? id : '', name: per.name || rs[0].name, role: top ? top.label + ' · ' + levelLabel_(top.level, top.unitId).replace(/^Команда /, '') : '', reg: isReal_(id), since: per.registered ? String(per.registered).slice(0, 10) : '', at: per.registered || '' };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const t = count(all);
   return { scope: scope, scopes: p.scopes, total: t.total, reg: t.reg, rows: rows, title: { nat: 'Регіони', region: 'Ерії', area: 'Команди', team: '', multi: 'Вибрані' }[scope.level] || '',
-    latest: people.filter((x) => x.reg && x.at).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 10).map((x) => ({ name: x.name, role: x.role, at: x.at })),
+    latest: people.filter((x) => x.reg && x.at).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 10).map((x) => ({ id: x.id, name: x.name, role: x.role, at: x.at })),
     users: people.filter((x) => x.reg), notYet: people.filter((x) => !x.reg).map((x) => ({ name: x.name, role: x.role })) };
 };
 

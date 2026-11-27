@@ -294,6 +294,23 @@ ok(of.source === 'drive' && of.files[0].people[0].meetings[0].total === 8.3 && !
 r = await api(VOVA, 'ws', {});
 ok(r.data.log.some((e) => /one-to-one/.test(e.text)), 'диск: запис у «Що нового»');
 
+// ── фото профілю ──
+const png = 'data:image/png;base64,' + Buffer.from('fakepngbytes').toString('base64');
+r = await api(NASTIA, 'photoSet', { data: 'data:text/html;base64,PHNjcmlwdD4=' });
+ok(!r.ok, 'фото: не картинку не приймає');
+r = await api(NASTIA, 'photoSet', { data: png });
+ok(r.ok && r.data.photo, 'фото: завантажено');
+const pk = r.data.photo;
+me = await api(VOVA, 'me');
+ok(me.data.photos && me.data.photos['7'] === pk, 'фото: інші бачать ключ фото Насті');
+let ph = await W.fetch(new Request('https://x/p/7?k=' + pk), env, ectx);
+ok(ph.status === 200 && ph.headers.get('content-type') === 'image/png' && (await ph.text()) === 'fakepngbytes', 'фото: віддається за ключем');
+ph = await W.fetch(new Request('https://x/p/7?k=wrong'), env, ectx);
+ok(ph.status === 404, 'фото: без правильного ключа — 404');
+r = await api(NASTIA, 'photoSet', { remove: true });
+me = await api(VOVA, 'me');
+ok(r.ok && !me.data.photos['7'], 'фото: прибрано');
+
 // ── нагадування про дедлайни ──
 const today = T.kyivDay(new Date());
 const yest = T.kyivDay(new Date(Date.now() - 864e5));

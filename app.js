@@ -254,7 +254,11 @@
     return r.slice(0, 2).map((x) => x.label + ' · ' + x.unitName).join(', ') + (r.length > 2 ? ' +' + (r.length - 2) : '');
   };
   const myPhoto = () => { try { return (tg.initDataUnsafe.user || {}).photo_url || ''; } catch (e) { return ''; } };
-  const myAvatar = () => myPhoto() ? `<img class="avatar lg" src="${esc(myPhoto())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
+  // фото, які люди завантажили в MyYL (ключ змінюється з кожним новим фото)
+  const phUrl = (id) => { const k = id && S.me && S.me.photos && S.me.photos[String(id)]; if (!k) return ''; let o = ''; try { o = new URL(API_URL).origin; } catch (e) { o = ''; } return o + '/p/' + encodeURIComponent(id) + '?k=' + encodeURIComponent(k); };
+  const avaHtml = (id, name, style) => { const u = phUrl(id); return u ? `<img class="avatar" src="${esc(u)}" alt="" loading="lazy" style="object-fit:cover;padding:0;${style || ''}">` : `<span class="avatar"${style ? ` style="${style}"` : ''}>${esc(initials(name))}</span>`; };
+  const myPhotoAny = () => phUrl(S.me && S.me.user && S.me.user.id) || myPhoto();
+  const myAvatar = () => myPhotoAny() ? `<img class="avatar lg" src="${esc(myPhotoAny())}" alt="" style="object-fit:cover;padding:0">` : `<div class="avatar lg">${esc(initials(S.me.user.name))}</div>`;
   // невідома роль (напр. службова, якої вже немає в списку) не повинна ламати екран
   const roleDef = (k) => S.me.roleDefs.filter((r) => r.key === k)[0] || { key: k, label: '', rank: 99, level: '' };
   const myTeamFirst = (ids) => { const mine = (S.me.myTeams || []).map((t) => t.id).filter((id) => ids.indexOf(id) >= 0); return mine[0] || ids[0] || null; };
@@ -1341,7 +1345,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       h += `<input class="in" type="search" placeholder="Знайти команду чи людину" data-live="myylFind" aria-label="Пошук у гілці">
         <div id="myylFindList" class="card list hidden">${sub.map((x) => `<button type="button" class="li" data-a="myylGo" data-k="${esc(x.key)}" data-q="${esc((x.name + ' ' + (x.sub || '')).toLowerCase())}">
           <span class="ic ${x.level === 'team' ? 'ic-teal' : 'ic-blue'}">${icon(x.level === 'team' ? 'club' : 'tree', 18)}</span><span class="grow"><span class="b" style="display:block">${esc(LV_NAME[x.level] + x.name)}</span><span class="small muted">${esc(x.sub || '')}</span></span>${icon('chev', 18)}</button>`).join('')}
-          ${ppl.map((o) => `<button type="button" class="li" data-a="myylGo" data-k="${esc(o.x.key)}" data-q="${esc(o.p.name.toLowerCase())}"><span class="avatar">${esc(initials(o.p.name))}</span><span class="grow"><span class="b" style="display:block">${esc(o.p.name)}</span><span class="small muted">${esc(o.p.roles[0] + ' · ' + o.x.name)}</span></span></button>`).join('')}
+          ${ppl.map((o) => `<button type="button" class="li" data-a="myylGo" data-k="${esc(o.x.key)}" data-q="${esc(o.p.name.toLowerCase())}">${avaHtml(o.p.tgId, o.p.name)}<span class="grow"><span class="b" style="display:block">${esc(o.p.name)}</span><span class="small muted">${esc(o.p.roles[0] + ' · ' + o.x.name)}</span></span></button>`).join('')}
           <div class="li small muted" data-empty>Нічого не знайдено</div></div>`;
     }
     h += '<div id="myylMain" style="display:contents">';
@@ -1351,7 +1355,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     else {
       h += `<div class="card list">${u.people.map((p) => {
         const open = m.open === p.tgId;
-        return `<button type="button" class="li" data-a="myylPerson" data-id="${esc(p.tgId)}" aria-expanded="${open}"><span class="avatar">${esc(initials(p.name))}</span>
+        return `<button type="button" class="li" data-a="myylPerson" data-id="${esc(p.tgId)}" aria-expanded="${open}">${avaHtml(p.tgId, p.name)}
           <span class="grow"><span class="b" style="display:block">${esc(p.name)}</span>
           <span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r)}</span>`).join('')}</span></span></button>
           ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${p.username
@@ -1661,11 +1665,11 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const f = (l) => (q ? l.filter((x) => x.name.toLowerCase().indexOf(q) >= 0) : l);
     if ((d.latest || []).length) {
       const when = (t) => { const x = new Date(t); return isNaN(x) ? '' : fmtDay(ymd(x)) + ' · ' + String(x.getHours()).padStart(2, '0') + ':' + String(x.getMinutes()).padStart(2, '0'); };
-      h += `<div class="sec">Останні, хто встановив · ${d.latest.length}</div><div class="card list">${d.latest.map((u) => `<div class="li" style="cursor:default"><span class="avatar">${esc(initials(u.name))}</span><span class="grow"><span class="b" style="display:block">${esc(u.name)}</span><span class="xs muted">${esc(u.role)}</span></span><span class="xs muted" style="text-align:right">${esc(when(u.at))}</span></div>`).join('')}</div>`;
+      h += `<div class="sec">Останні, хто встановив · ${d.latest.length}</div><div class="card list">${d.latest.map((u) => `<div class="li" style="cursor:default">${avaHtml(u.id, u.name)}<span class="grow"><span class="b" style="display:block">${esc(u.name)}</span><span class="xs muted">${esc(u.role)}</span></span><span class="xs muted" style="text-align:right">${esc(when(u.at))}</span></div>`).join('')}</div>`;
     }
     h += `<div class="sec">Користувачі MyYL · ${d.users.length}</div>`;
     if (d.users.length > 8) h += `<input class="in" type="search" style="min-height:40px" placeholder="Знайти…" value="${esc(I.q)}" data-bind="inst.q" data-live="instFind" aria-label="Пошук">`;
-    h += `<div class="card list" id="instList">${f(d.users).map((u) => `<div class="li" style="cursor:default"><span class="avatar">${esc(initials(u.name))}</span><span class="grow"><span class="b" style="display:block">${esc(u.name)}${ylBadge}</span><span class="xs muted">${esc(u.role)}${u.since ? ' · з ' + esc(fmtShortDay(u.since)) + ' ' + u.since.slice(0, 4) : ''}</span></span></div>`).join('') || '<div class="empty small">Нікого</div>'}</div>`;
+    h += `<div class="card list" id="instList">${f(d.users).map((u) => `<div class="li" style="cursor:default">${avaHtml(u.id, u.name)}<span class="grow"><span class="b" style="display:block">${esc(u.name)}${ylBadge}</span><span class="xs muted">${esc(u.role)}${u.since ? ' · з ' + esc(fmtShortDay(u.since)) + ' ' + u.since.slice(0, 4) : ''}</span></span></div>`).join('') || '<div class="empty small">Нікого</div>'}</div>`;
     if (d.notYet.length) {
       h += `<button type="button" class="link-btn" style="align-self:flex-start" data-a="instNot">${I.showNot ? 'Сховати' : 'Ще не в MyYL · ' + d.notYet.length}</button>`;
       if (I.showNot) h += `<div class="card list">${f(d.notYet).map((u) => `<div class="li" style="cursor:default"><span class="avatar" style="opacity:.6">${esc(initials(u.name))}</span><span class="grow"><span style="display:block">${esc(u.name)}</span><span class="xs muted">${esc(u.role)}</span></span></div>`).join('')}</div>`;
@@ -2196,7 +2200,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (groups.length === 1) h += `<div class="small muted">${g0Line(groups[0], regN)}</div>`;
     h += groups.map((g) => `${groups.length > 1 ? `<div class="sec">${esc(g.name)} · ${g0Line(g, regN)}</div>` : ''}<div class="card list">${g.list.map((p) => {
       const oid = p.tgId + '|' + p.teamId, open = t.open === oid, pr = p.profile || {};
-      return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(oid)}"><span class="avatar">${esc(initials(p.name))}</span>
+      return `<button type="button" class="li" data-a="teamOpen" data-id="${esc(oid)}">${avaHtml(p.tgId, p.name)}
         <span class="grow"><span class="b" style="display:block">${esc(p.name)}${p.registered !== false ? ylBadge : ''}</span><span class="row wrap" style="gap:6px;margin-top:4px">${p.roles.map((r) => `<span class="tag">${esc(r.label)}</span>`).join('')}${p.registered === false ? '<span class="xs muted">ще не в MyYL</span>' : ''}</span></span></button>
         ${open ? `<div style="padding:0 16px 12px;border-bottom:1px solid var(--line)">${[['Telegram', p.username ? '@' + p.username : ''], ['Instagram', pr.ig], ['Телефон', pr.phone], ['Дата народження', pr.bday ? fmtDay(pr.bday) : ''], ['Родина', pr.family], ['Рік покаяння', pr.repent], ['Рік хрещення', pr.baptism], ['Рік ЛПYL', pr.lpyl], ['Відповідальності', pr.resp]].filter((x) => x[1]).map((x) => `<div class="kv small"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('') || '<div class="small muted">Анкету ще не заповнено</div>'}
           <div class="sec" style="margin:10px 0 4px">Ролі й команди</div>
@@ -2262,7 +2266,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (!S.reqs) return h + loading();
     const main = S.reqs.filter((p) => p.primary), other = S.reqs.filter((p) => !p.primary);
     h += `<div class="seg" role="tablist"><button type="button" role="tab" class="${!S.reqOthers ? 'on' : ''}" data-a="reqTab" data-v="0">Мені · ${main.length}</button><button type="button" role="tab" class="${S.reqOthers ? 'on' : ''}" data-a="reqTab" data-v="1">Інші заявки · ${other.length}</button></div>`;
-    const card = (p) => `<div class="card col"><div class="row"><span class="avatar" style="background:rgba(76,110,245,.18)">${esc(initials(p.name))}</span>
+    const card = (p) => `<div class="card col"><div class="row">${avaHtml(p.tgId, p.name, 'background:rgba(76,110,245,.18)')}
       <div class="grow"><div class="b">${esc(p.name)}</div><div class="small muted">${p.username ? '@' + esc(p.username) : ''}${p.phone ? ' · ' + esc(p.phone) : ''}</div></div></div>
       <div class="col" style="gap:4px">${p.roles.map((r) => `<label class="check" style="border:0;border-radius:12px;background:var(--soft);min-height:46px;padding:0 12px"><input type="checkbox" data-ch="reqToggle" data-id="${esc(r.id)}"${S.reqSel[r.id] ? ' checked' : ''}>
         <span class="grow"><span class="b">${esc(r.label)}</span> <span class="small muted">· ${esc(r.unitName)}</span></span>${(me().editRoles || []).length ? `<button type="button" class="btn ghost sm" style="min-height:32px;padding:0 10px" data-a="reqEdit" data-id="${esc(r.id)}">Змінити</button>` : ''}</label>${S.reqEdit && S.reqEdit.id === r.id ? reqEditForm() : ''}${r.titled ? `<label class="f" style="padding:0 4px 6px"><span>Назва ролі — можна виправити перед підтвердженням</span><input class="in" type="text" maxlength="60" data-bind="reqTitle.${esc(r.id)}" value="${esc(S.reqTitle[r.id] != null ? S.reqTitle[r.id] : r.title)}"></label>` : ''}`).join('')}</div>
@@ -2283,6 +2287,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const m = me(), p = S.profile || {};
     let h = header('Мій профіль', '', IN_TG ? '' : '<button type="button" class="btn ghost sm" data-a="logout">Вийти</button>');
     h += `<div class="row">${myAvatar()}<div><div style="font:800 20px Manrope,Inter,sans-serif">${esc(m.user.name)}</div><div class="small muted">${esc(myLine())}${m.user.username ? ' · @' + esc(m.user.username) : ''}</div></div></div>`;
+    const hasPh = !!phUrl(m.user.id);
+    h += `<div class="row" style="gap:8px"><label class="btn sm sec2 grow" style="cursor:pointer">${S.phBusy ? 'Завантажую…' : (hasPh ? '📷 Змінити фото' : '📷 Завантажити своє фото')}<input type="file" accept="image/*" data-ch="photoPick" style="display:none"${S.phBusy ? ' disabled' : ''}></label>${hasPh ? '<button type="button" class="btn sm ghost" data-a="photoDel">Прибрати</button>' : ''}</div>
+      <div class="xs muted" style="margin-top:-6px">Твоє фото бачитимуть у складі команди, гілках MyYL і робочому просторі.</div>`;
     const act = (m.roles || []).filter((r) => r.status === 'активна');
     if (act.length > 1) h += `<div class="sec">Основна роль</div><div class="card col" style="gap:6px"><select class="in" data-ch="mainRole"><option value="">Автоматично — найвища роль</option>${act.map((r) => `<option value="${esc(r.id)}"${(m.profile || {}).main === r.id ? ' selected' : ''}>${esc(r.label + ' · ' + r.unitName)}</option>`).join('')}</select>
       <div class="xs muted">Тут рахуються твої особисті записи: знані «Без команди», а для вищих ролей — мала група й контактна робота.</div></div>`;
@@ -3291,7 +3298,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     return `<span class="wdue">🗓 ${lbl}${n <= 6 ? ' · ' + WD[d.getDay()] : ''}</span>`;
   }
   function wsAva(id, cls) {
-    const m = wsMember(id), P = S.ws.prof, ph = m && m.pkey && P && P.photos && P.photos[m.pkey];
+    const m = wsMember(id), P = S.ws.prof, ph = phUrl(id) || (m && m.pkey && P && P.photos && P.photos[m.pkey]);
     const name = (m && m.name) || '?';
     if (ph) return `<img class="wava ${cls || ''}" src="${esc(ph)}" alt="${esc(name)}" title="${esc(name)}">`;
     let h = 0; String(id).split('').forEach((ch) => { h = (h * 31 + ch.charCodeAt(0)) % 997; });
@@ -3912,6 +3919,36 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
 
   // ───── дії ─────
+  // фото профілю: квадрат 360×360 JPEG, обрізаємо по центру
+  A.photoPick = (d, el) => {
+    const f = el.files && el.files[0]; if (!f) return;
+    if (!/^image\//.test(f.type || 'image/')) return toast('Обери фото');
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = async () => {
+        const N = 360, c = document.createElement('canvas'); c.width = N; c.height = N;
+        const sz = Math.min(img.naturalWidth, img.naturalHeight), sx = (img.naturalWidth - sz) / 2, sy = (img.naturalHeight - sz) / 2;
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, N, N); g.drawImage(img, sx, sy, sz, sz, 0, 0, N, N);
+        let data = c.toDataURL('image/jpeg', 0.85);
+        if (data.length > 280000) data = c.toDataURL('image/jpeg', 0.7);
+        S.phBusy = true; render();
+        const r = await run(() => api('photoSet', { data: data }), 'Фото оновлено');
+        S.phBusy = false;
+        if (r) { S.me.photos = S.me.photos || {}; S.me.photos[String(S.me.user.id)] = r.photo; LS.set('me', S.me); }
+        render();
+      };
+      img.onerror = () => toast('Не вдалося відкрити це фото — спробуй інше');
+      img.src = String(rd.result);
+    };
+    rd.readAsDataURL(f);
+  };
+  A.photoDel = async () => {
+    if (!(await confirmAsk('Прибрати своє фото?'))) return;
+    const r = await run(() => api('photoSet', { remove: true }), 'Фото прибрано');
+    if (r && S.me.photos) { delete S.me.photos[String(S.me.user.id)]; LS.set('me', S.me); }
+    render();
+  };
   A.wsTab = (d) => { S.ws.tab = d.v; if (d.v === 'team' && !S.ws.prof) wsLoadProf(); render(); };
   A.wsBack = () => { wsBack(); };
   A.wsOpen = (d, el, e) => { if (e) e.preventDefault(); if (d.u) tg.openLink(d.u); };
