@@ -4496,32 +4496,40 @@ Store.prototype.loadWsKv = async function (wsId, keys) {
   (rs.results || []).forEach((r) => { this.wsBig[r.k] = wsJson_(r.v, null); this.wsBig[r.k + 'At'] = r.updated || ''; });
 };
 Store.prototype.loadWsMine = async function (tgId) {
-  const [w, m, c] = await this.db.batch([
+  const [w, m, c, o] = await this.db.batch([
     this.db.prepare('SELECT id, name FROM ws ORDER BY created'),
     this.db.prepare('SELECT ws, role FROM ws_members WHERE tg_id = ?').bind(tgId),
-    this.db.prepare("SELECT ws, due FROM ws_cards WHERE archived = 0 AND done = 0 AND assignees LIKE ?").bind('%,' + tgId + ',%'),
+    this.db.prepare("SELECT ws, id, title, due FROM ws_cards WHERE archived = 0 AND done = 0 AND assignees LIKE ?").bind('%,' + tgId + ',%'),
+    this.db.prepare("SELECT ws, v FROM ws_kv WHERE k = 'open'"),
   ]);
-  this.wsMine = { all: w.results || [], member: m.results || [], cards: c.results || [] };
+  this.wsMine = { all: w.results || [], member: m.results || [], cards: c.results || [], open: wsOpenMap_(o.results) };
 };
 Store.prototype.loadWsDue = async function (from, to) {
-  const [c, w] = await this.db.batch([
+  const [c, w, o] = await this.db.batch([
     this.db.prepare("SELECT * FROM ws_cards WHERE archived = 0 AND done = 0 AND due >= ? AND due <= ?").bind(from, to),
     this.db.prepare('SELECT id, name FROM ws'),
+    this.db.prepare("SELECT ws, v FROM ws_kv WHERE k = 'open'"),
   ]);
+  this.wsOpen = wsOpenMap_(o.results);
   this.wsDue = (c.results || []).map((r) => Object.assign(wsCardRow_(r), { ws: r.ws }));
   this.wsNames = {};
   (w.results || []).forEach((r) => { this.wsNames[r.id] = r.name || ''; });
 };
 
+// простір спершу закритий: його бачить лише той, хто має найвищі права в MyYL; команді відкривається окремою кнопкою
+function wsOpenMap_(rows) { const o = {}; (rows || []).forEach((r) => { o[r.ws] = !!(wsJson_(r.v, {}) || {}).on; }); return o; }
+const wsIsOpen_ = () => !!(S.ws && S.ws.kv.open && S.ws.kv.open.on);
+const isSuperId_ = (id) => loadRoles_().some((r) => r.tgId === String(id) && r.status === ST.ACTIVE && r.key === 'SUPER');
 // у «Ще» й на головній: у яких просторах людина і скільки її задач горить
 function wsMineOut_(c) {
   const M = S.wsMine;
   if (!M || c.view) return [];
   const sup = isSuper_(c);
   const today = kyivDay(new Date()), soon = addDaysKey_(today, 2);
-  return M.all.filter((w) => sup || M.member.some((m) => m.ws === w.id)).map((w) => {
+  return M.all.filter((w) => sup || (M.open[w.id] && M.member.some((m) => m.ws === w.id))).map((w) => {
     const mine = M.cards.filter((x) => x.ws === w.id);
-    return { id: w.id, name: w.name || '', open: mine.length, soon: mine.filter((x) => x.due && x.due <= soon).length, late: mine.filter((x) => x.due && x.due < today).length };
+    const next = mine.filter((x) => x.due).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0)).slice(0, 3).map((x) => ({ id: x.id, title: x.title || '', due: x.due }));
+    return { id: w.id, name: w.name || '', open: mine.length, soon: mine.filter((x) => x.due && x.due <= soon).length, late: mine.filter((x) => x.due && x.due < today).length, next: next };
   });
 }
 
@@ -4532,6 +4540,7 @@ function wsAcc_(c, admin) {
   let m = W.members.filter((x) => x.tgId === c.id)[0];
   const sup = isSuper_(c);
   if (!m && !sup) deny_('Цей робочий простір — лише для його команди.');
+  if (!sup && !wsIsOpen_()) deny_('Робочий простір ще готується — його відкриють згодом.');
   if (!m && sup) {
     m = { tgId: c.id, role: 'admin', pkey: wsAutoKey_(c.name), area: '', added: nowIso() };
     W.members.push(m);
@@ -4579,7 +4588,7 @@ function wsLinks_(arr) {
 const wsCardLink_ = (id) => 'wsc_' + id;
 const wsTag_ = () => '«' + esc_(S.ws.row.name || 'Робочий простір') + '»';
 function wsNotify_(ids, c, text, cardId) {
-  uniq_(ids).filter((id) => id !== c.id && isReal_(id) && wants_(id, 'tasks')).forEach((id) => sendApp_(id, text, 'Відкрити задачу', wsCardLink_(cardId)));
+  uniq_(ids).filter((id) => id !== c.id && isReal_(id) && wants_(id, 'tasks') && (wsIsOpen_() || isSuperId_(id))).forEach((id) => sendApp_(id, text, 'Відкрити задачу', wsCardLink_(cardId)));
 }
 
 API.ws = function (c) {
@@ -4596,7 +4605,7 @@ API.ws = function (c) {
     strategy: wsStrategy_(), itemSt: WS_ITEM_ST,
     areas: W.kv.areas || [],
     current: { staff: W.members.length, leaders: cur.leaders == null ? null : cur.leaders, teams: cur.teams == null ? null : cur.teams, at: cur.at || '' },
-    has: W.kv.meta || {}, pnames: A.admin ? (W.kv.pnames || []) : [],
+    open: wsIsOpen_(), has: W.kv.meta || {}, pnames: A.admin ? (W.kv.pnames || []) : [],
     log: W.log.slice(0, 30),
   };
 };
@@ -4915,8 +4924,19 @@ API.wsMemberSave = function (c, d) {
   if (d.pkey != null) m.pkey = str_(d.pkey).slice(0, 40);
   if (d.area != null) m.area = str_(d.area).slice(0, 40);
   S.run('INSERT OR REPLACE INTO ws_members (ws, tg_id, role, pkey, area, added) VALUES (?,?,?,?,?,?)', [W.id, m.tgId, m.role, m.pkey, m.area, m.added]);
-  if (isNew && id !== c.id && wants_(id, 'tasks')) sendApp_(id, '👋 <b>' + esc_(c.name) + '</b> додав(ла) тебе в робочий простір ' + wsTag_() + '.\n\nТут задачі команди з дедлайнами, сторінки й документи, стратегія та профілі.', 'Відкрити простір', 'ws');
+  if (isNew && id !== c.id && wsIsOpen_() && wants_(id, 'tasks')) sendApp_(id, '👋 <b>' + esc_(c.name) + '</b> додав(ла) тебе в робочий простір ' + wsTag_() + '.\n\nТут задачі команди з дедлайнами, сторінки й документи, стратегія та профілі.', 'Відкрити простір', 'ws');
   if (isNew) wsLog_(c, 'додав(ла) ' + wsName_(id) + ' в команду простору', '');
+  return API.ws(c);
+};
+// відкрити простір команді (усі учасники отримають запрошення) або знову закрити
+API.wsOpen = function (c, d) {
+  wsAcc_(c, true);
+  const W = S.ws, was = wsIsOpen_(), on = !!d.on;
+  wsKvSet_('open', { on: on, at: nowIso(), by: c.name });
+  if (on && !was) {
+    W.members.filter((m) => m.tgId !== c.id && wants_(m.tgId, 'tasks')).forEach((m) => sendApp_(m.tgId, '👋 <b>' + esc_(c.name) + '</b> відкриває для тебе робочий простір ' + wsTag_() + '.\n\nТут задачі команди з дедлайнами, сторінки й документи, стратегія та профілі.', 'Відкрити простір', 'ws'));
+    wsLog_(c, 'відкрив(ла) простір для команди', '');
+  }
   return API.ws(c);
 };
 API.wsMemberRemove = function (c, d) {
@@ -4987,7 +5007,7 @@ function wsReminder_() {
     if (x.reminded === today) return;
     const d = x.due === today ? 0 : x.due < today ? -1 : 1;
     const head = d === 1 ? '⏰ <b>Завтра дедлайн</b>' : d === 0 ? '🔥 <b>Сьогодні дедлайн</b>' : '⚠️ <b>Дедлайн минув учора</b>';
-    const to = (x.who.length ? x.who : [x.authorId]).filter((id) => isReal_(id) && wants_(id, 'tasks'));
+    const to = (x.who.length ? x.who : [x.authorId]).filter((id) => isReal_(id) && wants_(id, 'tasks') && (S.wsOpen[x.ws] || isSuperId_(id)));
     to.forEach((id) => sendApp_(id, head + ' · ' + esc_(S.wsNames[x.ws] || 'робочий простір') + '\n\n<b>' + esc_(x.title) + '</b>' + (x.check.length ? '\n☑️ ' + x.check.filter((k) => k.d).length + ' з ' + x.check.length : ''), 'Відкрити задачу', wsCardLink_(x.id)));
     S.run('UPDATE ws_cards SET reminded = ? WHERE id = ?', [today, x.id]);
   });
@@ -4997,7 +5017,7 @@ Object.assign(NEEDS, {
   ws: { ws: true }, wsCard: { ws: true, wsComments: true }, wsCardSave: { ws: true }, wsCardDelete: { ws: true }, wsComment: { ws: true, wsComments: true }, wsCommentDelete: { ws: true, wsComments: true },
   wsColSave: { ws: true }, wsColDelete: { ws: true }, wsBoardSave: { ws: true }, wsBoardDelete: { ws: true },
   wsPage: { ws: true, wsPage: true }, wsPageSave: { ws: true }, wsPageDelete: { ws: true }, wsItemSave: { ws: true }, wsItemDelete: { ws: true }, wsStrategySave: { ws: true },
-  wsPeopleFind: { ws: true }, wsMemberSave: { ws: true }, wsMemberRemove: { ws: true },
+  wsPeopleFind: { ws: true }, wsMemberSave: { ws: true }, wsMemberRemove: { ws: true }, wsOpen: { ws: true },
   wsProfiles: { ws: true, wsKv: ['profiles', 'photos'] }, wsAnalytics: { ws: true, wsKv: ['analytics', 'oto'] }, wsImport: { ws: true },
 });
 NEEDS.me.wsMine = true;

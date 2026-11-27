@@ -660,3 +660,8 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .wshome .cl-topic { font-size: 17px; }
 .pill.sm { min-height: 34px; padding: 0 12px; }
 .wtabs button { font-size: 14px; }
+.wshome { gap: 10px; }
+.wsh-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; }
+.wsh-task { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); text-align: left; font-weight: 600; font-size: 14px; }
+.wsh-go { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.wsh-go button { min-height: 52px; border-radius: 12px; border: 0; background: var(--card); color: var(--text); font-size: 12px; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }

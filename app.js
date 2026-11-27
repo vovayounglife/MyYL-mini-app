@@ -3416,7 +3416,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (W.team) return wsTeamView();
     if (W.otoP) return wsOtoPersonView();
     if (W.area) return wsAreaView();
-    let h = header('Робочий простір', d.name, d.me.admin ? `<button type="button" class="icon-btn" data-a="wsMembers" aria-label="Команда простору й дані">${icon('profile', 20)}</button>` : '');
+    let h = header('Робочий простір', d.name + (d.open === false ? ' · 🔒 бачиш лише ти' : ''), d.me.admin ? `<button type="button" class="icon-btn" data-a="wsMembers" aria-label="Команда простору й дані">${icon('profile', 20)}</button>` : '');
     const tabs = [['board', 'Задачі'], ['pages', 'Сторінки'], ['strategy', 'Стратегія'], ['team', 'Команда']];
     h += `<div class="seg wtabs" role="tablist">${tabs.map((t) => `<button type="button" role="tab" class="${W.tab === t[0] ? 'on' : ''}" data-a="wsTab" data-v="${t[0]}">${t[1]}</button>`).join('')}</div>`;
     if (W.tab === 'board') h += wsBoardTab();
@@ -3851,6 +3851,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   function wsMembersView() {
     const W = S.ws, d = W.data, F = W.find || {};
     let h = header('Команда простору', plural(d.members.length, 'учасник', 'учасники', 'учасників'));
+    h += d.open ? `<div class="card row" style="gap:10px"><span style="font-size:22px">🔓</span><span class="grow small"><b>Відкрито для команди</b><br><span class="xs muted">учасники бачать простір і отримують повідомлення</span></span><button type="button" class="btn sm ghost" data-a="wsOpenSet" data-v="0">Закрити</button></div>`
+      : `<div class="card col" style="gap:8px;border:1.5px solid var(--yellow)"><div class="small"><b>🔒 Зараз простір бачиш лише ти.</b> Учасники, яких додаси, його не бачать і повідомлень не отримують, поки ти не відкриєш.</div><button type="button" class="btn sm" data-a="wsOpenSet" data-v="1">Відкрити для команди</button></div>`;
     h += `<div class="card list">${d.members.map((m) => `<div class="li" style="flex-wrap:wrap;gap:8px">${wsAva(m.id, 'sm')}<span class="grow b">${esc(m.name || m.id)}</span>
       ${m.id !== d.me.id ? `<button type="button" class="wx" data-a="wsMemDel" data-id="${esc(m.id)}" aria-label="Прибрати">×</button>` : ''}
       <div class="grid3" style="width:100%"><select class="in" style="min-height:38px" data-ch="wsMemRole" data-id="${esc(m.id)}" aria-label="Права"><option value="member">Учасник</option><option value="admin"${m.role === 'admin' ? ' selected' : ''}>Керує</option></select>
@@ -4047,6 +4049,12 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
   A.wsFind = () => { clearTimeout(A.wsFind.t); A.wsFind.t = setTimeout(wsFindRun, 350); };
   A.wsMemAdd = async (d) => { const r = await run(() => api('wsMemberSave', { ws: S.ws.id, id: d.id }), 'Додано — людина отримала повідомлення'); if (r) { S.ws.data = r; S.ws.find.list = (S.ws.find.list || []).filter((x) => x.id !== d.id); } render(); };
+  A.wsOpenSet = async (d) => {
+    const on = d.v === '1', n = WD_().members.length - 1;
+    if (!(await confirmAsk(on ? 'Відкрити простір для команди? ' + (n ? plural(n, 'учасник отримає', 'учасники отримають', 'учасників отримають') + ' запрошення в боті.' : 'Учасників ще немає.') : 'Закрити простір? Учасники перестануть його бачити, дані лишаться.'))) return;
+    const r = await run(() => api('wsOpen', { ws: S.ws.id, on: on }), on ? 'Простір відкрито для команди' : 'Простір закрито — бачиш лише ти');
+    if (r) S.ws.data = r; render();
+  };
   A.wsMemDel = async (d) => { const m = wsMember(d.id); if (!(await confirmAsk('Прибрати ' + (m ? m.name : '') + ' з простору?'))) return; const r = await run(() => api('wsMemberRemove', { ws: S.ws.id, id: d.id }), 'Прибрано'); if (r) S.ws.data = r; render(); };
   const memSet = async (id, patch) => { const r = await run(() => api('wsMemberSave', Object.assign({ ws: S.ws.id, id: id }, patch)), 'Збережено'); if (r) S.ws.data = r; render(); };
   A.wsMemRole = (d, el) => memSet(d.id, { role: el.value });
@@ -4075,11 +4083,18 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   });
   // головна: мої задачі в робочих просторах
   function wsHomeCard() {
-    const L = ((S.me && S.me.ws) || []).filter((w) => w.open);
-    return L.map((w) => `<button type="button" class="card cl-home wshome" data-a="tabGo" data-s="ws"><div class="row between"><span class="cl-h">🗂 Робочий простір</span><span class="xs muted">${esc(w.name)}</span></div>
-      <div class="cl-topic">${plural(w.open, 'задача', 'задачі', 'задач')} на тобі</div><div class="cl-meta">${w.late ? `<span style="color:#b3261e">⚠️ прострочено: ${w.late}</span>` : ''}${w.soon ? `<span>🔥 дедлайн скоро: ${w.soon}</span>` : ''}</div>
-      <span class="cl-cta">Відкрити ${icon('chev', 16)}</span></button>`).join('');
+    // як «Наш клуб» у капітанів: картка простору на головній для його учасників
+    return ((S.me && S.me.ws) || []).map((w) => {
+      const next = (w.next || []).slice(0, 3);
+      return `<div class="card cl-home wshome"><button type="button" class="wsh-top" data-a="tabGo" data-s="ws"><span class="cl-h">🗂 Робочий простір</span><span class="xs muted">${esc(w.name)}</span></button>
+        <button type="button" class="wsh-top" data-a="tabGo" data-s="ws"><span class="cl-topic">${w.open ? plural(w.open, 'задача', 'задачі', 'задач') + ' на тобі' : 'Відкритих задач на тобі немає'}</span></button>
+        ${w.late || w.soon ? `<div class="cl-meta">${w.late ? `<span style="color:#b3261e">⚠️ прострочено: ${w.late}</span>` : ''}${w.soon ? `<span>🔥 дедлайн скоро: ${w.soon}</span>` : ''}</div>` : ''}
+        ${next.length ? `<div class="col" style="gap:6px">${next.map((c) => `<button type="button" class="wsh-task" data-a="wsHomeTask" data-id="${esc(c.id)}"><span class="grow">${esc(c.title)}</span>${wsDue(c.due, false)}</button>`).join('')}</div>` : ''}
+        <div class="wsh-go">${[['board', '✅ Задачі'], ['pages', '📄 Сторінки'], ['strategy', '🎯 Стратегія'], ['team', '👥 Команда']].map((x) => `<button type="button" data-a="wsHomeTab" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>`;
+    }).join('');
   }
+  A.wsHomeTab = (d) => { S.ws.tab = d.v; go('ws'); };
+  A.wsHomeTask = (d) => { go('ws', { card: d.id }); };
   // посилання з бота: wsc_<задача>, wsp_<сторінка>
   function wsWant(want) {
     let m;
