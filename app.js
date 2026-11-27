@@ -267,6 +267,7 @@
   // ───────────── навігація ─────────────
   const TOP = ['home', 'add', 'known', 'stats', 'more'];
   function go(screen, opts) {
+    S.homeEdit = false; S.homeDraft = null;
     if (TOP.indexOf(screen) >= 0) S.stack = []; else if (S.screen !== screen) S.stack.push(S.screen);
     S.screen = screen;
     enter(screen, opts || {});
@@ -287,11 +288,12 @@
     if (S.screen === 'team' && S.team.add) { S.team.add = null; return render(); }
     if (S.screen === 'res' && S.res.form) { S.res.form = null; return render(); }
     if (S.screen === 'ws' && wsBack()) return;
+    if (S.screen === 'home' && S.homeEdit) { S.homeEdit = false; S.homeDraft = null; render(); window.scrollTo(0, 0); return; }
     S.screen = S.stack.pop() || 'home';
     render();
   }
   function canBack() {
-    return S.stack.length > 0 || (S.screen === 'ws' && wsCanBack()) || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
+    return S.stack.length > 0 || (S.screen === 'home' && !!S.homeEdit) || (S.screen === 'ws' && wsCanBack()) || (S.screen === 'calendar' && (S.ev || S.evForm)) || (S.screen === 'known' && (S.known.detail || S.known.edit || S.known.bulk)) ||
       (S.screen === 'profile' && S.roleReq) || (S.screen === 'onboarding' && S.reg.step > 1) || (S.screen === 'structure' && (S.structEdit || S.structDelS)) || (S.screen === 'stats' && S.stats.find) || (S.screen === 'myyl' && !!myylParent()) || (S.screen === 'tasks' && !!(S.tasks.form || S.tasks.open)) || (S.screen === 'polls' && !!S.polls.form) || (S.screen === 'team' && !!S.team.add) || (S.screen === 'res' && !!S.res.form);
   }
   function myylParent() { const d = S.myyl.data; const u = d && S.myyl.at && d.units[S.myyl.at]; return u && u.parent && d.units[u.parent] ? u.parent : ''; }
@@ -781,59 +783,126 @@
 
 
   // ───────────── ГОЛОВНА ─────────────
-  VIEWS.home = function () {
-    const m = me(), c = caps();
-    let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png?v=6" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
-    const items = (m.week && m.week.items) || [];
-    const offer = installOffer(true);
-    if (offer) h += `<div class="card col" style="gap:10px">${offer}</div>`;
-    if (m.pendingCount) {
-      h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
+  // ── головна: блоки, які людина сама вмикає й пересуває («Налаштувати вигляд екрану») ──
+  const HOME_DEF = [
+    ['alerts', 'Сповіщення', 'нові заявки, задачі й опитування'],
+    ['week', 'Мій тиждень', 'клуб, мала група, контактна робота'],
+    ['quick', 'Швидко внести', 'кнопки для швидкого звіту'],
+    ['ws', 'Робочий простір', 'задачі з дедлайнами'],
+    ['club', 'Наш клуб', 'план наступного клубу'],
+    ['tiles', 'Розділи', 'моя команда, знані, ресурси, задачі'],
+    ['events', 'Найближчі події', 'календар на місяць'],
+    ['scope', 'Клуби цього тижня', 'скільки команд звітували'],
+  ];
+  function homeBlocks() {
+    const m = me(), c = caps(), items = (m.week && m.week.items) || [], todo = m.todo || {};
+    const B = {};
+    B.alerts = () => {
+      let h = '';
+      if (m.pendingCount) {
+        h += `<button type="button" class="banner" data-a="tabGo" data-s="requests"><span class="badge" style="width:32px;height:32px;border-radius:16px">${m.pendingCount}</span>
         <span class="grow"><b>Нові заявки</b><br><span class="small muted">Люди чекають на підтвердження ролі</span></span>${icon('chev')}</button>`;
-    }
-    const todo = m.todo || {};
-    if (todo.tasks) h += `<button type="button" class="banner" data-a="tabGo" data-s="tasks"><span class="badge" style="width:32px;height:32px;border-radius:16px">${todo.tasks}</span>
+      }
+      if (todo.tasks) h += `<button type="button" class="banner" data-a="tabGo" data-s="tasks"><span class="badge" style="width:32px;height:32px;border-radius:16px">${todo.tasks}</span>
         <span class="grow"><b>Задачі до виконання</b><br><span class="small muted">Тобі доручили — відміть, як просувається</span></span>${icon('chev')}</button>`;
-    if (todo.polls) h += `<button type="button" class="banner" data-a="tabGo" data-s="polls"><span class="badge" style="width:32px;height:32px;border-radius:16px;background:var(--blue)">${todo.polls}</span>
+      if (todo.polls) h += `<button type="button" class="banner" data-a="tabGo" data-s="polls"><span class="badge" style="width:32px;height:32px;border-radius:16px;background:var(--blue)">${todo.polls}</span>
         <span class="grow"><b>${todo.polls === 1 ? 'Нове опитування' : 'Нові опитування'}</b><br><span class="small muted">Твій голос ще не враховано</span></span>${icon('chev')}</button>`;
-    if (m.myWeek) h += myWeekCard(m.myWeek);
-    else h += `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика</b><br><span class="small muted">клуби, малі групи, КР, знані · ачівки — у «Ще»</span></span>${icon('chev')}</button>`;
+      return h;
+    };
+    B.week = () => m.myWeek ? myWeekCard(m.myWeek)
+      : `<button type="button" class="banner" data-a="tabGo" data-s="mystats"><span class="ms-fire" style="font-size:26px">🏅</span><span class="grow"><b>Моя статистика</b><br><span class="small muted">клуби, малі групи, КР, знані · ачівки — у «Ще»</span></span>${icon('chev')}</button>`;
     // швидко внести: клуб, МГ, КР і знані; ✓ — цього тижня вже внесено
     // вище капітана звіт за клуб на головній не вносять (лише «Був на клубі»)
-    // без дублів: що вже є в «Мій тиждень» (клуб, МГ, КР) чи нижче в розділах — у «Швидко внести» не повторюємо
-    const inCard = (k) => !!m.myWeek && (k === 'mg' || k === 'kr' || (k === 'club' && teamRole()));
-    const quick = TYPES.filter((t) => canType(t.k) && (t.k !== 'club' || teamRole()) && !inCard(t.k));
-    const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
-    const qt = quick.map((t) => `<button type="button" class="tile" style="position:relative" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}${doneT(t.k) ? '<span class="tile-ok" aria-label="цього тижня внесено">✓</span>' : ''}</button>`);
-    const knownTile = (c.knownTeams || []).length || c.knownNoTeam;
-    if (canKnownAdd() && !knownTile) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
-    if (qt.length) h += `<div class="sec">Швидко внести</div><div class="grid${qt.length === 3 ? '3' : '2'}">${qt.join('')}</div>`;
-    h += wsHomeCard();
-    h += clubHomeCards();
+    // без дублів: що вже є в «Мій тиждень» (клуб, МГ, КР) — у «Швидко внести» не повторюємо, якщо «Мій тиждень» показано
+    B.quick = (weekShown) => {
+      const inCard = (k) => weekShown && !!m.myWeek && (k === 'mg' || k === 'kr' || (k === 'club' && teamRole()));
+      const quick = TYPES.filter((t) => canType(t.k) && (t.k !== 'club' || teamRole()) && !inCard(t.k));
+      const doneT = (k) => items.some((x) => x.type === k && x.status !== 'missing');
+      const qt = quick.map((t) => `<button type="button" class="tile" style="position:relative" data-a="openAdd" data-type="${t.k}"><span class="ic ${t.ic}">${icon(t.k, 18)}</span>${t.label}${doneT(t.k) ? '<span class="tile-ok" aria-label="цього тижня внесено">✓</span>' : ''}</button>`);
+      const knownTile = (c.knownTeams || []).length || c.knownNoTeam;
+      if (canKnownAdd() && !knownTile) qt.push(`<button type="button" class="tile" data-a="addKnownGo" data-m="one"><span class="ic ic-coral">${icon('known', 18)}</span>Знані</button>`);
+      return qt.length ? `<div class="sec">Швидко внести</div><div class="grid${qt.length === 3 ? '3' : '2'}">${qt.join('')}</div>` : '';
+    };
+    B.ws = () => wsHomeCard();
+    B.club = () => clubHomeCards();
     // головні розділи: моя команда, знані, корисні ресурси, задачі
-    const home = [];
-    if ((c.viewTeams || []).length) home.push({ k: 'team', label: 'Моя команда', sub: 'склад, ролі й анкети', icon: 'club', ic: 'ic-teal' });
-    else if (c.myyl) home.push({ k: 'myyl', label: 'Моя команда', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-teal' });
-    if ((c.knownTeams || []).length || c.knownNoTeam) home.push({ k: 'known', label: 'Знані', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
-    home.push({ k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання', icon: 'res', ic: 'ic-yellow' });
-    if (!todo.tasks) home.push({ k: 'tasks', label: 'Задачі до виконання', sub: todo.tasks ? 'не виконано: ' + todo.tasks : 'доручені тобі й тобою', icon: 'task', ic: 'ic-purple', badge: todo.tasks });
-    h += `<div class="grid2">${home.map((t) =>
-      `<button type="button" class="tile h" style="position:relative" data-a="tabGo" data-s="${t.k}"><span class="ic ${t.ic}">${icon(t.icon, 18)}</span><span class="grow"><span style="display:block">${esc(t.label)}</span><span class="xs muted" style="font-weight:400">${esc(t.sub)}</span></span>${t.badge ? `<span class="badge" style="position:absolute;top:8px;right:8px">${t.badge}</span>` : ''}</button>`).join('')}</div>`;
-    h += `<div class="row between" style="margin:8px 4px -4px"><span class="sec" style="margin:0">Найближчі події</span><button type="button" class="link-btn" data-a="tab" data-s="calendar">Усі</button></div>`;
-    if (!S.events) h += loading();
-    else if (!S.events.length) h += '<div class="empty small">Подій поки немає</div>';
-    else {
-      const soon = S.events.filter(inMonth);
-      h += soon.length ? soon.map(evCard).join('') : '<div class="empty small">У найближчий місяць подій немає</div>';
-      if (S.events.length > soon.length) h += `<button type="button" class="link-btn" style="align-self:center" data-a="tab" data-s="calendar">Усі події · ще ${S.events.length - soon.length}</button>`;
-    }
-    if (m.scopeCard) {
+    B.tiles = () => {
+      const home = [];
+      if ((c.viewTeams || []).length) home.push({ k: 'team', label: 'Моя команда', sub: 'склад, ролі й анкети', icon: 'club', ic: 'ic-teal' });
+      else if (c.myyl) home.push({ k: 'myyl', label: 'Моя команда', sub: 'усі гілки й люди', icon: 'tree', ic: 'ic-teal' });
+      if ((c.knownTeams || []).length || c.knownNoTeam) home.push({ k: 'known', label: 'Знані', sub: 'підлітки, за яких молимось', icon: 'known', ic: 'ic-coral' });
+      home.push({ k: 'res', label: 'Корисні ресурси', sub: 'файли й посилання', icon: 'res', ic: 'ic-yellow' });
+      if (!todo.tasks) home.push({ k: 'tasks', label: 'Задачі до виконання', sub: 'доручені тобі й тобою', icon: 'task', ic: 'ic-purple' });
+      return `<div class="grid2">${home.map((t) =>
+        `<button type="button" class="tile h" style="position:relative" data-a="tabGo" data-s="${t.k}"><span class="ic ${t.ic}">${icon(t.icon, 18)}</span><span class="grow"><span style="display:block">${esc(t.label)}</span><span class="xs muted" style="font-weight:400">${esc(t.sub)}</span></span></button>`).join('')}</div>`;
+    };
+    B.events = () => {
+      let h = `<div class="row between" style="margin:8px 4px -4px"><span class="sec" style="margin:0">Найближчі події</span><button type="button" class="link-btn" data-a="tab" data-s="calendar">Усі</button></div>`;
+      if (!S.events) h += loading();
+      else if (!S.events.length) h += '<div class="empty small">Подій поки немає</div>';
+      else {
+        const soon = S.events.filter(inMonth);
+        h += soon.length ? soon.map(evCard).join('') : '<div class="empty small">У найближчий місяць подій немає</div>';
+        if (S.events.length > soon.length) h += `<button type="button" class="link-btn" style="align-self:center" data-a="tab" data-s="calendar">Усі події · ще ${S.events.length - soon.length}</button>`;
+      }
+      return h;
+    };
+    B.scope = () => {
+      if (!m.scopeCard) return '';
       const sc = m.scopeCard; const pct = sc.total ? Math.round(sc.done / sc.total * 100) : 0;
-      h += `<button type="button" class="mini-stat" data-a="goStats" data-scope="${esc(sc.scope)}" data-cat="club"><span class="grow"><span class="xs muted" style="display:block">${esc(sc.title)} · клуби цього тижня</span>
+      return `<button type="button" class="mini-stat" data-a="goStats" data-scope="${esc(sc.scope)}" data-cat="club"><span class="grow"><span class="xs muted" style="display:block">${esc(sc.title)} · клуби цього тижня</span>
         <span class="small"><b>${sc.done}</b> з ${sc.total} команд звітували</span><span class="track" style="height:4px;margin-top:6px"><i style="width:${pct}%;background:var(--turq)"></i></span></span><span class="xs muted">Деталі ›</span></button>`;
-    }
+    };
+    return B;
+  }
+  // які блоки взагалі є в цієї людини (щоб у налаштуваннях не було порожніх)
+  function homeAvail() {
+    const m = me(), c = caps();
+    const has = { alerts: true, week: true, tiles: true, events: true, club: true };
+    has.quick = !!homeBlocks().quick(false);
+    has.ws = (m.ws || []).length > 0;
+    has.club = !!clubHomeCards();
+    has.scope = !!m.scopeCard;
+    return HOME_DEF.filter((d) => has[d[0]]).map((d) => d[0]);
+  }
+  // порядок: збережений + нові блоки (яких ще не було) на своїх звичних місцях
+  function homeLayout() {
+    const saved = S.homeDraft || (me().user || {}).home || null;
+    const def = HOME_DEF.map((d) => d[0]);
+    let order = saved && saved.order && saved.order.length ? saved.order.filter((k) => def.indexOf(k) >= 0) : def.slice();
+    def.forEach((k, i) => { if (order.indexOf(k) < 0) { const prev = def.slice(0, i).reverse().find((x) => order.indexOf(x) >= 0); order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, k); } });
+    return { order: order, hide: (saved && saved.hide) || [] };
+  }
+  VIEWS.home = function () {
+    if (S.homeEdit) return homeEditView();
+    let h = `<div class="row"><img class="avatar lg" src="icons/icon-192.png?v=6" alt="MyYL" style="object-fit:cover;padding:0"><div class="grow"><h1 style="font-size:22px">Привіт, ${esc(first())}!</h1><div class="small muted">${esc(myLine())}</div></div></div>`;
+    const offer = installOffer(true);
+    if (offer) h += `<div class="card col" style="gap:10px">${offer}</div>`;
+    const B = homeBlocks(), L = homeLayout();
+    const shown = L.order.filter((k) => L.hide.indexOf(k) < 0);
+    shown.forEach((k) => { h += B[k] ? (k === 'quick' ? B.quick(shown.indexOf('week') >= 0) : B[k]()) : ''; });
+    if (!shown.length) h += '<div class="empty small">Усі блоки сховано — налаштуй, що показувати</div>';
+    h += `<button type="button" class="link-btn small" style="align-self:center;margin-top:6px" data-a="homeEdit">${icon('more', 16)} Налаштувати вигляд екрану</button>`;
     return h;
   };
+  function homeEditView() {
+    const L = homeLayout(), av = homeAvail();
+    const rows = L.order.filter((k) => av.indexOf(k) >= 0);
+    const name = (k) => HOME_DEF.filter((d) => d[0] === k)[0];
+    let h = header('Вигляд головного екрана', 'Обери блоки й постав їх у потрібному порядку');
+    h += `<div class="card list hed" data-noptr>${rows.map((k, i) => {
+      const d = name(k), on = L.hide.indexOf(k) < 0;
+      return `<div class="hed-row${on ? '' : ' off'}" data-k="${k}">
+        <span class="hed-grip" aria-label="Перетягни, щоб пересунути">☰</span>
+        <label class="grow hed-lbl"><input type="checkbox" data-ch="homeToggle" data-k="${k}"${on ? ' checked' : ''}><span><span class="b" style="display:block">${esc(d[1])}</span><span class="xs muted">${esc(d[2])}</span></span></label>
+        <button type="button" class="icon-btn sm" data-a="homeMove" data-k="${k}" data-v="-1" aria-label="Вище"${i === 0 ? ' disabled' : ''}>▲</button>
+        <button type="button" class="icon-btn sm" data-a="homeMove" data-k="${k}" data-v="1" aria-label="Нижче"${i === rows.length - 1 ? ' disabled' : ''}>▼</button>
+      </div>`;
+    }).join('')}</div>`;
+    h += '<div class="xs muted" style="text-align:center">Тягни за ☰ або тисни стрілки. Сховані блоки нікуди не зникають — їх можна повернути будь-коли.</div>';
+    h += `<div class="grid2"><button type="button" class="btn ghost" data-a="homeReset">Як було</button><button type="button" class="btn" data-a="homeSave"${S.homeBusy ? ' disabled' : ''}>Готово</button></div>`;
+    return h;
+  }
 
   function sectionTiles() {
     const c = caps();
@@ -3958,6 +4027,65 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     };
     rd.readAsDataURL(f);
   };
+  // ── вигляд головної ──
+  const homeD = () => S.homeDraft || (S.homeDraft = JSON.parse(JSON.stringify(homeLayout())));
+  A.homeEdit = () => { S.homeEdit = true; S.homeDraft = JSON.parse(JSON.stringify(homeLayout())); render(); window.scrollTo(0, 0); };
+  A.homeToggle = (d, el) => {
+    const D = homeD(), i = D.hide.indexOf(d.k);
+    if (el.checked && i >= 0) D.hide.splice(i, 1); else if (!el.checked && i < 0) D.hide.push(d.k);
+    delete D.reset;
+    haptic('light'); render();
+  };
+  // пересунути на одне місце серед доступних людині блоків
+  const homeShift = (k, dir) => {
+    const D = homeD(), av = homeAvail(), vis = D.order.filter((x) => av.indexOf(x) >= 0);
+    const i = vis.indexOf(k), j = i + dir;
+    if (i < 0 || j < 0 || j >= vis.length) return;
+    const a = D.order.indexOf(vis[i]), b = D.order.indexOf(vis[j]);
+    D.order[a] = vis[j]; D.order[b] = vis[i];
+    delete D.reset;
+  };
+  A.homeMove = (d) => { homeShift(d.k, Number(d.v)); haptic('light'); const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A.homeReset = () => { S.homeDraft = { order: HOME_DEF.map((x) => x[0]), hide: [], reset: true }; haptic('light'); render(); };
+  A.homeSave = async () => {
+    const D = homeD();
+    S.homeBusy = true; render();
+    const r = await run(() => api('homeSet', D.reset ? { reset: true } : { order: D.order, hide: D.hide }), 'Головний екран оновлено');
+    S.homeBusy = false;
+    if (r) { S.me.user.home = r.home; LS.set('me', S.me); S.homeEdit = false; S.homeDraft = null; window.scrollTo(0, 0); }
+    render();
+  };
+  // перетягування блоків за ⋮⋮ (палець або миша)
+  (function homeDrag() {
+    let drag = null;
+    document.addEventListener('pointerdown', (e) => {
+      const h = e.target.closest('.hed-grip');
+      if (!h || S.screen !== 'home' || !S.homeEdit) return;
+      const it = h.closest('.hed-row');
+      e.preventDefault();
+      drag = { it: it, box: it.parentNode, id: e.pointerId };
+      it.classList.add('drag'); haptic('light');
+      try { h.setPointerCapture(e.pointerId); } catch (x) { /* */ }
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.preventDefault();
+      const items = [...drag.box.children].filter((x) => x !== drag.it);
+      const after = items.find((x) => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (after) { if (drag.it.nextSibling !== after) drag.box.insertBefore(drag.it, after); } else if (drag.box.lastChild !== drag.it) drag.box.appendChild(drag.it);
+    }, { passive: false });
+    const end = (e) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const keys = [...drag.box.children].map((x) => x.dataset.k);
+      drag.it.classList.remove('drag'); drag = null;
+      const D = homeD(), rest = D.order.filter((k) => keys.indexOf(k) < 0);
+      const next = keys.concat(rest);
+      if (next.join() !== D.order.join()) { D.order = next; delete D.reset; haptic('light'); }
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+    };
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+  })();
   A.photoTg = async (d, el) => {
     const want = !!el.checked, P = S.me.user.photo || {};
     if (!want && !P.own) { el.checked = true; toast('Спершу завантаж своє фото — кнопка нижче'); return; }

@@ -695,3 +695,14 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .bank-grp { min-height: 40px; font-weight: 800; font-size: 13px; background: var(--soft); }
 .ach-soon { display: flex; align-items: center; gap: 14px; opacity: .85; }
 .ach-soon .ach-ring { flex: 0 0 auto; }
+
+/* налаштування вигляду головної */
+.hed { padding: 4px; gap: 4px; }
+.hed-row { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 2px; border-radius: 14px; background: var(--card); transition: box-shadow .15s, transform .15s, opacity .15s; touch-action: pan-y; }
+.hed-row.off { opacity: .55; }
+.hed-row.drag { box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .35); transform: scale(1.02); position: relative; z-index: 5; opacity: 1; }
+.hed-grip { width: 30px; min-height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; cursor: grab; touch-action: none; user-select: none; }
+.hed-lbl { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.hed-lbl input { width: 20px; height: 20px; flex: none; accent-color: var(--accent, #e8692e); }
+.icon-btn.sm { width: 34px; height: 34px; min-width: 34px; font-size: 12px; }
+.icon-btn.sm:disabled { opacity: .3; }
