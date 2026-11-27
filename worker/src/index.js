@@ -4566,7 +4566,7 @@ function wsCardOut_(x) {
     done: x.done, archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
 }
 // поточний стан 2340 — наживо з MyYL по регіону простору; кожна людина рахується один раз:
-// стафи — ролі рівня ерії й регіону; лідери — усі в командах регіону, крім тих, хто вже серед стафів
+// стафи — учасники цього простору (офісна команда); лідери — усі в командах регіону, крім стафів
 function wsLive_() {
   const b = S.b, reg = b.regions.filter((r) => r.name === S.ws.row.region)[0];
   if (!reg) return { leaders: null, teams: null, staff: null, region: '' };
@@ -4574,7 +4574,7 @@ function wsLive_() {
   const inReg = {};
   teams.forEach((t) => { inReg[t.id] = 1; });
   const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.key !== 'SUPER');
-  const staff = uniq_(act.filter((r) => (r.level === 'region' && r.unitId === reg.id) || (r.level === 'area' && b.area[r.unitId] && b.area[r.unitId].regionId === reg.id)).map((r) => r.tgId));
+  const staff = uniq_(S.ws.members.map((m) => m.tgId));
   const leaders = uniq_(act.filter((r) => r.level === 'team' && inReg[r.unitId]).map((r) => r.tgId)).filter((id) => staff.indexOf(id) < 0);
   return { leaders: leaders.length, teams: teams.length, staff: staff.length, region: reg.name };
 }

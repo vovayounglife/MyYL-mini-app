@@ -3612,7 +3612,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const W = S.ws, d = W.data, st = d.strategy;
     const vis = String(st.vision || ''), num = (vis.match(/\d{3,}/) || [''])[0];
     let h = `<div class="card whero"><div class="xs muted">${esc(st.title)}</div><div class="wh-v">${num ? esc(vis.replace(num, '').trim()) + ' <b>' + esc(num) + '</b>' : esc(vis)}</div>${wsTargets()}
-      <div class="xs muted">Наживо з MyYL${d.current.region ? ' · регіон ' + esc(d.current.region) : ''}: лідери — усі в командах регіону, команди — активні, стафи — ролі рівня ерії й регіону. Кожна людина рахується один раз.</div>
+      <div class="xs muted">Наживо з MyYL${d.current.region ? ' · регіон ' + esc(d.current.region) : ''}: лідери — усі в командах регіону, команди — активні, стафи — учасники цього простору. Кожна людина рахується один раз.</div>
       <div class="row" style="gap:8px">${st.docUrl ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(st.docUrl)}">📄 Повна стратегія</button>` : ''}${d.me.admin ? '<button type="button" class="btn sm ghost" data-a="wsStratEdit">✏️ Змінити</button>' : ''}</div></div>`;
     h += `<div class="sec">9 напрямків</div><div class="wcircles">${st.circles.map((c, i) => {
       const its = d.items.filter((x) => x.circle === c.id), open = d.cards.filter((x) => x.circle === c.id && !x.done && !x.archived).length;
