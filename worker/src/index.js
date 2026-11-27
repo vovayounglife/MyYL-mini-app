@@ -4565,6 +4565,19 @@ function wsCardOut_(x) {
   return { id: x.id, board: x.board, col: x.col, pos: x.pos, title: x.title, desc: x.desc, due: x.due, who: x.who, circle: x.circle, item: x.item, links: x.links, check: x.check,
     done: x.done, archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
 }
+// поточний стан 2340 — наживо з MyYL по регіону простору; кожна людина рахується один раз:
+// стафи — ролі рівня ерії й регіону; лідери — усі в командах регіону, крім тих, хто вже серед стафів
+function wsLive_() {
+  const b = S.b, reg = b.regions.filter((r) => r.name === S.ws.row.region)[0];
+  if (!reg) return { leaders: null, teams: null, staff: null, region: '' };
+  const teams = b.teams.filter((t) => t.active && b.teamRegion(t.id) === reg.id);
+  const inReg = {};
+  teams.forEach((t) => { inReg[t.id] = 1; });
+  const act = loadRoles_().filter((r) => r.status === ST.ACTIVE && r.key !== 'SUPER');
+  const staff = uniq_(act.filter((r) => (r.level === 'region' && r.unitId === reg.id) || (r.level === 'area' && b.area[r.unitId] && b.area[r.unitId].regionId === reg.id)).map((r) => r.tgId));
+  const leaders = uniq_(act.filter((r) => r.level === 'team' && inReg[r.unitId]).map((r) => r.tgId)).filter((id) => staff.indexOf(id) < 0);
+  return { leaders: leaders.length, teams: teams.length, staff: staff.length, region: reg.name };
+}
 function wsStrategy_() {
   const s = Object.assign({}, WS_STRATEGY, S.ws.kv.strategy || {});
   s.circles = (S.ws.kv.circles && S.ws.kv.circles.length ? S.ws.kv.circles : WS_CIRCLES).map((x) => ({ id: x.id, title: x.title }));
@@ -4594,7 +4607,6 @@ function wsNotify_(ids, c, text, cardId) {
 API.ws = function (c) {
   const A = wsAcc_(c);
   const W = S.ws;
-  const cur = W.kv.current || {};
   return {
     id: W.id, name: W.row.name || '', me: { id: c.id, admin: A.admin, pkey: A.m.pkey, area: A.m.area },
     members: W.members.map(wsMemberOut_).sort((a, b) => a.name.localeCompare(b.name, 'uk')),
@@ -4604,7 +4616,7 @@ API.ws = function (c) {
     items: W.items.sort((a, b) => a.pos - b.pos),
     strategy: wsStrategy_(), itemSt: WS_ITEM_ST,
     areas: W.kv.areas || [],
-    current: { staff: W.members.length, leaders: cur.leaders == null ? null : cur.leaders, teams: cur.teams == null ? null : cur.teams, at: cur.at || '' },
+    current: wsLive_(),
     open: wsIsOpen_(), has: W.kv.meta || {}, pnames: A.admin ? (W.kv.pnames || []) : [],
     log: W.log.slice(0, 30),
   };
