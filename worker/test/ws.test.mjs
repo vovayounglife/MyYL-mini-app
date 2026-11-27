@@ -159,6 +159,24 @@ r = await api(VOVA, 'wsCardSave', { id: solo.id, archived: false });
 ok(r.ok && !r.data.done && !r.data.archived, 'повернути з архіву — знову в роботі');
 await api(VOVA, 'wsCardDelete', { id: solo.id }); await api(VOVA, 'wsCardDelete', { id: multi.id });
 
+// ── повторювальні задачі ──
+const todayK = T.kyivDay(new Date());
+let rc = (await api(VOVA, 'wsCardSave', { title: 'Звіт тижня', who: ['1', '7'], check: [{ t: 'Таблиця', d: true }] })).data;
+r = await api(VOVA, 'wsCardSave', { id: rc.id, rep: 'week' });
+ok(r.ok && r.data.rep === 'week' && r.data.due === todayK, 'повтор щотижня: без дедлайну — від сьогодні');
+await api(VOVA, 'wsTick', { id: rc.id });
+sent.length = 0;
+r = await api(NASTIA, 'wsTick', { id: rc.id });
+ok(r.ok && !r.data.done && !r.data.archived && r.data.repN === 1 && r.data.due === T.kyivDay(new Date(Date.now() + 7 * 864e5)) && r.data.doneBy.length === 0 && !r.data.check[0].d,
+  'усі відмітили — не в архів, а наступного тижня з чистими галочками (' + r.data.due + ')');
+ok(sent.some((s) => s.chat_id === '1' && /Наступного разу/.test(s.text)), 'автору — коли наступного разу');
+const mon = (await api(VOVA, 'wsCardSave', { title: 'Місячний фінзвіт', rep: 'month', due: '2026-01-31' })).data;
+r = await api(VOVA, 'wsTick', { id: mon.id });
+ok(r.ok && r.data.repN === 1 && r.data.due > todayK && Number(r.data.due.slice(8)) >= 28, 'щомісяця: прострочена переноситься на найближчу майбутню дату (' + r.data.due + ')');
+r = await api(VOVA, 'wsCardSave', { id: mon.id, rep: '' });
+ok(r.ok && r.data.rep === '', 'повтор можна вимкнути');
+await api(VOVA, 'wsCardDelete', { id: rc.id }); await api(VOVA, 'wsCardDelete', { id: mon.id });
+
 // ── колонки й дошки ──
 r = await api(SONIA, 'wsColSave', { board: board.id, title: 'Ідеї' });
 const cols = r.data.boards[0].cols;

@@ -4424,6 +4424,7 @@ const WS_CIRCLES = [['c01', 'Покращення системи навчанн�
   .map((x) => ({ id: x[0], title: x[1] }));
 const WS_STRATEGY = { title: 'Стратегія West Side 2026–2027', vision: 'Young Life West Side 2340', docUrl: 'https://docs.google.com/document/d/1X6XmpYlWfBF6mSglV5pAwjZ-99hmogd3NfUYhp6Ws7M/edit',
   targets: [{ k: 'leaders', l: 'лідерів', n: 2000 }, { k: 'teams', l: 'команд', n: 300 }, { k: 'staff', l: 'стафів', n: 40 }] };
+const WS_REP = { day: 'Щодня', week: 'Щотижня', '2week': 'Раз на 2 тижні', month: 'Щомісяця' };
 const WS_ITEM_ST = { idea: 'Ідея', plan: 'Заплановано', doing: 'В роботі', done: 'Готово', pause: 'Пауза' };
 const WS_BIG = ['profiles', 'photos', 'analytics', 'oto'];
 const WS_DEF_COLS = [['Треба зробити', ''], ['В роботі', ''], ['Чекає', ''], ['Готово', 'done']];
@@ -4436,7 +4437,7 @@ function wsCardRow_(r) {
   return { id: r.id, board: r.board_id || '', col: r.col_id || '', pos: Number(r.pos) || 0, title: r.title || '', desc: r.descr || '', due: r.due || '', who: wsList_(r.assignees),
     circle: r.circle || '', item: r.item_id || '', links: wsJson_(r.links, []), check: wsJson_(r.checklist, []), done: !!Number(r.done), archived: !!Number(r.archived),
     authorId: r.author_id || '', author: r.author || '', created: r.created || '', updated: r.updated || '', updatedBy: r.updated_by || '', reminded: r.reminded || '',
-    doneBy: wsList_(r.done_by) };
+    doneBy: wsList_(r.done_by), rep: WS_REP[r.rep] ? r.rep : '', repN: Number(r.rep_n) || 0, repLast: r.rep_last || '' };
 }
 function wsPageRow_(r) {
   return { id: r.id, parent: r.parent_id || '', title: r.title || '', icon: r.icon || '', pos: Number(r.pos) || 0, authorId: r.author_id || '', created: r.created || '',
@@ -4628,7 +4629,7 @@ function wsMemberOut_(m) {
 function wsCardOut_(x) {
   const W = S.ws;
   return { id: x.id, board: x.board, col: x.col, pos: x.pos, title: x.title, desc: x.desc, due: x.due, who: x.who, circle: x.circle, item: x.item, links: x.links, check: x.check,
-    done: x.done, doneBy: x.doneBy || [], archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
+    done: x.done, doneBy: x.doneBy || [], rep: x.rep || '', repN: x.repN || 0, repLast: x.repLast || '', archived: x.archived, authorId: x.authorId, author: x.author, created: x.created, updated: x.updated, updatedBy: x.updatedBy, comments: W.cc[x.id] || 0 };
 }
 // поточний стан 2340 — наживо з MyYL по регіону простору; кожна людина рахується один раз:
 // стафи — учасники цього простору (офісна команда); лідери — усі в командах регіону, крім стафів
@@ -4649,9 +4650,9 @@ function wsStrategy_() {
   return s;
 }
 function wsWriteCard_(x) {
-  S.run('INSERT OR REPLACE INTO ws_cards (id, ws, board_id, col_id, pos, title, descr, due, assignees, circle, item_id, links, checklist, done, archived, author_id, author, created, updated, updated_by, reminded, done_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  S.run('INSERT OR REPLACE INTO ws_cards (id, ws, board_id, col_id, pos, title, descr, due, assignees, circle, item_id, links, checklist, done, archived, author_id, author, created, updated, updated_by, reminded, done_by, rep, rep_n, rep_last) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     [x.id, S.ws.id, x.board, x.col, x.pos, x.title, x.desc, x.due, x.who.length ? ',' + x.who.join(',') + ',' : '', x.circle, x.item, JSON.stringify(x.links), JSON.stringify(x.check),
-      x.done ? 1 : 0, x.archived ? 1 : 0, x.authorId, x.author, x.created, x.updated, x.updatedBy, x.reminded || '', (x.doneBy || []).length ? ',' + x.doneBy.join(',') + ',' : '']);
+      x.done ? 1 : 0, x.archived ? 1 : 0, x.authorId, x.author, x.created, x.updated, x.updatedBy, x.reminded || '', (x.doneBy || []).length ? ',' + x.doneBy.join(',') + ',' : '', x.rep || '', x.repN || 0, x.repLast || '']);
 }
 function wsLog_(c, text, cardId) {
   const e = { ts: nowIso(), tgId: c.id, name: c.name, text: text, card: cardId || '' };
@@ -4672,7 +4673,33 @@ function wsNotify_(ids, c, text, cardId) {
 // виконання: кожен виконавець ставить свою галочку; коли виконали всі — задача виконана й іде в архів
 const wsColsOf_ = (bid) => S.ws.cols.filter((k) => k.board === bid).sort((a, b) => a.pos - b.pos);
 const wsEndPos_ = (colId, skip) => S.ws.cards.filter((y) => y.col === colId && y.id !== skip && !y.archived).reduce((a, y) => Math.max(a, y.pos), 0) + 1;
+// повторювальна задача після виконання не йде в архів, а переноситься на наступний раз
+function wsNextDue_(due, rep) {
+  const today = kyivDay(new Date());
+  let k = isDay_(due) ? due : today;
+  const step = (d) => {
+    if (rep === 'day') return addDaysKey_(d, 1);
+    if (rep === 'week') return addDaysKey_(d, 7);
+    if (rep === '2week') return addDaysKey_(d, 14);
+    const p = d.split('-').map(Number), y = p[0] + (p[1] === 12 ? 1 : 0), m = p[1] === 12 ? 1 : p[1] + 1;
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return y + '-' + String(m).padStart(2, '0') + '-' + String(Math.min(p[2], last)).padStart(2, '0');
+  };
+  let n = 0;
+  do { k = step(k); n++; } while (k <= today && n < 800);
+  return k;
+}
 function wsFinish_(x) {
+  if (x.rep) {
+    x.repN = (x.repN || 0) + 1; x.repLast = kyivDay(new Date());
+    x.due = wsNextDue_(x.due, x.rep); x.reminded = '';
+    x.done = false; x.archived = false; x.doneBy = [];
+    x.check = (x.check || []).map((k) => ({ t: k.t, d: false }));
+    const cols = wsColsOf_(x.board), cur = cols.filter((k) => k.id === x.col)[0];
+    if (cur && cur.kind === 'done') { const t = cols.filter((k) => k.kind !== 'done')[0]; if (t) { x.col = t.id; x.pos = wsEndPos_(t.id, x.id); } }
+    x.repeated = true;
+    return;
+  }
   x.done = true; x.archived = true; x.doneBy = x.who.slice();
   const dc = wsColsOf_(x.board).filter((k) => k.kind === 'done')[0];
   if (dc && dc.id !== x.col) { x.col = dc.id; x.pos = wsEndPos_(dc.id, x.id); }
@@ -4701,7 +4728,10 @@ API.wsTick = function (c, d) {
   } else wsFinish_(x);
   x.updated = nowIso(); x.updatedBy = c.name;
   wsWriteCard_(x);
-  if (x.done && !was) {
+  if (x.repeated) {
+    wsLog_(c, 'виконав(ла) «' + x.title + '» (' + x.repN + '-й раз) — наступного разу ' + fmtDue_(x.due), x.id);
+    wsNotify_([x.authorId], c, '🔁 <b>' + esc_(c.name) + '</b> виконав(ла) «' + esc_(x.title) + '». Наступного разу: ' + fmtDue_(x.due), x.id);
+  } else if (x.done && !was) {
     wsLog_(c, x.who.length > 1 ? 'останнім(ою) відмітив(ла) «' + x.title + '» — виконали всі' : 'виконав(ла) «' + x.title + '»', x.id);
     wsNotify_([x.authorId], c, '✅ Задачу «' + esc_(x.title) + '» виконано' + (x.who.length > 1 ? ' — відмітили всі ' + x.who.length : ' — ' + esc_(c.name)) + '. Вона в архіві.', x.id);
   } else if (mark) wsLog_(c, 'виконав(ла) свою частину «' + x.title + '» (' + x.doneBy.length + ' з ' + x.who.length + ')', x.id);
@@ -4717,7 +4747,7 @@ API.ws = function (c) {
     cards: W.cards.map(wsCardOut_),
     pages: W.pages.sort((a, b) => a.pos - b.pos || (a.created < b.created ? -1 : 1)),
     items: W.items.sort((a, b) => a.pos - b.pos),
-    strategy: wsStrategy_(), itemSt: WS_ITEM_ST,
+    strategy: wsStrategy_(), itemSt: WS_ITEM_ST, reps: WS_REP,
     areas: W.kv.areas || [],
     current: wsLive_(),
     open: wsIsOpen_(), has: W.kv.meta || {}, pnames: A.admin ? (W.kv.pnames || []) : [],
@@ -4745,7 +4775,7 @@ API.wsCardSave = function (c, d) {
     if (!board) bad_('Спершу створи дошку.');
     const col = colsOf(board.id).filter((k) => k.id === str_(d.col))[0] || colsOf(board.id)[0];
     if (!col) bad_('На дошці немає колонок.');
-    x = { id: uid_(), board: board.id, col: col.id, pos: endPos(col.id), title: title, desc: '', due: '', who: [], doneBy: [], circle: '', item: '', links: [], check: [], done: false, archived: false,
+    x = { id: uid_(), board: board.id, col: col.id, pos: endPos(col.id), title: title, desc: '', due: '', who: [], doneBy: [], rep: '', repN: 0, repLast: '', circle: '', item: '', links: [], check: [], done: false, archived: false,
       authorId: c.id, author: c.name, created: now, updated: now, updatedBy: c.name, reminded: '' };
   }
   const was = { who: isNew ? [] : x.who.slice(), done: isNew ? false : x.done, col: isNew ? '' : x.col };
@@ -4764,6 +4794,10 @@ API.wsCardSave = function (c, d) {
   if (has('links')) x.links = wsLinks_(d.links);
   if (has('addLink')) { const l = wsLinks_([d.addLink])[0]; if (!l) bad_('Встав повне посилання, що починається з https://'); if (x.links.length >= 25) bad_('Забагато посилань.'); x.links.push(l); }
   if (has('check')) x.check = [].concat(d.check || []).slice(0, 60).map((k) => ({ t: clipN_(k && k.t, 300), d: !!(k && k.d) })).filter((k) => k.t);
+  if (has('rep')) {
+    x.rep = WS_REP[d.rep] ? d.rep : '';
+    if (x.rep && !x.due) { x.due = kyivDay(new Date()); x.reminded = ''; }
+  }
   if (has('archived')) { if (!d.archived && x.done) wsUnfinish_(x); else x.archived = !!d.archived; }
   if (has('col') && str_(d.col) && str_(d.col) !== x.col) {
     const col = W.cols.filter((k) => k.id === str_(d.col))[0];
@@ -4783,6 +4817,7 @@ API.wsCardSave = function (c, d) {
   wsWriteCard_(x);
   const colName = (W.cols.filter((k) => k.id === x.col)[0] || {}).title || '';
   if (isNew) wsLog_(c, 'створив(ла) задачу «' + x.title + '»', x.id);
+  else if (x.repeated) wsLog_(c, 'виконав(ла) «' + x.title + '» (' + x.repN + '-й раз) — наступного разу ' + fmtDue_(x.due), x.id);
   else if (x.done && !was.done) wsLog_(c, 'виконав(ла) «' + x.title + '»', x.id);
   else if (was.col && was.col !== x.col) wsLog_(c, 'перемістив(ла) «' + x.title + '» → ' + colName, x.id);
   // повідомлення: новим виконавцям; автору — коли задачу виконав хтось інший
