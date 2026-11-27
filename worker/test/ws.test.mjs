@@ -195,7 +195,7 @@ ok(r.data.ws.members.find((m) => m.id === '7').pkey === 'nastia' && r.data.ws.me
 r = await api(SONIA, 'wsProfiles', {});
 ok(r.ok && r.data.profiles.people.length === 2 && r.data.photos.vova && !r.data.photos.bad, 'профілі й фото (лише безпечні)');
 r = await api(SONIA, 'wsAnalytics', {});
-ok(r.ok && r.data.analytics.teams.length === 2 && r.data.oto.files.length === 1, 'аналітика й one-to-one');
+ok(r.ok && r.data.analytics.source === 'myyl' && r.data.analytics.region === 'West' && r.data.oto.files.length === 1, 'аналітика з бази MyYL, one-to-one з файлу');
 r = await api(OUT, 'wsProfiles', {});
 ok(!r.ok, 'сторонній не бачить профілів');
 
@@ -213,6 +213,19 @@ ok(r.ok, 'у склад додано людину без MyYL');
 r = await api(VOVA, 'ws', {});
 ok(r.data.current.teams === 2 && r.data.current.leaders === 2 && r.data.current.staff === 3, '2340: 2 команди, 2 лідери (Настя не задвоюється), 3 стафи (' + JSON.stringify(r.data.current) + ')');
 
+// ── статистика команд — з бази MyYL ──
+r = await api(NASTIA, 'saveReport', { type: 'club', teamId: tid, mode: 'event', date: T.kyivDay(new Date()), teens: 14, newT: 2, leaders: 5 });
+ok(r.ok, 'капітан вносить клуб');
+await api(LEADX, 'saveReport', { type: 'mg', teamId: tid, mode: 'week', teens: 6, topic: 'Віра' });
+await api(LEADX, 'knownSave', { teamId: tid, item: { name: 'Оля Підліток' } });
+let ad0 = await admin('ws-drive', { map: { t: { [tid]: { id: 'SHEET_kairos_123456', name: 'Kairos' } }, a: { a1: { id: 'FOLDER_ternopil_1234', name: 'Тернопіль' } }, r: {} } });
+ok(ad0.ok && ad0.teams === 1, 'диск: карта таблиць команд');
+r = await api(VOVA, 'wsAnalytics', {});
+const K = r.data.analytics.teams.find((x) => x.id === tid), TA = r.data.analytics.areas.find((x) => x.id === 'a1');
+ok(K && K.members === 3 && K.roles['Капітан'] === 1 && K.roles['Лідер'] === 1 && K.roles['Помічник'] === 1 && K.roles['Волонтер'] === 1, 'команда: склад з ролями, кожна людина один раз (' + JSON.stringify(K && K.roles) + ')');
+ok(K.clubs.n === 1 && K.clubs.avgTeens === 14 && K.clubs.avgServ === 5 && K.sg.n === 1 && K.known === 1 && K.monthly.length === 12 && K.monthly[11].n === 1, 'команда: клуби, малі групи, знані, по місяцях');
+ok(/spreadsheets\/d\/SHEET_kairos_123456/.test(K.sheet) && TA.key === 'ternopil' && /FOLDER_ternopil_1234/.test(TA.folder) && K.area === 'ternopil', 'команда: таблиця MyYL на Диску, ерія звʼязана з налаштуваннями');
+
 // ── учасники: прибрати ──
 r = await api(VOVA, 'wsMemberRemove', { id: '1' });
 ok(!r.ok, 'себе прибрати не можна');
@@ -220,6 +233,22 @@ r = await api(VOVA, 'wsMemberRemove', { id: '8' });
 ok(r.ok && r.data.members.length === 2, 'Софію прибрано');
 r = await api(SONIA, 'ws', {});
 ok(!r.ok, 'після цього Софія не бачить простору');
+
+// ── one-to-one з Google Диску (скрипт «⚙️ Система») ──
+let ad = await req('/admin/ws-config', { ws: 'west' }, { 'x-sync-key': 'wrong' });
+ok(ad.status === 403, 'диск: без ключа — 403');
+ad = await admin('ws-config', { ws: 'west' });
+ok(ad.ok && ad.areas.some((a) => a.key === 'ternopil' && /folders/.test(a.teamFolder)), 'диск: налаштування з папками ерій');
+const otoFiles = [{ id: 'f1', title: 'Тернопіль - Капітани - One to one', area: 'ternopil', group: 'Капітани', people: [{ name: 'Капітан Іван', role: 'Капітан', meetings: [{ held: true, date: '2026-11-20', total: 8.25, spheres: { 'Духовне життя': 9, bad: 'x' } }, { held: false }] }] }];
+ad = await admin('ws-oto', { ws: 'west', files: otoFiles });
+ok(ad.ok && ad.changed === true && ad.files === 1, 'диск: one-to-one оновлено');
+ad = await admin('ws-oto', { ws: 'west', files: otoFiles });
+ok(ad.ok && ad.changed === false, 'диск: без змін — нічого не переписується');
+r = await api(VOVA, 'wsAnalytics', {});
+const of = r.data.oto;
+ok(of.source === 'drive' && of.files[0].people[0].meetings[0].total === 8.3 && !('bad' in of.files[0].people[0].meetings[0].spheres), 'диск: дані в просторі, бали числами');
+r = await api(VOVA, 'ws', {});
+ok(r.data.log.some((e) => /one-to-one/.test(e.text)), 'диск: запис у «Що нового»');
 
 // ── нагадування про дедлайни ──
 const today = T.kyivDay(new Date());

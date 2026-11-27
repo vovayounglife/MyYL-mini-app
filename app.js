@@ -3769,15 +3769,15 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   }
   function wsAnGate() {
     if (!S.ws.an) { wsLoadAn(); return loading(); }
-    if (!S.ws.an.analytics) return `<div class="empty">Аналітику командних табличок ще не завантажено${WD_().me.admin ? '.<br>Додай файл даних у налаштуваннях простору.' : '.'}</div>`;
+    if (!S.ws.an.analytics) return '<div class="empty">Не знайшов регіону цього простору в MyYL</div>';
     return '';
   }
   function wsAreasTab() {
     const g = wsAnGate(); if (g) return g;
     const A = S.ws.an.analytics, d = WD_(), T = wsTot(A.teams);
-    let h = `<div class="xs muted">Дані з командних табличок${A.updated ? ' · ' + esc(/^\d{4}-\d{2}-\d{2}$/.test(A.updated) ? fmtShortDay(A.updated) : A.updated) : ''}${A.window ? ' · клуби за ' + esc(fmtShortDay(A.window.from)) + ' – ' + esc(fmtShortDay(A.window.to)) : ''}</div>`;
+    let h = `<div class="xs muted">Наживо з MyYL${A.region ? ' · регіон ' + esc(A.region) : ''}${A.window ? ' · клуби, малі групи й КР за ' + esc(fmtShortDay(A.window.from)) + ' – ' + esc(fmtShortDay(A.window.to)) : ''}</div>`;
     h += `<div class="kpis">${kpi(T.teams, 'команд · ' + T.active + ' з клубами')}${kpi(nf(T.members), 'людей у командах')}${kpi(nf(T.known), 'знаних по імені')}${kpi(T.clubs, 'клубів · ' + (T.avg || '—') + ' підлітків у середньому')}</div>`;
-    const areas = (d.areas.length ? d.areas.slice().sort((a, b) => a.order - b.order) : []).filter((a) => A.teams.some((t) => t.area === a.key));
+    const areas = (A.areas || []).slice().sort((a, b) => a.order - b.order).filter((a) => A.teams.some((t) => t.area === a.key));
     h += `<div class="col" style="gap:8px">${areas.map((a) => {
       const L = A.teams.filter((t) => t.area === a.key), t = wsTot(L);
       return `<button type="button" class="card warea" style="--cc:${a.color || '#6f655a'}" data-a="wsArea" data-k="${esc(a.key)}"><span class="grow"><span class="b" style="display:block">${esc(a.name)}</span><span class="xs muted">${esc(a.director)}${a.acting ? ' (в.о.)' : ''}</span>
@@ -3786,12 +3786,13 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     return h;
   }
   function wsAreaView() {
-    const g = wsAnGate(); const a = wsAreaOf(S.ws.area) || { key: S.ws.area, name: S.ws.area };
+    const g = wsAnGate();
+    const a = (S.ws.an && S.ws.an.analytics && (S.ws.an.analytics.areas || []).filter((x) => x.key === S.ws.area)[0]) || wsAreaOf(S.ws.area) || { key: S.ws.area, name: S.ws.area };
     if (g) return header(a.name) + g;
     const L = S.ws.an.analytics.teams.filter((t) => t.area === a.key).sort((x, y) => (y.members || 0) - (x.members || 0)), T = wsTot(L);
     let h = header(a.name, (a.director || '') + (a.acting ? ' (в.о.)' : ''));
     h += `<div class="kpis">${kpi(T.teams, 'команд')}${kpi(T.members, 'людей')}${kpi(T.known, 'знаних')}${kpi(T.clubs, 'клубів · ' + (T.avg || '—') + ' сер.')}</div>`;
-    h += `<div class="row" style="gap:8px">${a.teamFolder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.teamFolder)}">📁 Таблички команд</button>` : ''}${a.otoFolder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.otoFolder)}">📁 One-to-one</button>` : ''}</div>`;
+    h += `<div class="row" style="gap:8px">${a.folder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.folder)}">📁 Таблиці команд MyYL</button>` : ''}${a.otoFolder ? `<button type="button" class="btn sm sec2 grow" data-a="wsOpen" data-u="${esc(a.otoFolder)}">📁 One-to-one</button>` : ''}</div>`;
     h += `<div class="card list">${L.map((t) => `<button type="button" class="li" data-a="wsTeamOpen" data-id="${esc(t.id)}"><span class="grow"><span class="b" style="display:block">${esc(t.name)}</span>
       <span class="xs muted">${t.members || 0} у команді · ${t.known || 0} знаних · клубів ${(t.clubs || {}).n || 0}${(t.clubs || {}).avgTeens != null ? ' · ' + df(t.clubs.avgTeens) + ' підлітків' : ''}</span></span>${icon('chev', 18)}</button>`).join('')}</div>`;
     return h;
@@ -3801,19 +3802,19 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     if (!t) { S.ws.team = null; return VIEWS.ws(); }
     const c = t.clubs || {}, ly = t.clubsLY || {};
     let h = header(t.name, (wsAreaOf(t.area) || {}).name || '');
-    h += `<div class="kpis">${kpi(t.members || 0, 'у команді')}${kpi(t.known || 0, 'знаних по імені' + (t.knownBy ? ' · ведуть ' + t.knownBy : ''))}${kpi(c.n || 0, 'клубів за 3 міс.')}${kpi(c.avgTeens != null ? df(c.avgTeens) : '—', 'підлітків у середньому' + (ly.avgTeens != null ? ' · рік тому ' + df(ly.avgTeens) : ''))}</div>`;
+    h += `<div class="kpis">${kpi(t.members || 0, 'у команді')}${kpi(t.known || 0, 'знаних по імені')}${kpi(c.n || 0, 'клубів за 3 міс.')}${kpi(c.avgTeens != null ? df(c.avgTeens) : '—', 'підлітків у середньому' + (ly.avgTeens != null ? ' · рік тому ' + df(ly.avgTeens) : ''))}</div>`;
     const R = t.roles || {};
     h += `<div class="card rows">${Object.keys(R).filter((k) => R[k]).map((k) => `<div class="kv"><span>${esc(k)}</span><span>${R[k]}</span></div>`).join('')}
       ${c.maxTeens != null ? `<div class="kv"><span>Найбільше на клубі</span><span>${c.maxTeens}</span></div>` : ''}${c.avgServ != null ? `<div class="kv"><span>Служать на клубі (сер.)</span><span>${df(c.avgServ)}</span></div>` : ''}
       ${c.last ? `<div class="kv"><span>Останній клуб</span><span>${esc(fmtShortDay(c.last))}</span></div>` : ''}${t.sg && t.sg.n ? `<div class="kv"><span>Малі групи</span><span>${t.sg.n} · сер. ${df(t.sg.avg)}</span></div>` : ''}
-      ${t.kr && t.kr.hours ? `<div class="kv"><span>Контактна робота</span><span>${df(t.kr.hours)} год</span></div>` : ''}</div>`;
+      ${t.kr && t.kr.hours ? `<div class="kv"><span>Контактна робота</span><span>${df(t.kr.hours)} год${t.kr.people ? ' · ' + plural(t.kr.people, 'людина', 'людини', 'людей') : ''}</span></div>` : ''}</div>`;
     const M = (t.monthly || []).slice(-12);
     if (M.length) {
       const mx = Math.max.apply(null, M.map((x) => x.teens || 0).concat([1]));
       h += `<div class="card col"><h2>Підлітків на клубі · по місяцях</h2><div class="chart">${M.map((x, i) => `<div class="bar${i === M.length - 1 ? ' last' : ''}"><span>${x.teens != null ? df(x.teens) : ''}</span><i style="height:${Math.round((x.teens || 0) / mx * 120)}px"></i></div>`).join('')}</div>
         <div class="chart-labels">${M.map((x) => `<span>${MSHORT[Number(x.m.slice(5, 7)) - 1]}</span>`).join('')}</div></div>`;
     }
-    h += `<button type="button" class="btn sm sec2" data-a="wsOpen" data-u="https://docs.google.com/spreadsheets/d/${esc(t.id)}/edit">📊 Відкрити табличку команди</button>`;
+    if (t.sheet) h += `<button type="button" class="btn sm sec2" data-a="wsOpen" data-u="${esc(t.sheet)}">📊 Таблиця команди на Диску</button>`;
     return h;
   }
   function wsOtoTab() {
@@ -3821,7 +3822,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const O = S.ws.an.oto;
     if (!O || !O.files || !O.files.length) return '<div class="empty">Даних one-to-one ще немає</div>';
     const d = WD_();
-    let h = '';
+    let h = O.updated ? `<div class="xs muted">${O.source === 'drive' ? 'Оновлюється з таблиць на Диску щогодини' : 'Дані з файлу'} · ${esc(fmtWhen(O.updated))}</div>` : '';
     const areas = d.areas.slice().sort((a, b) => a.order - b.order).filter((a) => O.files.some((f) => f.area === a.key));
     areas.forEach((a) => {
       const files = O.files.filter((f) => f.area === a.key && f.ok !== false);
