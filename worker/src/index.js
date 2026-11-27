@@ -164,7 +164,7 @@ const NEEDS = {
   structureTree: {}, roleTitle: {}, areaSave: {}, teamSave: {}, teamDelete: { usage: true }, stats: { log: 'stats', clubs: true }, clubEdit: { clubs: true }, clubDelete: { clubs: true }, dupes: {}, dupMerge: {}, dupSkip: {}, clubPick: {}, bugSend: {}, bugs: { bugs: true }, bugDone: { bugs: true }, nudge: { log: 'week' },
   memberAdd: {}, memberRemove: {}, claimFind: {},
   myylTree: {}, broadcastInfo: { bc: true }, broadcast: {}, report: { log: 'report', known: true }, knownExport: { known: true },
-  dirStats: { log: 'stats' }, installStats: {}, photoSet: {}, photoPref: {},
+  dirStats: { log: 'stats' }, installStats: {}, photoSet: {}, photoPref: {}, homeSet: {},
   resList: { res: true }, resSave: { res: true }, resDecide: { res: true }, resDelete: { res: true },
   audCount: {}, permsGet: {}, permSet: {}, permReset: {}, tasks: { tp: true }, taskSave: { tp: true }, taskStatus: { tp: true }, taskClose: { tp: true }, taskDelete: { tp: true }, taskNudge: { tp: true },
   polls: { tp: true }, pollSave: { tp: true }, pollVote: { tp: true }, pollClose: { tp: true }, pollDelete: { tp: true },
@@ -927,6 +927,7 @@ API.me = function (c) {
   out.lastClubs = {};
   out.caps.report.club.forEach((id) => { if (lc[id]) out.lastClubs[id] = lc[id]; });
   out.photos = photoMap_();
+  if (c.person) out.user.home = homeOut_((c.person.prefs || {}).home);
   if (c.person) out.user.photo = { own: !!c.person.photo, tg: tgPhotoOk_(c.person.tgphoto), useTg: !c.person.photo || (c.person.prefs || {}).photoTg === true };
   out.pendingCount = out.caps.approve ? pendingFor_(c).filter((r) => primaryApprovers_(r).indexOf(c.id) >= 0).length : 0;
   if (out.caps.upper) out.scopeCard = scopeCard_(c);
@@ -2910,6 +2911,24 @@ API.stats = function (c0, d) {
 };
 function lastClubs_() { const o = {}; (S.clubs || []).forEach((r) => { if (r.teamId && !o[r.teamId]) o[r.teamId] = r; }); return o; }
 const clubOut_ = (r) => ({ id: r.id, date: r.date, none: r.mode === MODE.none, week: r.mode === MODE.week, teens: r.count, newT: r.newT, leaders: r.leaders, parents: r.parents, note: r.note, author: r.author });
+
+// вигляд головного екрана: які блоки показувати і в якому порядку (зберігається в профілі — однаково на всіх пристроях)
+const HOME_BLOCKS = ['alerts', 'week', 'quick', 'ws', 'club', 'tiles', 'events', 'scope'];
+const homeKeys_ = (a) => uniq_((Array.isArray(a) ? a : []).map(String)).filter((k) => HOME_BLOCKS.indexOf(k) >= 0);
+function homeOut_(h) {
+  if (!h || typeof h !== 'object') return null;
+  return { order: homeKeys_(h.order), hide: homeKeys_(h.hide) };
+}
+API.homeSet = function (c, d) {
+  const p = getPerson_(c.id);
+  if (!p) bad_('Спершу заповни профіль.');
+  const prefs = Object.assign({}, p.prefs || {});
+  if (d.reset) delete prefs.home;
+  else prefs.home = { order: homeKeys_(d.order), hide: homeKeys_(d.hide) };
+  p.prefs = prefs;
+  S.run('UPDATE people SET prefs = ? WHERE tg_id = ?', [JSON.stringify(prefs), c.id], true);
+  return { home: homeOut_(prefs.home) };
+};
 
 // «За кого вношу клуб»: людина сама обирає команди (за замовчуванням — усі, де може; порожньо — лише за себе)
 function myClubTeams_(c) {

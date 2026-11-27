@@ -371,5 +371,17 @@ r = await api(VOVA, 'ideaBank', {});
 const cnt = (k) => r.data.items.filter((x) => x.cat === k).length;
 ok(r.ok && cnt('game') === 35 && cnt('ggame') === 13 && cnt('quest') === 5 && cnt('movie') === 27 && cnt('topic') === 56 && r.data.cats.some((c) => c[0] === 'movie'), 'банк ідей: ігри, квести, фільми й теми з добірки (' + ['game', 'ggame', 'quest', 'movie', 'topic'].map(cnt).join('/') + ')');
 ok(r.data.items.find((x) => x.text === 'Вежа з Lego за завданнями').desc.indexOf('10. На першому поверсі') > 0 && r.data.items.find((x) => x.text === 'Кахут').pick, 'банк ідей: описи й позначка добірки');
+// ── вигляд головного екрана ──
+me = await api(NASTIA, 'me');
+ok(me.data.user.home === null, 'вигляд головної: спершу стандартний');
+r = await api(NASTIA, 'homeSet', { order: ['events', 'week', 'bogus', 'events', 'quick'], hide: ['tiles', 'nope'] });
+ok(r.ok && r.data.home.order.join() === 'events,week,quick' && r.data.home.hide.join() === 'tiles', 'вигляд головної: порядок і сховані блоки, без зайвого');
+me = await api(NASTIA, 'me');
+ok(me.data.user.home.order[0] === 'events' && me.data.user.home.hide[0] === 'tiles', 'вигляд головної збережено в профілі');
+me = await api(VOVA, 'me');
+ok(me.data.user.home === null, 'в інших людей головна без змін');
+r = await api(NASTIA, 'homeSet', { reset: true });
+me = await api(NASTIA, 'me');
+ok(r.ok && me.data.user.home === null, 'вигляд головної: «як було»');
 console.log(fails ? '\n' + fails + ' FAILED (ws)' : '\nALL OK (ws)');
 if (fails) process.exit(1);
