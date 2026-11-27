@@ -602,10 +602,13 @@
   const VIEWS = {};
   // ───────────── НАШ КЛУБ: план, кошик ідей, архів ─────────────
   const WDL = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'пʼятниця', 'субота'];
-  const IDEA_IC = { game: '🎲', song: '🎵', topic: '💡', other: '📌', sermon: '📖' };
-  const PROG_KINDS = [['song', 'Пісня'], ['game', 'Гра'], ['talk', 'Проповідь'], ['other', 'Інше']];
-  const PROG_IC = { song: '🎵', game: '🎲', talk: '📖', other: '📌' };
-  const PROG_PH = { song: 'Назва пісні', game: 'Назва гри', talk: 'Тема проповіді', other: 'Що саме: зустріч, перекус, оголошення…' };
+  const IDEA_IC = { game: '🎲', ggame: '🤸', song: '🎵', topic: '💡', other: '📌', sermon: '📖', quest: '🧭', movie: '🎬' };
+  const bankFrom = (x) => x.teams.length ? `💬 команда «${esc(x.team)}»${x.teams.length > 1 ? ' · і ще ' + (x.teams.length - 1) : ''}${x.pick ? ' · ⭐ є в добірці' : ''}` : '⭐ добірка Young Life';
+  const PROG_KINDS = [['song', 'Пісня'], ['game', 'Гра'], ['ggame', 'Загальна гра'], ['talk', 'Проповідь'], ['other', 'Інше']];
+  const PROG_IC = { song: '🎵', game: '🎲', ggame: '🤸', talk: '📖', other: '📌' };
+  const PROG_PH = { song: 'Назва пісні', game: 'Назва гри', ggame: 'Назва загальної гри', talk: 'Тема проповіді', other: 'Що саме: зустріч, перекус, оголошення…' };
+  const CLUB_FMT = [['club', '🎉 Клуб'], ['quest', '🧭 Квест'], ['movie', '🎬 Фільм']];
+  const fmtLabel = (v) => { const x = CLUB_FMT.filter((k) => k[0] === v)[0]; return x ? x[1] : v ? '✨ ' + v : ''; };
   const daysTo = (k) => Math.round((parseDay(k) - parseDay(ymd(new Date()))) / 864e5);
   const whenLine = (k) => { if (!k) return ''; const n = daysTo(k), d = parseDay(k); return WDL[d.getDay()] + ', ' + d.getDate() + ' ' + MGEN[d.getMonth()] + (n === 0 ? ' · сьогодні' : n === 1 ? ' · завтра' : n > 1 ? ' · через ' + plural(n, 'день', 'дні', 'днів') : ''); };
   function clubHomeCards() {
@@ -630,7 +633,7 @@
       const d = await api('clubPage', { teamId: C.teamId });
       C.data = d; C.dirty = false;
       const p = d.plan;
-      C.f = { id: p.id, date: p.date, topic: p.topic, sermon: p.sermon || '', preacher: p.preacher, scripture: p.scripture, note: p.note || '',
+      C.f = { id: p.id, format: p.format || 'club', formatOther: '', date: p.date, topic: p.topic, sermon: p.sermon || '', preacher: p.preacher, scripture: p.scripture, note: p.note || '',
         program: (p.program || []).map((g) => ({ kind: g.kind, name: g.name, desc: g.desc || '' })),
         roles: (p.roles || []).map((r) => ({ name: r.name, text: r.text || '', who: r.who.map((w) => w.id) })) };
       C.rep = { teens: '', newT: '', leaders: '', parents: '', note: '' };
@@ -678,7 +681,7 @@
     const nm = {}; d.people.forEach((p) => { nm[p.id] = p.name; });
     let h = `<div class="sec">📋 Наступний клуб</div><div class="card col" style="gap:12px">`;
     if (ro) {
-      h += `<div class="cl-date">📅 ${esc(whenLine(f.date))}</div>
+      h += `<div class="cl-date">📅 ${esc(whenLine(f.date))}${f.format && f.format !== 'club' ? ' · ' + esc(fmtLabel(f.format)) : ''}</div>
         ${[['Тема клубу', f.topic], ['Тема проповіді', f.sermon], ['Проповідник', f.preacher], ['Місце з Біблії', f.scripture]].filter((x) => x[1]).map((x) => `<div><span class="xs muted">${x[0]}</span><br><b>${esc(x[1])}</b></div>`).join('') || '<div class="small muted">План ще не заповнено.</div>'}
         ${f.roles.length ? `<div><span class="xs muted">Ролі</span>${f.roles.map((r) => `<div class="row between" style="padding:6px 0;border-top:1px solid var(--line)"><span>${esc(r.name)}</span><b class="small">${esc(r.who.map((id) => nm[id]).filter(Boolean).concat(r.text ? [r.text] : []).join(', ') || '—')}</b></div>`).join('')}</div>` : ''}
         ${f.program.length ? `<div><span class="xs muted">Програма</span>${f.program.map((g, i) => `<div class="prog-ro"><span class="prog-n">${i + 1}</span><span>${PROG_IC[g.kind] || '•'} <b>${esc(g.name)}</b>${g.desc ? `<br><span class="small">${esc(g.desc)}</span>` : ''}</span></div>`).join('')}</div>` : ''}
@@ -687,6 +690,8 @@
     }
     h += `<label class="f"><span>Дата клубу</span><input class="in" type="date" data-bind="club.f.date" data-live="clubDirty" value="${esc(f.date)}"${can.date ? '' : ' disabled'}></label>
       <div class="xs muted" style="margin-top:-6px">${esc(whenLine(f.date))}${can.date ? '' : ' · дату змінює капітан або адмін'}</div>
+      <div class="f"><span>Формат клубу</span><div class="chips">${CLUB_FMT.concat((d.myFormats || []).map((x) => [x, '✨ ' + x])).map((k) => `<button type="button" class="chip${f.format === k[0] ? ' on' : ''}" data-a="clubFmt" data-v="${esc(k[0])}">${esc(k[1])}</button>`).join('')}<button type="button" class="chip${f.format === '_other' ? ' on' : ''}" data-a="clubFmt" data-v="_other">Інше…</button></div>
+      ${f.format === '_other' ? `<input class="in" type="text" maxlength="60" data-bind="club.f.formatOther" data-live="clubDirty" value="${esc(f.formatOther || '')}" placeholder="Наприклад: Караоке-батл, Виїзний клуб">` : ''}</div>
       <label class="f"><span>Тема клубу</span><input class="in" type="text" maxlength="200" data-bind="club.f.topic" data-live="clubDirty" value="${esc(f.topic)}" placeholder="Наприклад: Блудний син"></label>
       <label class="f"><span>Тема проповіді</span><input class="in" type="text" maxlength="200" data-bind="club.f.sermon" data-live="clubDirty" value="${esc(f.sermon)}" placeholder="Якщо відрізняється від теми клубу"></label>
       <div class="row" style="gap:10px"><label class="f grow"><span>Проповідник</span><input class="in" type="text" maxlength="100" list="clubPeople" data-bind="club.f.preacher" data-live="clubDirty" value="${esc(f.preacher)}" placeholder="Хто говорить"></label>
@@ -713,7 +718,7 @@
       <div class="grow col" style="gap:6px"><div class="row" style="gap:6px"><button type="button" class="prog-k" data-a="progKind" data-i="${i}" title="Змінити тип">${PROG_IC[g.kind]}</button>
       <input class="in grow" type="text" maxlength="120" data-bind="club.f.program.${i}.name" data-live="clubDirty" value="${esc(g.name)}" placeholder="${PROG_PH[g.kind]}">
       <button type="button" class="icon-btn sm" data-a="clubRowDel" data-k="program" data-i="${i}" aria-label="Прибрати">×</button></div>
-      ${g.kind === 'game' || g.kind === 'talk' || g.desc ? `<textarea class="in" rows="2" maxlength="600" data-bind="club.f.program.${i}.desc" data-live="clubDirty" placeholder="${g.kind === 'game' ? 'Опис: коротко правила чи коментар' : g.kind === 'talk' ? 'Місце з Біблії, головна думка' : 'Коментар'}">${esc(g.desc)}</textarea>` : ''}</div></div>`).join('')}</div>
+      ${g.kind === 'game' || g.kind === 'ggame' || g.kind === 'talk' || g.desc ? `<textarea class="in" rows="2" maxlength="600" data-bind="club.f.program.${i}.desc" data-live="clubDirty" placeholder="${g.kind === 'game' || g.kind === 'ggame' ? 'Опис: коротко правила чи коментар' : g.kind === 'talk' ? 'Місце з Біблії, головна думка' : 'Коментар'}">${esc(g.desc)}</textarea>` : ''}</div></div>`).join('')}</div>
       <div class="chips">${PROG_KINDS.map((k) => `<button type="button" class="chip" data-a="progAdd" data-k="${k[0]}">+ ${k[1]}</button>`).join('')}</div>`;
     h += `<label class="f"><span>Нотатка</span><textarea class="in" rows="2" maxlength="1000" data-bind="club.f.note" data-live="clubDirty" placeholder="Що підготувати, купити, про що помолитися">${esc(f.note)}</textarea></label>
       <button type="button" class="btn" data-a="clubSave"${C.dirty || !f.id ? '' : ' disabled'}>${icon('check', 18)} ${f.id ? (C.dirty ? 'Зберегти план' : 'Збережено') : 'Створити план'}</button></div>`;
@@ -751,23 +756,25 @@
   async function loadBank() { try { S.bank.data = await api('ideaBank'); } catch (e) { toast(e.message, 'error'); } if (S.screen === 'bank') render(); }
   VIEWS.bank = function () {
     const B = S.bank, d = B.data;
-    let h = header('Банк ідей', 'усе, що команди вже провели на клубах');
+    let h = header('Банк ідей', 'добірка Young Life і все, що команди провели на клубах');
     if (!d) return h + loading();
     const on = (k) => B.cats[k] !== false;
     const cnt = (k) => d.items.filter((x) => x.cat === k).length;
     h += `<div class="card col" style="gap:12px"><div class="small muted">Що шукаєш?</div><div class="chips">${d.cats.map((c) => `<button type="button" class="chip${on(c[0]) ? ' on' : ''}" data-a="bankCat" data-v="${c[0]}">${on(c[0]) ? '☑' : '☐'} ${IDEA_IC[c[0]]} ${esc(c[1])} · ${cnt(c[0])}</button>`).join('')}</div>
       <button type="button" class="btn" data-a="bankRandom"${d.items.some((x) => on(x.cat)) ? '' : ' disabled'}>✨ Надихнутись</button>`;
-    if (B.pick) { const x = B.pick; h += `<div class="bank-pick"><div class="xs muted">${IDEA_IC[x.cat]} ${esc((d.cats.find((c) => c[0] === x.cat) || [0, ''])[1])}</div><div class="bank-t">${esc(x.text)}</div>${x.desc ? `<div class="small">${esc(x.desc)}</div>` : ''}
-      <div class="xs muted" style="margin-top:6px">від команди «${esc(x.team)}»${x.teams.length > 1 ? ' · проводили ще ' + plural(x.teams.length - 1, 'команда', 'команди', 'команд') : ''}</div></div>`; }
+    if (B.pick) { const x = B.pick; h += `<div class="bank-pick"><div class="xs muted">${IDEA_IC[x.cat]} ${esc((d.cats.find((c) => c[0] === x.cat) || [0, ''])[1])}</div><div class="bank-t">${esc(x.text)}</div>${x.desc ? `<div class="small" style="white-space:pre-line">${esc(x.desc)}</div>` : ''}
+      <div class="xs muted" style="margin-top:6px">${x.teams.length ? `від команди «${esc(x.team)}»${x.teams.length > 1 ? ' · проводили ще ' + plural(x.teams.length - 1, 'команда', 'команди', 'команд') : ''}` : '⭐ добірка Young Life'}</div></div>`; }
     h += '</div>';
     if (!d.items.length) return h + '<div class="empty">Банк поки порожній. Він наповнюється сам, коли команди дають звіт за клуб із планом: теми, проповіді, ігри з описом і пісні.</div>';
     const T = B.tag || 'all', q = (B.q || '').trim().toLowerCase();
-    h += `<div class="seg" style="margin-top:6px"><button type="button" class="${T === 'all' ? 'on' : ''}" data-a="bankTag" data-v="all">Усі</button>${d.cats.map((c) => `<button type="button" class="${T === c[0] ? 'on' : ''}" data-a="bankTag" data-v="${c[0]}">${esc(c[1].split(' ')[0])}</button>`).join('')}</div>
+    h += `<div class="seg seg-scroll bank-seg" style="margin-top:6px"><button type="button" class="${T === 'all' ? 'on' : ''}" data-a="bankTag" data-v="all">Усі</button>${d.cats.map((c) => `<button type="button" class="${T === c[0] ? 'on' : ''}" data-a="bankTag" data-v="${c[0]}">${esc(c[1].split(' ')[0])}</button>`).join('')}</div>
       <input class="in" type="search" placeholder="Пошук" value="${esc(B.q || '')}" data-bind="bank.q" data-live="bankQ">`;
     const list = d.items.filter((x) => (T === 'all' || x.cat === T) && (!q || (x.text + ' ' + x.desc).toLowerCase().indexOf(q) >= 0));
     const shown = list.slice(0, B.more || 40);
-    h += `<div class="card list" id="bankList">${shown.map((x) => `<div class="li" style="align-items:flex-start;gap:10px"><span class="idea-ic">${IDEA_IC[x.cat]}</span><span class="grow"><b>${esc(x.text)}</b>${x.desc ? `<br><span class="small">${esc(x.desc)}</span>` : ''}
-      <br><span class="xs muted">💬 команда «${esc(x.team)}»${x.teams.length > 1 ? ' · і ще ' + (x.teams.length - 1) : ''}</span></span></div>`).join('') || '<div class="li small muted">Нічого не знайдено</div>'}</div>`;
+    let grp = '';
+    const grpHead = (x) => { if (x.cat !== 'movie' || !x.pick) return ''; const g = String(x.desc || '').split(' · ')[0]; if (!g || g === grp) return ''; grp = g; return `<div class="li bank-grp">🎬 ${esc(g)}</div>`; };
+    h += `<div class="card list" id="bankList">${shown.map((x) => `${T === 'movie' ? grpHead(x) : ''}<div class="li" style="align-items:flex-start;gap:10px"><span class="idea-ic">${IDEA_IC[x.cat]}</span><span class="grow"><b>${esc(x.text)}</b>${x.desc ? `<br><span class="small" style="white-space:pre-line">${esc(T === 'movie' && x.pick ? x.desc.split(' · ').slice(1).join(' · ') : x.desc)}</span>` : ''}
+      <br><span class="xs muted">${bankFrom(x)}</span></span></div>`).join('') || '<div class="li small muted">Нічого не знайдено</div>'}</div>`;
     if (list.length > shown.length) h += `<button type="button" class="link-btn" data-a="bankMore">Показати ще ${list.length - shown.length}</button>`;
     return h;
   };
@@ -2413,6 +2420,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     S.club.dirty = true;
     const b = document.querySelector('[data-a="clubSave"]'); if (b) { b.disabled = false; b.lastChild.textContent = ' ' + (S.club.f.id ? 'Зберегти план' : 'Створити план'); }
   };
+  A.clubFmt = (d) => { S.club.f.format = d.v; clubRe(); if (d.v === '_other') { const i = document.querySelector('[data-bind="club.f.formatOther"]'); if (i) i.focus(); } };
   const clubRe = () => { S.club.dirty = true; const y = window.scrollY; render(); window.scrollTo(0, y); };
   A.progAdd = (d) => { const f = S.club.f; f.program.push({ kind: d.k, name: d.k === 'talk' ? f.sermon || f.topic || '' : '', desc: d.k === 'talk' ? f.scripture || '' : '' }); clubRe(); const L = document.querySelectorAll('[data-bind^="club.f.program."][data-bind$=".name"]'); if (L.length) L[L.length - 1].focus(); };
   A.progKind = (d) => { const g = S.club.f.program[Number(d.i)], K = PROG_KINDS.map((k) => k[0]); g.kind = K[(K.indexOf(g.kind) + 1) % K.length]; clubRe(); };
@@ -2424,7 +2432,9 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
     const C = S.club, f = C.f;
     el.disabled = true;
     try {
-      const r = await api('clubPlanSave', { teamId: C.teamId, id: f.id, date: f.date, topic: f.topic, sermon: f.sermon, preacher: f.preacher, scripture: f.scripture, note: f.note, program: f.program, roles: f.roles });
+      const fmt = f.format === '_other' ? String(f.formatOther || '').trim() : f.format;
+      if (f.format === '_other' && !fmt) { toast('Напиши свій формат клубу'); el.disabled = false; return; }
+      const r = await api('clubPlanSave', { teamId: C.teamId, id: f.id, format: fmt || 'club', date: f.date, topic: f.topic, sermon: f.sermon, preacher: f.preacher, scripture: f.scripture, note: f.note, program: f.program, roles: f.roles });
       f.id = r.id; C.dirty = false; toast('План клубу збережено', 'success'); refreshMe(); await loadClub();
     } catch (e) { toast(e.message, 'error'); el.disabled = false; }
   };
@@ -2471,7 +2481,7 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
   A.ideaToPlan = (d) => {
     const C = S.club, x = C.data.ideas.find((i) => i.id === d.id), f = C.f;
     if (!x) return;
-    if (x.cat === 'game' || x.cat === 'song') f.program.push({ kind: x.cat, name: x.text, desc: x.desc || '' });
+    if (x.cat === 'game' || x.cat === 'ggame' || x.cat === 'song') f.program.push({ kind: x.cat, name: x.text, desc: x.desc || '' });
     else if (x.cat === 'topic' && !f.topic) f.topic = x.text;
     else if (x.cat === 'topic' && !f.sermon) f.sermon = x.text;
     else f.note = (f.note ? f.note + '\n' : '') + x.text;

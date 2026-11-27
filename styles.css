@@ -689,3 +689,7 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .wflash { animation: wflash 1.6s ease; }
 @keyframes wflash { 0%, 40% { box-shadow: 0 0 0 3px var(--teal); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .wchip.rep { background: rgba(155,93,229,.16); color: var(--text); }
+.bank-seg { overflow-x: auto; scrollbar-width: none; }
+.bank-seg::-webkit-scrollbar { display: none; }
+.bank-seg button { flex: 0 0 auto; padding: 0 12px; }
+.bank-grp { min-height: 40px; font-weight: 800; font-size: 13px; background: var(--soft); }

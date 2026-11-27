@@ -359,5 +359,17 @@ sent.length = 0;
 await W.scheduled({ scheduledTime: ts }, env, ectx); await Promise.all(waits.splice(0));
 ok(!sent.some((s) => /дедлайн/i.test(s.text || '')), 'повторно того ж дня не нагадує');
 
+// ── формат клубу й загальна гра в плані ──
+r = await api(NASTIA, 'clubPlanSave', { teamId: tid, topic: 'Ніч кіно', format: 'Караоке-батл', program: [{ kind: 'ggame', name: 'Молекули', desc: 'Обʼєднатися в групи за числом' }] });
+ok(r.ok, 'план клубу зі своїм форматом і загальною грою');
+r = await api(NASTIA, 'clubPage', { teamId: tid });
+ok(r.ok && r.data.plan.format === 'Караоке-батл' && r.data.plan.program[0].kind === 'ggame' && r.data.myFormats.indexOf('Караоке-батл') >= 0 && r.data.formats.movie === 'Фільм', 'свій формат збережено й пропонується далі');
+
+// ── банк ідей: добірка Young Life ──
+env.DB.raw.exec((await import('node:fs')).readFileSync(new URL('../migrations/034_bank_games.sql', import.meta.url), 'utf8'));
+r = await api(VOVA, 'ideaBank', {});
+const cnt = (k) => r.data.items.filter((x) => x.cat === k).length;
+ok(r.ok && cnt('game') === 35 && cnt('ggame') === 13 && cnt('quest') === 5 && cnt('movie') === 27 && cnt('topic') === 56 && r.data.cats.some((c) => c[0] === 'movie'), 'банк ідей: ігри, квести, фільми й теми з добірки (' + ['game', 'ggame', 'quest', 'movie', 'topic'].map(cnt).join('/') + ')');
+ok(r.data.items.find((x) => x.text === 'Вежа з Lego за завданнями').desc.indexOf('10. На першому поверсі') > 0 && r.data.items.find((x) => x.text === 'Кахут').pick, 'банк ідей: описи й позначка добірки');
 console.log(fails ? '\n' + fails + ' FAILED (ws)' : '\nALL OK (ws)');
 if (fails) process.exit(1);
