@@ -693,3 +693,5 @@ html.dark .wth { background: color-mix(in srgb, var(--dc) 30%, transparent); col
 .bank-seg::-webkit-scrollbar { display: none; }
 .bank-seg button { flex: 0 0 auto; padding: 0 12px; }
 .bank-grp { min-height: 40px; font-weight: 800; font-size: 13px; background: var(--soft); }
+.ach-soon { display: flex; align-items: center; gap: 14px; opacity: .85; }
+.ach-soon .ach-ring { flex: 0 0 auto; }

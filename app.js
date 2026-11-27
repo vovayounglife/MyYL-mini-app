@@ -1604,6 +1604,8 @@ const DIRS = ['YoungLife', 'WyldLife', 'College', 'Capernaum', 'YoungMoms'];
       <span class="track" style="height:6px;margin-top:6px;display:block"><i style="width:${Math.round(a.have / a.need * 100)}%;background:var(--grad)"></i></span></span><span class="small muted">${fmtNum(a.have)}/${a.need}</span></div>`).join('')}</div>`;
     (d.cats || [{ key: '', title: 'Усі', ic: '🏅' }]).forEach((cat) => {
       const list = d.ach.filter((a) => !cat.key || a.cat === cat.key);
+      // «Кемпи» показуємо одразу — значки за участь у таборах як лідер зʼявляться згодом
+      if (!list.length && cat.key === 'camp') { h += `<div class="sec">${cat.ic} ${esc(cat.title)}</div><div class="card ach-soon"><span class="ach-ring" style="--p:0"><span class="ach-ic">🏕</span></span><span class="grow small">Тут будуть значки за участь у таборах як лідер. Скоро!</span></div>`; return; }
       if (!list.length) return;
       h += `<div class="sec">${cat.ic} ${esc(cat.title)} · ${list.filter((a) => a.done).length}/${list.length}</div><div class="card ach-grid">${list.map((a) => {
         const pct = Math.round(a.have / a.need * 100);
